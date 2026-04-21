@@ -1,0 +1,109 @@
+.viewer {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--accent);
+}
+
+.titleBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface-alt);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.filename {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: bold;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  flex: 1;
+}
+
+.validBadge {
+  font-family: Arial, Verdana, Helvetica, sans-serif;
+  font-size: 10px;
+  font-weight: bold;
+  padding: 3px 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  border: 1px solid;
+}
+
+.valid_valid   { background: #e3f3e6; border-color: var(--valid);   color: var(--valid); }
+.valid_warning { background: #fbf1d8; border-color: var(--warning); color: var(--warning); }
+.valid_error   { background: #fbe6ec; border-color: var(--error);   color: var(--error); }
+.valid_unknown { background: #eeeeee; border-color: var(--text-muted); color: var(--text-muted); }
+
+.tabs {
+  display: flex;
+  background: var(--header-bg);
+  padding: 0;
+  gap: 0;
+}
+
+.tab {
+  background: var(--header-bg);
+  color: #bfbfbf;
+  padding: 9px 16px;
+  border: none;
+  border-right: 1px solid #222;
+  border-radius: 0;
+  font-family: Verdana, Arial, Helvetica, sans-serif;
+  font-size: 11px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab:hover { color: #ffffff; background: #1a1a1a; }
+
+.activeTab {
+  color: #ffffff !important;
+  background: var(--accent) !important;
+  border-right-color: var(--accent) !important;
+}
+
+.badge {
+  background: rgba(255, 255, 255, 0.2);
+  color: inherit;
+  font-size: 10px;
+  font-weight: bold;
+  padding: 1px 6px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.activeTab .badge {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.panel {
+  padding: 20px;
+  overflow-x: auto;
+  background: var(--surface);
+}
+
+.raw {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+}

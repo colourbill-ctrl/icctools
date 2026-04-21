@@ -1,0 +1,72 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.profileId {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  padding: 10px 14px;
+}
+
+.idLabel {
+  font-size: 10px;
+  font-weight: bold;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.idValue {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: bold;
+  word-break: break-all;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+}
+
+.table tr:nth-child(odd)  { background: var(--surface-alt); }
+.table tr:nth-child(even) { background: var(--surface); }
+
+.key, .value {
+  padding: 6px 12px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.table tr:last-child .key,
+.table tr:last-child .value { border-bottom: none; }
+
+.key {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  width: 220px;
+  min-width: 180px;
+}
+
+.value {
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.empty {
+  color: var(--text-muted);
+  font-style: normal;
+}

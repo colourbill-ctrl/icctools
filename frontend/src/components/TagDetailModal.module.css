@@ -1,0 +1,120 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px;
+}
+
+.dialog {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--accent);
+  width: 800px;
+  max-width: 100%;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+}
+
+.titleBar {
+  background: var(--header-bg);
+  color: #ffffff;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.titleText {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tagName {
+  font-family: Arial, Verdana, Helvetica, sans-serif;
+  font-size: 14px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.tagSig {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #ffffff;
+  background: var(--accent);
+  padding: 2px 8px;
+  font-weight: bold;
+}
+
+.close {
+  background: transparent;
+  border: 1px solid #ffffff;
+  color: #ffffff;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  font-weight: bold;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.close:hover { background: var(--accent); border-color: var(--accent); }
+
+.meta {
+  display: flex;
+  gap: 0;
+  background: var(--surface-alt);
+  border-bottom: 1px solid var(--border);
+}
+
+.meta > div {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 14px;
+  border-right: 1px solid var(--border);
+  flex: 1;
+}
+.meta > div:last-child { border-right: none; }
+
+.metaKey {
+  font-size: 10px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.metaVal {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  font-weight: bold;
+  margin-top: 2px;
+  word-break: break-word;
+}
+
+.body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 18px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface);
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 4;
+}

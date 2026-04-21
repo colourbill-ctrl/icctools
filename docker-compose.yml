@@ -1,0 +1,26 @@
+version: '3.9'
+
+# Build context is the parent directory so the validator image can COPY
+# the iccdev source tree during the multi-stage build.
+#
+# Usage:
+#   docker compose build
+#   docker compose up
+#
+# The frontend is served by Vite in dev mode (not containerised yet).
+
+services:
+  validator:
+    build:
+      context: ..          # parent of icctools (contains iccdev/ and icctools/)
+      dockerfile: icctools/validator/Dockerfile
+    ports:
+      - '3003:3003'
+    environment:
+      VALIDATOR_PORT: '3003'
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://localhost:3003/health').then(r=>process.exit(r.ok?0:1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+    restart: unless-stopped

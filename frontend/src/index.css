@@ -1,0 +1,60 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --page-bg:    #949CA3;
+  --surface:    #ffffff;
+  --surface-alt:#f5f6f7;
+  --header-bg:  #000000;
+  --border:     #CACED1;
+  --border-soft:#CBD0D3;
+  --text:       #000000;
+  --text-muted: #555555;
+  --accent:     #BF003F;
+  --accent-hover:#8f002f;
+  --valid:      #2d7a3d;
+  --warning:    #b8860b;
+  --error:      #BF003F;
+  --tag-odd:    #f4f5f6;
+  --font-sans:  Verdana, Arial, Helvetica, sans-serif;
+  --font-mono:  'Consolas', 'Menlo', 'Liberation Mono', monospace;
+  --radius:     0;
+}
+
+body {
+  background: var(--page-bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+a {
+  color: var(--accent);
+  font-weight: bold;
+  text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+a:visited { color: var(--accent); }
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 6px 16px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  font-weight: bold;
+  transition: background 0.15s, color 0.15s;
+}
+button:hover { opacity: 1; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}

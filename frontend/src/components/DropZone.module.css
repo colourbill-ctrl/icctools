@@ -1,0 +1,56 @@
+.zone {
+  border: 2px dashed var(--border);
+  background: var(--surface-alt);
+  padding: 36px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  cursor: default;
+  transition: border-color 0.15s, background 0.15s;
+  user-select: none;
+}
+
+.zone:not(.disabled) { cursor: pointer; }
+.zone:not(.disabled):hover {
+  border-color: var(--accent);
+  background: #fbe6ec;
+}
+
+.dragging {
+  border-color: var(--accent) !important;
+  background: #f4cdd6 !important;
+}
+
+.disabled {
+  opacity: 0.5;
+}
+
+.icon {
+  font-size: 32px;
+  line-height: 1;
+}
+
+.headline {
+  font-family: Arial, Verdana, Helvetica, sans-serif;
+  font-size: 15px;
+  font-weight: bold;
+  color: var(--text);
+}
+
+.sub {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.hidden {
+  display: none;
+}

@@ -1,0 +1,95 @@
+.layout {
+  width: 841px;
+  max-width: 100%;
+  margin: 6px auto;
+  background: var(--surface);
+  min-height: calc(100vh - 12px);
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  background: var(--header-bg);
+  color: #ffffff;
+  border-bottom: 2px solid #ffffff;
+  padding: 14px 22px;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.logo {
+  font-family: Arial, Verdana, Helvetica, sans-serif;
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 0.3px;
+  color: #ffffff;
+  text-transform: uppercase;
+}
+
+.subtitle {
+  font-size: 11px;
+  color: #bfbfbf;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.banner {
+  background: var(--surface);
+  border-bottom: 15px solid var(--header-bg);
+  padding: 16px 24px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.banner strong {
+  color: var(--accent);
+}
+
+.main {
+  flex: 1;
+  padding: 24px 25px 50px 25px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.errorBanner {
+  background: #fbe6ec;
+  border: 1px solid var(--accent);
+  border-left-width: 4px;
+  padding: 10px 14px;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.footer {
+  background: var(--header-bg);
+  color: #ffffff;
+  text-align: center;
+  padding: 14px 22px;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+}
+
+.footer a { color: #ffffff; font-weight: normal; text-decoration: underline; }
