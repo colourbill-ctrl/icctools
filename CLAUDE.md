@@ -4,61 +4,52 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-icctools is a web-based ICC profile validation tool that wraps the [iccDEV](https://github.com/InternationalColorConsortium/iccDEV) C++ reference implementation. The iccDEV source lives at `C:\Users\colou\code\iccdev` and must **not** be modified — icctools builds its own thin C++ tool (`validator-tool/`) against IccProfLib.
+icctools is a web-based ICC profile validation tool that wraps the [iccDEV](https://github.com/InternationalColorConsortium/iccDEV) C++ reference implementation. Validation runs **entirely client-side** via a WASM build of IccProfLib — there is no backend service. The iccDEV source is expected at `/home/colour/code/iccdev` and must **not** be modified.
 
-## Services
+## Layout
 
-| Service | Directory | Port | Tech |
-|---------|-----------|------|------|
-| Validator API | `validator/` | 3003 | Node.js + Express (ESM) |
-| Frontend | `frontend/` | 5173 | Vite + React |
+| Path | Contents |
+|------|----------|
+| `frontend/` | Vite + React SPA (port 5173 in dev). Loads the WASM module from `public/wasm/` and runs `validateProfile(bytes) → JSON` in the browser. |
+| `validator-wasm/` | Emscripten project: `wrapper.cpp` + a standalone `CMakeLists.txt` that compiles IccProfLib sources directly (bypassing iccDEV's top-level CMake). Produces `iccprofiledump.{mjs,wasm}`. |
+| `scripts/build-wasm.sh` | Rebuilds the WASM, copies artifacts into `frontend/public/wasm/`, refreshes `SHA256SUMS`. Pass `--verify` to check the committed artifacts still match source. |
 
 Both packages use ES modules (`"type": "module"`).
 
 ## Dev commands
 
 ```bash
-# Validator (set ICC_VALIDATOR_PATH to the locally built iccprofiledump binary)
-cd validator
-$env:ICC_VALIDATOR_PATH = "C:\Users\colou\code\icctools\validator-tool\build\iccprofiledump.exe"
-npm run dev
-
-# Frontend
+# frontend only — validation runs in the browser
 cd frontend
+npm install          # first time
 npm run dev          # http://localhost:5173
 npm run build        # production build → frontend/dist/
+
+# rebuild the WASM module after editing wrapper.cpp or pulling iccDEV changes
+source ~/emsdk-install/emsdk/emsdk_env.sh
+scripts/build-wasm.sh
 ```
 
-Vite proxies `/api/*` → `http://localhost:3003` (strips the `/api` prefix), so the frontend always calls `/api/validate` — never a hardcoded port.
+## validator-wasm details
 
-## Validator tool (`validator-tool/`)
+`wrapper.cpp` exports one embind function:
 
-A small C++ program that calls IccProfLib directly and writes a JSON report to stdout. It replaces the previous approach of shelling out to `iccDumpProfile.exe` and parsing its text output.
-
-### Build (Linux / Docker)
-
-```bash
-# Stage 1: build IccProfLib static library from iccDEV
-cd /path/to/iccdev/Build
-cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED_LIBS=OFF -DENABLE_STATIC_LIBS=ON \
-      -DENABLE_TOOLS=OFF -DENABLE_WXWIDGETS=OFF -DENABLE_ICCXML=OFF -DENABLE_ICCJSON=OFF Cmake
-make -j$(nproc) IccProfLib2-static
-
-# Stage 2: build iccprofiledump
-cmake -S validator-tool -B validator-tool/build -DICCDEV_ROOT=/path/to/iccdev
-cmake --build validator-tool/build
+```cpp
+std::string validateProfile(emscripten::val bytes);   // returns JSON
 ```
+
+JS side wraps that as `validateProfile(file)` in `frontend/src/lib/validator.js` — lazy-loads the module, fetches the `.mjs` glue, instantiates via a blob URL (to sidestep Vite's `/public` import rule), and passes `file.arrayBuffer()` bytes.
 
 ### Key IccProfLib APIs used
 
 | API | Purpose |
 |-----|---------|
-| `ValidateIccProfile(path, report, status)` | Load, fully parse, and validate; returns `CIccProfile*` |
+| `ValidateIccProfile(pMem, nSize, report, status)` | Memory-buffer overload — avoids any filesystem use in WASM |
 | `pProfile->m_Header` | `icHeader` struct — all 128-byte header fields |
 | `pProfile->m_Tags` | `TagEntryList` — iterate for tag directory |
+| `CIccTag::Describe(str, verboseness=100)` | Full human-readable tag dump (same as `wxProfileDump`) |
 | `CIccInfo` | Converts signatures/enums to human-readable strings |
-| `icFtoD(icS15Fixed16Number)` | Fixed-point → double (used for illuminant XYZ) |
-| `icF16toF(icFloat16Number)` | Half-float → float (used for spectral range nm values) |
+| `icFtoD`, `icF16toF` | Fixed-point / half-float converters for header fields |
 
 ### JSON output shape
 
@@ -68,8 +59,9 @@ cmake --build validator-tool/build
   "profileId": "9efa8dc6...",
   "sizeBytes": 488,
   "sizeBytesHex": "1e8",
-  "header": { "Attributes": "Reflective | Glossy", "Data Color Space": "RgbData", ... },
+  "header": { "Attributes": "...", "Data Color Space": "...", ... },
   "tags": [{ "name": "profileDescriptionTag", "id": "desc", "type": "descType",
+             "isArrayType": false, "description": "<full Describe() text>",
              "offset": 240, "size": 120, "pad": 0 }, ...],
   "validation": { "level": "valid|warning|error|unknown",
                   "status": "Profile is valid",
@@ -77,38 +69,29 @@ cmake --build validator-tool/build
 }
 ```
 
-Tags are sorted by `offset`. `pad < 0` means overlapping tags (non-compliant); `pad > 3` is a warning. The `type` field (tag type signature name) is new compared to the old parser.js output.
-
-`server.js` receives this JSON from stdout and passes it through to the frontend unchanged — there is no parsing layer.
-
-## Validator API (`validator/server.js`)
-
-- `GET  /health` — returns `{ status, tool }`.
-- `POST /validate` — multipart/form-data, field `profile`, max 16 MB. Writes a temp file, calls `iccprofiledump <tmpfile>`, `JSON.parse`s stdout, adds `filename`/`exitCode`, returns to client.
+Tags are sorted by `offset`. `pad < 0` means overlapping tags (non-compliant); `pad > 3` is a warning. The `description` field drives the tag-detail modal in the UI.
 
 ## Frontend component hierarchy
 
 ```
-App.jsx                  — fetch orchestration, top-level error/loading state
+App.jsx                  — preloads WASM, orchestrates validation, top-level error/loading state
 └── DropZone.jsx         — drag-and-drop + <input type=file>; calls onFile(File)
 └── ProfileViewer.jsx    — tabbed shell (Header / Tags / Validation / Raw Output)
     ├── HeaderTable.jsx  — renders header{} as a key/value table
-    ├── TagTable.jsx     — renders tags[] with pad colouring
-    └── ValidationPanel.jsx — status card + messages list
+    ├── TagTable.jsx     — renders tags[] with pad colouring; rows open the modal
+    ├── ValidationPanel.jsx — status card + messages list
+    └── TagDetailModal.jsx — signature + type + offset + size + Describe() text
 ```
 
-Each component has a co-located `*.module.css` file. Global tokens (colours, fonts, radius) are CSS custom properties in `src/index.css`.
+Each component has a co-located `*.module.css` file. Global tokens (colours, fonts) are CSS custom properties in `src/index.css`. Style targets the institutional look of color.org (crimson `#BF003F` accent, Verdana on grey).
 
-## Docker
+## Deployment
 
-`validator/Dockerfile` is a three-stage build. Build context must be `..` (the parent directory containing both `iccdev/` and `icctools/`):
-
-1. **iccproflib-builder** — Ubuntu 22.04, builds only `IccProfLib2-static` from iccDEV (`ENABLE_TOOLS=OFF`, `ENABLE_ICCXML=OFF`, `ENABLE_ICCJSON=OFF`). libxml2/tiff/png/jpeg are still installed because iccDEV's top-level CMakeLists calls `find_package` for them unconditionally.
-2. **tool-builder** — Ubuntu 22.04, copies just the IccProfLib headers + static lib, builds `iccprofiledump`.
-3. **Final** — `node:20-slim`, copies the single `iccprofiledump` binary (no extra runtime libs needed beyond what Node.js already requires), runs `server.js`.
+Production instance: `https://chardata.colourbill.com:5173/` — nginx on a Lightsail box serves `frontend/dist/` as static files. Redeploy with:
 
 ```bash
-docker build -f icctools/validator/Dockerfile -t icctools-validator ..
+cd frontend && npm run build
+rsync -avz --delete dist/ chardata:/var/www/icctools/
 ```
 
-`docker-compose.yml` sets `context: ..` automatically.
+nginx server block is under `/etc/nginx/sites-available/icctools` on the host; see current state with `ssh chardata 'sudo cat /etc/nginx/sites-available/icctools'`.
