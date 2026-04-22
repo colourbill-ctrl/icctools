@@ -83,7 +83,9 @@ target_link_options(iccprofiledump PRIVATE
   -sINITIAL_MEMORY=16MB
   -sMAXIMUM_MEMORY=512MB
   -sSTACK_SIZE=1MB
-  -sEXPORTED_RUNTIME_METHODS=[ccall,cwrap])
+  # Disable emission of new Function()/eval() so the module is CSP-safe.
+  # Embind and runtime wrappers fall back to precomputed paths.
+  -sDYNAMIC_EXECUTION=0)
 
 # Emscripten outputs .js + .wasm beside the target; rename to .mjs for ES module
 set_target_properties(iccprofiledump PROPERTIES
