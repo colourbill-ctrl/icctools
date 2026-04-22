@@ -41,14 +41,19 @@ export function preloadValidator() {
  * parity with the old server response.
  */
 export async function validateProfile(file) {
-  const [mod, buffer] = await Promise.all([loadModule(), file.arrayBuffer()])
-  const bytes = new Uint8Array(buffer)
+  const buffer = await file.arrayBuffer()
+  return validateBytes(new Uint8Array(buffer), file.name)
+}
+
+/** Validate already-loaded bytes (used by XML→ICC round-trip). */
+export async function validateBytes(bytes, filename) {
+  const mod = await loadModule()
   const json = mod.validateProfile(bytes)
   const data = JSON.parse(json)
 
   if (data.error) throw new Error(data.error)
 
-  data.filename = file.name
+  data.filename = filename
   data.exitCode = (data.validation?.level === 'error') ? 1 : 0
   return data
 }

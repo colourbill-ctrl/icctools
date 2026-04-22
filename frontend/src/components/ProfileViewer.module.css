@@ -96,6 +96,13 @@
   background: var(--surface);
 }
 
+.loading {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: italic;
+  padding: 20px 4px;
+}
+
 .raw {
   font-family: var(--font-mono);
   font-size: 11px;

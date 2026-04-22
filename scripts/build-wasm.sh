@@ -39,15 +39,22 @@ cmake --build "$BUILD_DIR" -j"$(nproc)"
 
 mkdir -p "$OUT_DIR"
 
+# Artifact list. iccxml.* is optional — only present if BUILD_ICCXML was ON
+# at configure time (the CMake default). --no-xml disables it to save the
+# ~60s libxml2 build when you're iterating on the core validator.
+ARTIFACTS=(iccprofiledump.mjs iccprofiledump.wasm)
+if [ -f "$BUILD_DIR/iccxml.mjs" ]; then
+  ARTIFACTS+=(iccxml.mjs iccxml.wasm)
+fi
+
 if [ "${1:-}" = "--verify" ]; then
   if [ ! -f "$CHECKSUM_FILE" ]; then
     echo "error: no committed checksums at $CHECKSUM_FILE" >&2
     exit 2
   fi
   cd "$BUILD_DIR"
-  # Compare build output hashes against committed ones.
   expected=$(sort "$CHECKSUM_FILE")
-  actual=$(sha256sum iccprofiledump.mjs iccprofiledump.wasm | sort)
+  actual=$(sha256sum "${ARTIFACTS[@]}" | sort)
   if [ "$expected" != "$actual" ]; then
     echo "FAIL: rebuilt artifacts do not match committed checksums" >&2
     diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") >&2 || true
@@ -57,11 +64,12 @@ if [ "${1:-}" = "--verify" ]; then
   exit 0
 fi
 
-cp "$BUILD_DIR/iccprofiledump.mjs"  "$OUT_DIR/"
-cp "$BUILD_DIR/iccprofiledump.wasm" "$OUT_DIR/"
+for f in "${ARTIFACTS[@]}"; do
+  cp "$BUILD_DIR/$f" "$OUT_DIR/"
+done
 
 cd "$OUT_DIR"
-sha256sum iccprofiledump.mjs iccprofiledump.wasm > SHA256SUMS
+sha256sum "${ARTIFACTS[@]}" > SHA256SUMS
 echo
 echo "=== committed artifact checksums (frontend/public/wasm/SHA256SUMS) ==="
 cat SHA256SUMS

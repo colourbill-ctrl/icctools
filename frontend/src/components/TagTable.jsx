@@ -1,6 +1,6 @@
 import styles from './TagTable.module.css'
 
-export default function TagTable({ tags, onTagClick }) {
+export default function TagTable({ tags, onTagClick, changedTagIds }) {
   if (tags.length === 0) {
     return <p className={styles.empty}>No tags found.</p>
   }
@@ -19,31 +19,37 @@ export default function TagTable({ tags, onTagClick }) {
           </tr>
         </thead>
         <tbody>
-          {tags.map((tag, i) => (
-            <tr
-              key={i}
-              className={onTagClick ? styles.clickable : ''}
-              onClick={onTagClick ? () => onTagClick(tag) : undefined}
-              tabIndex={onTagClick ? 0 : undefined}
-              onKeyDown={onTagClick ? (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  onTagClick(tag)
-                }
-              } : undefined}
-            >
-              <td className={`${styles.num} ${styles.muted}`}>{i + 1}</td>
-              <td className={styles.name}>{tag.name}</td>
-              <td className={styles.id}>
-                <code>{tag.id}</code>
-              </td>
-              <td className={`${styles.num} ${styles.mono}`}>{tag.offset}</td>
-              <td className={`${styles.num} ${styles.mono}`}>{tag.size}</td>
-              <td className={`${styles.num} ${styles.mono} ${padClass(tag.pad)}`}>
-                {tag.pad}
-              </td>
-            </tr>
-          ))}
+          {tags.map((tag, i) => {
+            const changed = changedTagIds?.has(tag.id)
+            return (
+              <tr
+                key={i}
+                className={onTagClick ? styles.clickable : ''}
+                onClick={onTagClick ? () => onTagClick(tag) : undefined}
+                tabIndex={onTagClick ? 0 : undefined}
+                onKeyDown={onTagClick ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onTagClick(tag)
+                  }
+                } : undefined}
+              >
+                <td className={`${styles.num} ${styles.muted}`}>{i + 1}</td>
+                <td className={`${styles.name} ${changed ? styles.changed : ''}`} title={changed ? 'Bytes changed since load' : undefined}>
+                  {changed && <span className={styles.changedDot} aria-hidden>●</span>}
+                  {tag.name}
+                </td>
+                <td className={styles.id}>
+                  <code>{tag.id}</code>
+                </td>
+                <td className={`${styles.num} ${styles.mono}`}>{tag.offset}</td>
+                <td className={`${styles.num} ${styles.mono}`}>{tag.size}</td>
+                <td className={`${styles.num} ${styles.mono} ${padClass(tag.pad)}`}>
+                  {tag.pad}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>

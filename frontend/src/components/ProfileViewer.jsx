@@ -1,13 +1,25 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import ValidationPanel from './ValidationPanel.jsx'
 import HeaderTable from './HeaderTable.jsx'
 import TagTable from './TagTable.jsx'
 import TagDetailModal from './TagDetailModal.jsx'
 import styles from './ProfileViewer.module.css'
 
-const TABS = ['Header', 'Tags', 'Validation', 'Raw Output']
+// XmlPanel pulls in CodeMirror (~130 KB). Keep it out of the main bundle —
+// only fetched when the user opens the XML tab.
+const XmlPanel = lazy(() => import('./XmlPanel.jsx'))
 
-export default function ProfileViewer({ data }) {
+const TABS = ['Header', 'Tags', 'Validation', 'Raw Output', 'XML']
+
+export default function ProfileViewer({
+  data,
+  bytes,
+  xml,
+  xmlDirty,
+  changedTagIds,
+  onXmlChanged,
+  onIccProduced,
+}) {
   const [activeTab, setActiveTab] = useState('Header')
   const [selectedTag, setSelectedTag] = useState(null)
 
@@ -46,9 +58,20 @@ export default function ProfileViewer({ data }) {
 
       <div className={styles.panel}>
         {activeTab === 'Header'     && <HeaderTable header={data.header} profileId={data.profileId} />}
-        {activeTab === 'Tags'       && <TagTable tags={data.tags} onTagClick={setSelectedTag} />}
+        {activeTab === 'Tags'       && <TagTable tags={data.tags} onTagClick={setSelectedTag} changedTagIds={changedTagIds} />}
         {activeTab === 'Validation' && <ValidationPanel validation={data.validation} />}
         {activeTab === 'Raw Output' && <RawOutput data={data} />}
+        {activeTab === 'XML'        && (
+          <Suspense fallback={<div className={styles.loading}>Loading XML editor…</div>}>
+            <XmlPanel
+              bytes={bytes}
+              xml={xml}
+              xmlDirty={xmlDirty}
+              onXmlChanged={onXmlChanged}
+              onIccProduced={onIccProduced}
+            />
+          </Suspense>
+        )}
       </div>
 
       {selectedTag && (
