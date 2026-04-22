@@ -48,7 +48,7 @@ export default function DropZone({ onFile, disabled }) {
       >
         Select ICC profile…
       </button>
-      <p className={styles.hint}>.icc and .icm files · max 16 MB</p>
+      <p className={styles.hint}>.icc and .icm files</p>
 
       <input
         ref={inputRef}
