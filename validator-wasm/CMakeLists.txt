@@ -34,6 +34,7 @@ list(TRANSFORM ICCPROFLIB_SOURCES PREPEND "${ICCPROFLIB_DIR}/")
 # Generated version headers — both libraries #include these.
 set(ICCPROFLIB_VERSION_STRING "${PROJECT_VERSION}-wasm")
 set(ICCLIBXML_VERSION_STRING  "${PROJECT_VERSION}-wasm")
+set(ICCLIBJSON_DIR "${ICCDEV_ROOT}/IccJSON/IccLibJSON")
 configure_file(
   "${ICCPROFLIB_DIR}/IccProfLibVer.h.in"
   "${CMAKE_CURRENT_BINARY_DIR}/generated/IccProfLibVer.h"
@@ -41,6 +42,11 @@ configure_file(
 configure_file(
   "${ICCLIBXML_DIR}/IccLibXMLVer.h.in"
   "${CMAKE_CURRENT_BINARY_DIR}/generated/IccLibXMLVer.h"
+  @ONLY)
+set(ICCLIBJSON_VERSION_STRING "${PROJECT_VERSION}-wasm")
+configure_file(
+  "${ICCLIBJSON_DIR}/IccLibJSONVer.h.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/IccLibJSONVer.h"
   @ONLY)
 
 # ── nlohmann/json (host system header) ──────────────────────────────────────
@@ -188,4 +194,55 @@ if(BUILD_ICCXML)
     -sFORCE_FILESYSTEM=1)
 
   set_target_properties(iccxml PROPERTIES SUFFIX ".mjs")
+endif()
+
+
+# ── iccjson (ICC ↔ JSON, lazy-loaded) ───────────────────────────────────────
+# Sibling of iccxml but *much* lighter: IccLibJSON has no third-party
+# dependency (nlohmann/json is already on the include path for wrapper.cpp),
+# so there's no FetchContent step and the output module is roughly half the
+# size of iccxml.{mjs,wasm}. Shipped as a separate artifact so the browser
+# still only downloads it when the user clicks Convert to JSON.
+option(BUILD_ICCJSON "Build the lazy-loaded ICC↔JSON converter module" ON)
+
+if(BUILD_ICCJSON)
+  set(ICCLIBJSON_SOURCES
+    IccIoJson.cpp IccMpeJson.cpp IccMpeJsonFactory.cpp IccProfileJson.cpp
+    IccTagJson.cpp IccTagJsonFactory.cpp IccUtilJson.cpp)
+  list(TRANSFORM ICCLIBJSON_SOURCES PREPEND "${ICCLIBJSON_DIR}/")
+
+  add_executable(iccjson json-wrapper.cpp ${ICCPROFLIB_SOURCES} ${ICCLIBJSON_SOURCES})
+
+  target_include_directories(iccjson PRIVATE
+    "${ICCPROFLIB_DIR}"
+    "${ICCLIBJSON_DIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    "${NLOHMANN_JSON_INCLUDE_DIR}")
+
+  target_compile_options(iccjson PRIVATE
+    -O3
+    -fexceptions
+    -Wno-deprecated-declarations)
+
+  target_link_options(iccjson PRIVATE
+    -O3
+    -fexceptions
+    -lembind
+    -sMODULARIZE=1
+    -sEXPORT_ES6=1
+    -sEXPORT_NAME=createIccJsonModule
+    -sENVIRONMENT=web,worker,node
+    -sALLOW_MEMORY_GROWTH=1
+    -sINITIAL_MEMORY=16MB
+    -sMAXIMUM_MEMORY=512MB
+    -sSTACK_SIZE=1MB
+    -sDYNAMIC_EXECUTION=0
+    # Same exception-unwrap exports as iccxml so JS sees readable .what() text.
+    -sEXPORTED_RUNTIME_METHODS=getExceptionMessage,decrementExceptionRefcount
+    # MEMFS needed only for the write side (CIccProfile::Write patches header
+    # size via seek; CIccMemIO doesn't grow). Reads go through MEMFS too to
+    # keep the code structure identical to xml-wrapper.cpp.
+    -sFORCE_FILESYSTEM=1)
+
+  set_target_properties(iccjson PROPERTIES SUFFIX ".mjs")
 endif()

@@ -5,19 +5,23 @@ import TagTable from './TagTable.jsx'
 import TagDetailModal from './TagDetailModal.jsx'
 import styles from './ProfileViewer.module.css'
 
-// XmlPanel pulls in CodeMirror (~130 KB). Keep it out of the main bundle —
-// only fetched when the user opens the XML tab.
-const XmlPanel = lazy(() => import('./XmlPanel.jsx'))
+// XmlPanel and JsonPanel each pull in CodeMirror + a language bundle. Keep
+// both out of the main bundle — only fetched when the user opens the tab.
+const XmlPanel  = lazy(() => import('./XmlPanel.jsx'))
+const JsonPanel = lazy(() => import('./JsonPanel.jsx'))
 
-const TABS = ['Header', 'Tags', 'Validation', 'Raw Output', 'XML']
+const TABS = ['Header', 'Tags', 'Validation', 'Raw Output', 'XML', 'JSON']
 
 export default function ProfileViewer({
   data,
   bytes,
   xml,
   xmlDirty,
+  json,
+  jsonDirty,
   changedTagIds,
   onXmlChanged,
+  onJsonChanged,
   onIccProduced,
 }) {
   const [activeTab, setActiveTab] = useState('Header')
@@ -68,6 +72,17 @@ export default function ProfileViewer({
               xml={xml}
               xmlDirty={xmlDirty}
               onXmlChanged={onXmlChanged}
+              onIccProduced={onIccProduced}
+            />
+          </Suspense>
+        )}
+        {activeTab === 'JSON'       && (
+          <Suspense fallback={<div className={styles.loading}>Loading JSON editor…</div>}>
+            <JsonPanel
+              bytes={bytes}
+              json={json}
+              jsonDirty={jsonDirty}
+              onJsonChanged={onJsonChanged}
               onIccProduced={onIccProduced}
             />
           </Suspense>

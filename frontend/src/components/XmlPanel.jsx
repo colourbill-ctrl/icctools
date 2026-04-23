@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { EditorView, basicSetup } from 'codemirror'
-import { EditorState } from '@codemirror/state'
+import { useState } from 'react'
 import { xml as xmlLang } from '@codemirror/lang-xml'
+import TextEditor from './TextEditor.jsx'
 import { iccToXml, xmlToIcc } from '../lib/xmlConverter.js'
-import styles from './XmlPanel.module.css'
+import styles from './ConverterPanel.module.css'
 
 export default function XmlPanel({
   bytes,           // Uint8Array of the currently-loaded profile
@@ -25,7 +24,6 @@ export default function XmlPanel({
     setBusy('toXml'); setError(null)
     try {
       const result = await iccToXml(bytes)
-      // Fresh XML becomes the new baseline → not dirty.
       onXmlChanged(result, { baseline: result })
     } catch (e) {
       setError(e.message || String(e))
@@ -84,56 +82,12 @@ export default function XmlPanel({
           used by the upstream <code>IccToXml</code> tool.
         </div>
       ) : (
-        <XmlEditor
+        <TextEditor
           value={xml}
+          language={xmlLang()}
           onChange={(next) => onXmlChanged(next)}
         />
       )}
     </div>
   )
-}
-
-// Thin CodeMirror 6 wrapper — ref-managed view, external value updates patch
-// the doc without re-creating the editor.
-function XmlEditor({ value, onChange }) {
-  const hostRef = useRef(null)
-  const viewRef = useRef(null)
-  const onChangeRef = useRef(onChange)
-  onChangeRef.current = onChange
-
-  useEffect(() => {
-    const view = new EditorView({
-      parent: hostRef.current,
-      state: EditorState.create({
-        doc: value,
-        extensions: [
-          basicSetup,
-          xmlLang(),
-          EditorView.updateListener.of((v) => {
-            if (v.docChanged) onChangeRef.current(v.state.doc.toString())
-          }),
-          EditorView.theme({
-            '&': { fontSize: '12px', height: '100%' },
-            '.cm-scroller': { fontFamily: 'var(--font-mono)' },
-          }),
-        ],
-      }),
-    })
-    viewRef.current = view
-    return () => { view.destroy(); viewRef.current = null }
-  }, [])
-
-  // External value changes (e.g. Convert to XML pressed again) → replace doc.
-  useEffect(() => {
-    const view = viewRef.current
-    if (!view) return
-    const current = view.state.doc.toString()
-    if (current !== value) {
-      view.dispatch({
-        changes: { from: 0, to: current.length, insert: value },
-      })
-    }
-  }, [value])
-
-  return <div ref={hostRef} className={styles.editor} />
 }

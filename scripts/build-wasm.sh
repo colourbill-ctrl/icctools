@@ -39,12 +39,16 @@ cmake --build "$BUILD_DIR" -j"$(nproc)"
 
 mkdir -p "$OUT_DIR"
 
-# Artifact list. iccxml.* is optional — only present if BUILD_ICCXML was ON
-# at configure time (the CMake default). --no-xml disables it to save the
-# ~60s libxml2 build when you're iterating on the core validator.
+# Artifact list. iccxml.* and iccjson.* are optional — only present if the
+# matching BUILD_ICC* option was ON at configure time (both default to ON).
+# Disable with `-DBUILD_ICCXML=OFF` / `-DBUILD_ICCJSON=OFF` to skip them
+# when iterating on the core validator.
 ARTIFACTS=(iccprofiledump.mjs iccprofiledump.wasm)
 if [ -f "$BUILD_DIR/iccxml.mjs" ]; then
   ARTIFACTS+=(iccxml.mjs iccxml.wasm)
+fi
+if [ -f "$BUILD_DIR/iccjson.mjs" ]; then
+  ARTIFACTS+=(iccjson.mjs iccjson.wasm)
 fi
 
 if [ "${1:-}" = "--verify" ]; then
