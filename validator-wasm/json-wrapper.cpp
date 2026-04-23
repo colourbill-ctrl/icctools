@@ -47,6 +47,13 @@
 #include <string>
 #include <vector>
 
+// ── Input-size cap ─────────────────────────────────────────────────────────
+// Mirror of the icceval/iccflow pattern. An ICC profile serialised to JSON
+// never legitimately exceeds a few MB; 32 MB is generous. Gating here
+// prevents a 2 GB JSON blob from chewing nlohmann::parse memory before we
+// see any structure. Keep in sync with MAX_JSON_BYTES in jsonConverter.js.
+static constexpr std::size_t kMaxJsonBytes = 32ULL * 1024 * 1024;
+
 namespace {
 
 void ensureFactoriesPushed() {
@@ -168,6 +175,12 @@ static std::string iccToJson(emscripten::val bytes, int indent, bool sort) {
 static emscripten::val jsonToIcc(const std::string& json) {
   ensureFactoriesPushed();
 
+  // Size gate before nlohmann does anything expensive.
+  if (json.size() > kMaxJsonBytes) {
+    throw std::runtime_error(
+        "JSON exceeds " + std::to_string(kMaxJsonBytes / (1024 * 1024)) + " MB limit");
+  }
+
   // Parse JSON directly into nlohmann::ordered_json. No MEMFS hop — the
   // public ParseJson(IccJson&, string&) takes the in-memory doc.
   IccJson root;
@@ -179,9 +192,26 @@ static emscripten::val jsonToIcc(const std::string& json) {
     throw std::runtime_error(msg);
   }
 
+  // IccLibJSON's ParseJson does many raw .get<T>() calls without type
+  // guards; a JSON value of the wrong type throws nlohmann::type_error
+  // which would otherwise escape to std::terminate and kill the wasm
+  // module instance for the rest of the session. Wrap defensively until
+  // upstream adopts the fix (iccdev-prs #23).
   CIccProfileJson profile;
   std::string reason;
-  if (!profile.ParseJson(root, reason)) {
+  bool parsed = false;
+  try {
+    parsed = profile.ParseJson(root, reason);
+  } catch (const nlohmann::json::exception& e) {
+    std::string msg = "JSON type/range error during parse: ";
+    msg += e.what();
+    throw std::runtime_error(msg);
+  } catch (const std::exception& e) {
+    std::string msg = "Unexpected error during JSON parse: ";
+    msg += e.what();
+    throw std::runtime_error(msg);
+  }
+  if (!parsed) {
     std::string msg = "JSON did not describe a valid profile";
     if (!reason.empty()) { msg += ": "; msg += reason; }
     throw std::runtime_error(msg);
