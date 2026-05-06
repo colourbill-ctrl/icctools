@@ -57,3 +57,21 @@ export async function validateBytes(bytes, filename) {
   data.exitCode = (data.validation?.level === 'error') ? 1 : 0
   return data
 }
+
+/**
+ * Full-verbosity Describe() for a single tag, computed on demand.
+ *
+ * The bulk validateProfile() pass uses verbosity 75 (no CLUT cell dumps) so
+ * the WASM heap stays bounded even on huge nCLR profiles. The tag detail
+ * modal calls this when opened to get the wxProfileDump-equivalent dump for
+ * one tag — which fits even at full verbosity once isolated.
+ *
+ * `tagSig` is the 4-character ICC signature (e.g. "A2B0", "desc").
+ */
+export async function describeTag(bytes, tagSig) {
+  const mod = await loadModule()
+  const json = mod.describeTag(bytes, tagSig)
+  const data = JSON.parse(json)
+  if (data.error) throw new Error(data.error)
+  return data.description
+}

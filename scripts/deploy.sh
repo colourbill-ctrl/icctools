@@ -28,6 +28,13 @@ fi
 
 (cd frontend && npm run build)
 
+# Guard against rsync --delete wiping the live site if vite build produced
+# nothing (aborted build, missing index.html).
+if [ ! -f frontend/dist/index.html ]; then
+  echo "error: frontend/dist/index.html missing — refusing to rsync --delete" >&2
+  exit 1
+fi
+
 rsync -avz --delete frontend/dist/ "$REMOTE"
 
 echo

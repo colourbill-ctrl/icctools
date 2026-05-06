@@ -118,3 +118,21 @@
   word-break: break-word;
   tab-size: 4;
 }
+
+.loadingBar,
+.errorBar {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.loadingBar {
+  background: var(--surface-alt);
+  color: var(--text-muted);
+}
+
+.errorBar {
+  background: #fdecea;
+  color: #8a1010;
+}

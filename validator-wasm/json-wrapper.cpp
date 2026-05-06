@@ -40,6 +40,7 @@
 #include <emscripten/val.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -55,6 +56,18 @@
 static constexpr std::size_t kMaxJsonBytes = 32ULL * 1024 * 1024;
 
 namespace {
+
+// Per-call counter so concurrent calls (e.g. from a future Web Worker pool or
+// reentrant Promise.all) don't collide on a shared MEMFS path.
+std::string uniqueMemfsPath(const char* prefix, const char* ext) {
+  static std::atomic<std::uint64_t> counter{0};
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), "/tmp/icctools_%s_%llu.%s",
+                prefix,
+                static_cast<unsigned long long>(counter.fetch_add(1)),
+                ext);
+  return std::string(buf);
+}
 
 void ensureFactoriesPushed() {
   static bool pushed = false;
@@ -135,25 +148,25 @@ static std::string iccToJson(emscripten::val bytes, int indent, bool sort) {
   // CIccMemIO here (size is known), but matching xml-wrapper.cpp keeps the
   // two modules structurally identical for readers. If profile loads
   // dominate a future benchmark we can switch this one path.
-  const char* srcPath = "/tmp/icctools_in.icc";
-  if (!writeFile(srcPath, vec.data(), vec.size())) {
+  const std::string srcPath = uniqueMemfsPath("in", "icc");
+  if (!writeFile(srcPath.c_str(), vec.data(), vec.size())) {
     throw std::runtime_error("failed to write MEMFS input");
   }
 
   CIccFileIO srcIO;
-  if (!srcIO.Open(srcPath, "r")) {
-    std::remove(srcPath);
+  if (!srcIO.Open(srcPath.c_str(), "r")) {
+    std::remove(srcPath.c_str());
     throw std::runtime_error("failed to open profile bytes");
   }
 
   CIccProfileJson profile;
   if (!profile.Read(&srcIO)) {
     srcIO.Close();
-    std::remove(srcPath);
+    std::remove(srcPath.c_str());
     throw std::runtime_error("failed to parse ICC profile");
   }
   srcIO.Close();
-  std::remove(srcPath);
+  std::remove(srcPath.c_str());
 
   if (sort) {
     IccJson doc;
@@ -227,14 +240,14 @@ static emscripten::val jsonToIcc(const std::string& json) {
   icProfileIDSaveMethod saveMethod =
       (i < 16) ? icAlwaysWriteID : icVersionBasedID;
 
-  const char* dstPath = "/tmp/icctools_out.icc";
-  if (!SaveIccProfile(dstPath, &profile, saveMethod)) {
+  const std::string dstPath = uniqueMemfsPath("out", "icc");
+  if (!SaveIccProfile(dstPath.c_str(), &profile, saveMethod)) {
     throw std::runtime_error("failed to write ICC profile");
   }
 
   std::vector<std::uint8_t> bytes;
-  bool ok = readFile(dstPath, bytes);
-  std::remove(dstPath);
+  bool ok = readFile(dstPath.c_str(), bytes);
+  std::remove(dstPath.c_str());
   if (!ok) {
     throw std::runtime_error("failed to read back saved profile");
   }

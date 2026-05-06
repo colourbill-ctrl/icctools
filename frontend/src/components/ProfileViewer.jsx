@@ -90,7 +90,7 @@ export default function ProfileViewer({
       </div>
 
       {selectedTag && (
-        <TagDetailModal tag={selectedTag} onClose={() => setSelectedTag(null)} />
+        <TagDetailModal tag={selectedTag} bytes={bytes} onClose={() => setSelectedTag(null)} />
       )}
     </div>
   )

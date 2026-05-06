@@ -13,6 +13,11 @@
 const WASM_DIR = '/wasm/'
 let modulePromise = null
 
+// Mirror the C++ cap in xml-wrapper.cpp so the user gets a clean error
+// before we pay for a multi-MB string copy into the wasm heap. Keep in
+// sync with kMaxXmlBytes.
+export const MAX_XML_BYTES = 32 * 1024 * 1024   // 32 MB
+
 async function loadModule() {
   if (!modulePromise) {
     modulePromise = (async () => {
@@ -56,6 +61,15 @@ export async function iccToXml(bytes) {
 
 /** Convert XML string → ICC profile bytes (Uint8Array). Throws Error with reason on failure. */
 export async function xmlToIcc(xml) {
+  // string.length is UTF-16 code-units. UTF-8 byte count is always >=
+  // code-unit count, so rejecting on length is a safe-loose upper bound
+  // on bytes; the C++ side does the authoritative check on xml.size().
+  if (xml.length > MAX_XML_BYTES) {
+    throw new Error(
+      `XML exceeds ${MAX_XML_BYTES / 1024 / 1024} MB limit ` +
+      `(${(xml.length / 1024 / 1024).toFixed(1)} MB supplied)`
+    )
+  }
   const mod = await loadModule()
   try { return mod.xmlToIcc(xml) }
   catch (e) { throw toError(mod, e) }

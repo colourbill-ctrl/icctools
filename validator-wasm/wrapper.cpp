@@ -147,7 +147,12 @@ static std::string validateBytes(const std::uint8_t* data, std::size_t len) {
     if (entry.pTag) {
       r.type = std::string(info.GetTagTypeSigName(entry.pTag->GetType()));
       r.isArrayType = entry.pTag->IsArrayType();
-      entry.pTag->Describe(r.description, 100);
+      // Verbosity 75 sits just under the > 75 gates in IccTagLut.cpp /
+      // IccTagBasic.cpp that dump every CLUT cell and every curve point.
+      // The tag detail modal calls describeTag() for verbosity 100 on demand;
+      // doing that for every tag upfront blows the WASM heap on profiles with
+      // large LUTs (any nCLR profile, plus large CMYK ones like OakPrinting).
+      entry.pTag->Describe(r.description, 75);
     } else {
       r.description = "Tag not found in profile.";
     }
@@ -215,12 +220,79 @@ static std::string validateBytes(const std::uint8_t* data, std::size_t len) {
 
 // ── Embind binding ───────────────────────────────────────────────────────────
 // Accepts a Uint8Array from JS, returns a JSON string.
+//
+// Anything thrown out of IccProfLib (most likely std::bad_alloc on
+// Describe-explosion for huge nCLR LUTs, but also any other parser exception)
+// is converted to a JSON {"error": ...} response so the browser surfaces a
+// readable message instead of an opaque CppException.
 
 static std::string validateProfile(emscripten::val bytes) {
-  auto vec = emscripten::convertJSArrayToNumberVector<std::uint8_t>(bytes);
-  return validateBytes(vec.data(), vec.size());
+  try {
+    auto vec = emscripten::convertJSArrayToNumberVector<std::uint8_t>(bytes);
+    return validateBytes(vec.data(), vec.size());
+  } catch (const std::exception& e) {
+    json err = {{"error", std::string("validator threw: ") + e.what()}};
+    return err.dump();
+  } catch (...) {
+    json err = {{"error", "validator threw an unknown exception"}};
+    return err.dump();
+  }
+}
+
+// On-demand full-verbosity (100) Describe for a single tag. The upfront
+// validateProfile() pass uses verbosity 50 to keep peak memory bounded; the
+// tag detail modal calls this when opened to get the wxProfileDump-equivalent
+// dump for one tag (which fits even for 7CLR LUTs once isolated).
+//
+// `tagSig` is a 4-character ICC signature like "A2B0" or "desc". Tags with
+// the same signature appearing more than once resolve to the first match
+// (matches CIccProfile::FindTag behaviour). Always returns a JSON envelope:
+// {"description": "..."} on success, {"error": "..."} on failure.
+
+static std::string describeTagBytes(const std::uint8_t* data, std::size_t len,
+                                    const std::string& tagSig) {
+  if (tagSig.size() != 4) {
+    return json{{"error", "tagSig must be a 4-character ICC signature"}}.dump();
+  }
+  icUInt32Number sig =
+      (static_cast<icUInt32Number>(static_cast<unsigned char>(tagSig[0])) << 24) |
+      (static_cast<icUInt32Number>(static_cast<unsigned char>(tagSig[1])) << 16) |
+      (static_cast<icUInt32Number>(static_cast<unsigned char>(tagSig[2])) <<  8) |
+      (static_cast<icUInt32Number>(static_cast<unsigned char>(tagSig[3])));
+
+  std::string sReport;
+  icValidateStatus nStatus = icValidateOK;
+  CIccProfile* pProfile = ValidateIccProfile(
+      data, static_cast<icUInt32Number>(len), sReport, nStatus);
+  if (!pProfile) {
+    return json{{"error", "Failed to parse ICC profile"}}.dump();
+  }
+
+  CIccTag* pTag = pProfile->FindTag(static_cast<icSignature>(sig));
+  if (!pTag) {
+    delete pProfile;
+    return json{{"error", "Tag not found: " + tagSig}}.dump();
+  }
+
+  std::string description;
+  pTag->Describe(description, 100);
+  delete pProfile;
+  return json{{"description", description}}.dump(
+      -1, ' ', false, json::error_handler_t::replace);
+}
+
+static std::string describeTag(emscripten::val bytes, std::string tagSig) {
+  try {
+    auto vec = emscripten::convertJSArrayToNumberVector<std::uint8_t>(bytes);
+    return describeTagBytes(vec.data(), vec.size(), tagSig);
+  } catch (const std::exception& e) {
+    return json{{"error", std::string("describeTag threw: ") + e.what()}}.dump();
+  } catch (...) {
+    return json{{"error", "describeTag threw an unknown exception"}}.dump();
+  }
 }
 
 EMSCRIPTEN_BINDINGS(iccprofiledump) {
   emscripten::function("validateProfile", &validateProfile);
+  emscripten::function("describeTag", &describeTag);
 }

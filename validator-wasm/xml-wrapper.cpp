@@ -43,6 +43,7 @@
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -50,7 +51,25 @@
 #include <string>
 #include <vector>
 
+// Mirrors kMaxJsonBytes in json-wrapper.cpp. ICC profiles serialised to XML
+// don't legitimately exceed a few MB; 32 MB is generous and stops a multi-GB
+// paste from copying through std::string into MEMFS before libxml2 sees it.
+// Keep in sync with MAX_XML_BYTES in xmlConverter.js.
+static constexpr std::size_t kMaxXmlBytes = 32ULL * 1024 * 1024;
+
 namespace {
+
+// Per-call counter so concurrent calls (e.g. from a future Web Worker pool or
+// reentrant Promise.all) don't collide on a shared MEMFS path.
+std::string uniqueMemfsPath(const char* prefix, const char* ext) {
+  static std::atomic<std::uint64_t> counter{0};
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), "/tmp/icctools_%s_%llu.%s",
+                prefix,
+                static_cast<unsigned long long>(counter.fetch_add(1)),
+                ext);
+  return std::string(buf);
+}
 
 void ensureFactoriesPushed() {
   static bool pushed = false;
@@ -105,29 +124,29 @@ emscripten::val makeUint8Array(const std::uint8_t* data, std::size_t size) {
 
 } // namespace
 
-static std::string iccToXml(emscripten::val bytes) {
+static std::string iccToXmlImpl(emscripten::val bytes) {
   ensureFactoriesPushed();
   auto vec = emscripten::convertJSArrayToNumberVector<std::uint8_t>(bytes);
 
-  const char* srcPath = "/tmp/icctools_in.icc";
-  if (!writeFile(srcPath, vec.data(), vec.size())) {
+  const std::string srcPath = uniqueMemfsPath("in", "icc");
+  if (!writeFile(srcPath.c_str(), vec.data(), vec.size())) {
     throw std::runtime_error("failed to write MEMFS input");
   }
 
   CIccFileIO srcIO;
-  if (!srcIO.Open(srcPath, "r")) {
-    std::remove(srcPath);
+  if (!srcIO.Open(srcPath.c_str(), "r")) {
+    std::remove(srcPath.c_str());
     throw std::runtime_error("failed to open profile bytes");
   }
 
   CIccProfileXml profile;
   if (!profile.Read(&srcIO)) {
     srcIO.Close();
-    std::remove(srcPath);
+    std::remove(srcPath.c_str());
     throw std::runtime_error("failed to parse ICC profile");
   }
   srcIO.Close();
-  std::remove(srcPath);
+  std::remove(srcPath.c_str());
 
   std::string xml;
   xml.reserve(1 << 20);
@@ -137,26 +156,33 @@ static std::string iccToXml(emscripten::val bytes) {
   return xml;
 }
 
-static emscripten::val xmlToIcc(const std::string& xml) {
+static emscripten::val xmlToIccImpl(const std::string& xml) {
   ensureFactoriesPushed();
 
-  const char* srcPath = "/tmp/icctools_in.xml";
-  const char* dstPath = "/tmp/icctools_out.icc";
+  // Size gate before MEMFS write + libxml2 parse. Anything legitimate fits
+  // well under this; multi-GB pastes are caught here.
+  if (xml.size() > kMaxXmlBytes) {
+    throw std::runtime_error(
+        "XML exceeds " + std::to_string(kMaxXmlBytes / (1024 * 1024)) + " MB limit");
+  }
 
-  if (!writeFile(srcPath, xml.data(), xml.size())) {
+  const std::string srcPath = uniqueMemfsPath("in", "xml");
+  const std::string dstPath = uniqueMemfsPath("out", "icc");
+
+  if (!writeFile(srcPath.c_str(), xml.data(), xml.size())) {
     throw std::runtime_error("failed to write MEMFS XML input");
   }
 
   CIccProfileXml profile;
   std::string reason;
   // Empty RelaxNG path → skip schema validation (matches iccFromXml without -v).
-  if (!profile.LoadXml(srcPath, "", &reason)) {
-    std::remove(srcPath);
+  if (!profile.LoadXml(srcPath.c_str(), "", &reason)) {
+    std::remove(srcPath.c_str());
     std::string msg = "XML parse failed";
     if (!reason.empty()) { msg += ": "; msg += reason; }
     throw std::runtime_error(msg);
   }
-  std::remove(srcPath);
+  std::remove(srcPath.c_str());
 
   // Mirror iccFromXml's save behaviour: always save, even if Validate() flags
   // issues. The UI re-runs the validator on the returned bytes anyway and
@@ -168,17 +194,43 @@ static emscripten::val xmlToIcc(const std::string& xml) {
   icProfileIDSaveMethod saveMethod =
       (i < 16) ? icAlwaysWriteID : icVersionBasedID;
 
-  if (!SaveIccProfile(dstPath, &profile, saveMethod)) {
+  if (!SaveIccProfile(dstPath.c_str(), &profile, saveMethod)) {
     throw std::runtime_error("failed to write ICC profile");
   }
 
   std::vector<std::uint8_t> bytes;
-  bool ok = readFile(dstPath, bytes);
-  std::remove(dstPath);
+  bool ok = readFile(dstPath.c_str(), bytes);
+  std::remove(dstPath.c_str());
   if (!ok) {
     throw std::runtime_error("failed to read back saved profile");
   }
   return makeUint8Array(bytes.data(), bytes.size());
+}
+
+// Outer wrappers convert any unexpected throw (libxml2/IccLibXML internal,
+// std::bad_alloc on huge inputs, etc.) into a std::runtime_error so embind
+// surfaces a readable .what() via getExceptionMessage instead of an opaque
+// CppException pointer that would also leave the module instance in a
+// terminated state for the rest of the session. Mirrors the json-wrapper.cpp
+// pattern.
+static std::string iccToXml(emscripten::val bytes) {
+  try { return iccToXmlImpl(bytes); }
+  catch (const std::runtime_error&) { throw; }
+  catch (const std::exception& e) {
+    throw std::runtime_error(std::string("iccToXml threw: ") + e.what());
+  } catch (...) {
+    throw std::runtime_error("iccToXml threw an unknown exception");
+  }
+}
+
+static emscripten::val xmlToIcc(const std::string& xml) {
+  try { return xmlToIccImpl(xml); }
+  catch (const std::runtime_error&) { throw; }
+  catch (const std::exception& e) {
+    throw std::runtime_error(std::string("xmlToIcc threw: ") + e.what());
+  } catch (...) {
+    throw std::runtime_error("xmlToIcc threw an unknown exception");
+  }
 }
 
 EMSCRIPTEN_BINDINGS(icctools_xml) {
