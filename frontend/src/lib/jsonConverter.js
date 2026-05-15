@@ -7,7 +7,7 @@
  * never open the JSON tab don't pay for the ~1 MB download.
  */
 
-const WASM_DIR = '/wasm/'
+const WASM_DIR = import.meta.env.BASE_URL + 'wasm/'
 let modulePromise = null
 
 // Mirror the C++ cap in json-wrapper.cpp so the user gets a clean error

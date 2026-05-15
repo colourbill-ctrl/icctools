@@ -10,7 +10,7 @@
  * to analyse imports out of /public.
  */
 
-const WASM_DIR = '/wasm/'
+const WASM_DIR = import.meta.env.BASE_URL + 'wasm/'
 let modulePromise = null
 
 // Mirror the C++ cap in xml-wrapper.cpp so the user gets a clean error

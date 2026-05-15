@@ -54,3 +54,9 @@
 .hidden {
   display: none;
 }
+
+@media (max-width: 720px) {
+  .zone { padding: 24px 14px; }
+  .icon { font-size: 28px; }
+  .headline { font-size: 14px; }
+}

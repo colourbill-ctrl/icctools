@@ -87,11 +87,25 @@ Each component has a co-located `*.module.css` file. Global tokens (colours, fon
 
 ## Deployment
 
-Production instance: `https://chardata.colourbill.com:5173/` — nginx on a Lightsail box serves `frontend/dist/` as static files. Redeploy with:
+Production instance: `https://chardata.colourbill.com/profiletool/` — nginx on the same Lightsail box that serves chardata. icctools is a static dist; nginx serves it from `/var/www/profiletool/` at the `/profiletool/` location.
+
+Vite's `base` is `/profiletool/` for `npm run build` and `/` for `npm run dev` (see `vite.config.js`), so dev URLs stay at `http://localhost:5173/` while production assets resolve under `/profiletool/`. Each `WASM_DIR` constant in `src/lib/*.js` is computed from `import.meta.env.BASE_URL` so the WASM loader follows the same prefix.
+
+Redeploy with:
 
 ```bash
-cd frontend && npm run build
-rsync -avz --delete dist/ chardata:/var/www/icctools/
+scripts/deploy.sh                   # rebuilds WASM + frontend, rsyncs to chardata:/var/www/profiletool/
+NO_WASM=1 scripts/deploy.sh         # frontend-only rebuild + rsync
 ```
 
-nginx server block is under `/etc/nginx/sites-available/icctools` on the host; see current state with `ssh chardata 'sudo cat /etc/nginx/sites-available/icctools'`.
+nginx server block: the chardata.colourbill.com vhost needs a `location /profiletool/` that aliases to `/var/www/profiletool/` with `try_files $uri $uri/ /profiletool/index.html;` (SPA fallback). Drop the legacy `:5173` server block once `/profiletool/` is live.
+
+## Launch protocol (cross-app hand-off)
+
+When opened with `?source=chardata`, icctools posts `{type:'icctools:ready'}` to `window.opener` once on mount, then waits for a `{type:'icctools:load', filename, bytes}` reply. `bytes` is accepted as `Uint8Array`, `ArrayBuffer`, or array-like. Origin is not strictly checked — icctools is no-network so the worst a hostile opener can do is push bad bytes that fail validation. The flow is one-way: there is no return channel back to the opener.
+
+chardata's `launchIccEditor()` in `public/index.html` is the canonical caller — it opens `http://localhost:5173/?source=chardata` in dev, `/profiletool/?source=chardata` in prod.
+
+## Responsive layout
+
+The layout drops the fixed `841 px` width below `720 px`. The tag table reflows from a 6-column grid to stacked cards (`grid-template-areas: "num name name name" / "num id id id" / "num off size pad"`), the header table cells stack, tabs wrap, and the tag-detail modal goes full-screen. Style targets match chardata's mobile breakpoint so users moving between the two apps see consistent reflow behaviour.

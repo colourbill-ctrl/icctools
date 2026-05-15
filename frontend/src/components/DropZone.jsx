@@ -46,7 +46,7 @@ export default function DropZone({ onFile, disabled }) {
         disabled={disabled}
         type="button"
       >
-        Select ICC profile…
+        Load ICC profile
       </button>
       <p className={styles.hint}>.icc and .icm files</p>
 

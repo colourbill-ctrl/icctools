@@ -6,7 +6,8 @@
  * callers don't need to change.
  */
 
-const WASM_DIR = '/wasm/'
+// BASE_URL is '/' in dev and '/profiletool/' in production builds — see vite.config.js.
+const WASM_DIR = import.meta.env.BASE_URL + 'wasm/'
 let modulePromise = null
 
 async function loadModule() {

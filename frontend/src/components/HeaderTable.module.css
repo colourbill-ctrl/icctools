@@ -70,3 +70,27 @@
   color: var(--text-muted);
   font-style: normal;
 }
+
+@media (max-width: 720px) {
+  .table, .table tbody, .table tr { display: block; width: 100%; }
+  .table tr {
+    border-bottom: 1px solid var(--border-soft);
+    padding: 4px 0;
+  }
+  .table tr:last-child { border-bottom: none; }
+  .key, .value {
+    display: block;
+    width: auto;
+    min-width: 0;
+    padding: 4px 10px;
+    border-bottom: none;
+  }
+  .key { padding-bottom: 0; }
+  .value { padding-top: 2px; }
+  .profileId {
+    padding: 8px 10px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .idValue { font-size: 11px; }
+}

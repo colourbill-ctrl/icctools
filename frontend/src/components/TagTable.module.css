@@ -1,42 +1,44 @@
 .wrapper {
-  overflow-x: auto;
   border: 1px solid var(--border);
-}
-
-.table {
-  width: 100%;
-  border-collapse: collapse;
   font-size: 12px;
 }
 
-.table thead {
-  background: var(--header-bg);
+.row {
+  display: grid;
+  grid-template-columns: 48px 1fr 90px 90px 70px 60px;
+  gap: 0;
+  align-items: center;
+  border-bottom: 1px solid var(--border-soft);
 }
 
-.table th {
-  text-align: left;
-  padding: 8px 12px;
+.row > span {
+  padding: 6px 12px;
+  word-break: break-word;
+}
+
+.row:last-child { border-bottom: none; }
+
+.row:nth-child(odd)  { background: var(--surface-alt); }
+.row:nth-child(even) { background: var(--surface); }
+
+.head {
+  background: var(--header-bg) !important;
   color: #ffffff;
   font-family: Arial, Verdana, Helvetica, sans-serif;
   font-size: 10px;
   font-weight: bold;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  white-space: nowrap;
+}
+.head > span {
+  padding: 8px 12px;
   border-right: 1px solid #333;
 }
+.head > span:last-child { border-right: none; }
 
-.table th:last-child { border-right: none; }
-
-.table td {
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border-soft);
-  vertical-align: middle;
+.label {
+  display: none;
 }
-
-.table tbody tr:nth-child(odd)  { background: var(--surface-alt); }
-.table tbody tr:nth-child(even) { background: var(--surface); }
-.table tr:last-child td { border-bottom: none; }
 
 .clickable { cursor: pointer; }
 .clickable:hover { background: #fbe6ec !important; }
@@ -73,7 +75,7 @@
   vertical-align: 1px;
 }
 
-.id code {
+.colId code {
   font-family: var(--font-mono);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -91,4 +93,54 @@
   font-style: italic;
   font-size: 12px;
   padding: 12px;
+}
+
+@media (max-width: 720px) {
+  .wrapper { border: none; }
+
+  .head { display: none; }
+
+  .row {
+    grid-template-columns: 40px 1fr 1fr 1fr;
+    grid-template-areas:
+      "num  name name name"
+      "num  id   id   id"
+      "num  off  size pad";
+    column-gap: 10px;
+    row-gap: 2px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    border: 1px solid var(--border-soft);
+  }
+
+  .row > span { padding: 0; }
+
+  .colNum {
+    grid-area: num;
+    align-self: center;
+    text-align: center;
+    font-weight: bold;
+    color: var(--text-muted);
+  }
+  .colName {
+    grid-area: name;
+    font-size: 13px;
+  }
+  .colId {
+    grid-area: id;
+    text-align: left;
+  }
+  .colOffset { grid-area: off;  text-align: left; }
+  .colSize   { grid-area: size; text-align: left; }
+  .colPad    { grid-area: pad;  text-align: left; }
+
+  .label {
+    display: inline;
+    font-size: 10px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-muted);
+    margin-right: 4px;
+  }
 }

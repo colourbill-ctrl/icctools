@@ -48,6 +48,7 @@
   background: var(--header-bg);
   padding: 0;
   gap: 0;
+  flex-wrap: wrap;
 }
 
 .tab {
@@ -113,4 +114,20 @@
   white-space: pre-wrap;
   word-break: break-all;
   line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .titleBar {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .filename { font-size: 12px; }
+  .meta { font-size: 10px; flex-basis: 100%; }
+  .tab {
+    padding: 7px 10px;
+    font-size: 10px;
+    letter-spacing: 0.3px;
+  }
+  .panel { padding: 12px; }
+  .raw { font-size: 10px; padding: 10px; }
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import DropZone from './components/DropZone.jsx'
+import LoadButton from './components/LoadButton.jsx'
 import ProfileViewer from './components/ProfileViewer.jsx'
 import { validateProfile, validateBytes, preloadValidator } from './lib/validator.js'
 import { computeChangedTagIds } from './lib/tagDiff.js'
@@ -35,15 +36,12 @@ export default function App() {
 
   const saveRef = useRef(null)
 
-  const handleFile = useCallback(async (file) => {
-    if (!file) return
+  const loadFromBytes = useCallback(async (filename, bytes) => {
     setLoading(true); setError(null); setProfile(null)
     try {
-      const parsed = await validateProfile(file)
-      const buffer = await file.arrayBuffer()
-      const bytes  = new Uint8Array(buffer)
+      const parsed = await validateBytes(bytes, filename)
       setProfile({
-        filename:       file.name,
+        filename,
         originalBytes:  bytes,
         originalParsed: parsed,
         currentBytes:   bytes,
@@ -62,6 +60,38 @@ export default function App() {
       setLoading(false)
     }
   }, [])
+
+  const handleFile = useCallback(async (file) => {
+    if (!file) return
+    const buffer = await file.arrayBuffer()
+    return loadFromBytes(file.name, new Uint8Array(buffer))
+  }, [loadFromBytes])
+
+  // Launch protocol: when opened with ?source=chardata, signal readiness to
+  // window.opener and accept {type:'icctools:load', filename, bytes} once.
+  // The opener (chardata) drops the reference after sending. The handshake is
+  // intentionally permissive about origin — icctools is no-network and the
+  // worst a hostile opener can do is push bad bytes that fail validation.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('source') !== 'chardata') return
+    if (!window.opener) return
+
+    function onMessage(ev) {
+      if (ev.source !== window.opener) return
+      const msg = ev.data
+      if (!msg || msg.type !== 'icctools:load') return
+      const { filename, bytes } = msg
+      if (!bytes) return
+      const u8 = bytes instanceof Uint8Array ? bytes
+        : bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
+        : new Uint8Array(bytes)
+      loadFromBytes(filename || 'profile.icc', u8)
+    }
+    window.addEventListener('message', onMessage)
+    window.opener.postMessage({ type: 'icctools:ready' }, '*')
+    return () => window.removeEventListener('message', onMessage)
+  }, [loadFromBytes])
 
   // Each panel pushes edited text via onChange; we compute *Dirty here so
   // the panels don't need to track their own baselines.
@@ -156,17 +186,18 @@ export default function App() {
       </div>
 
       <main className={styles.main}>
-        <DropZone onFile={handleFile} disabled={loading} />
+        {!profile && <DropZone onFile={handleFile} disabled={loading} />}
 
         {profile && (
-          <div className={styles.saveRow} ref={saveRef}>
+          <div className={styles.toolbar} ref={saveRef}>
+            <LoadButton onFile={handleFile} disabled={loading} />
             <button
               type="button"
               className="btn-primary"
               onClick={handleSave}
               disabled={loading}
             >
-              Save ICC Profile
+              Save ICC profile
             </button>
             {profile.iccDirty && (
               <span className={styles.modifiedPill} aria-live="polite">

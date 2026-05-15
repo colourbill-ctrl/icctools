@@ -7,51 +7,56 @@ export default function TagTable({ tags, onTagClick, changedTagIds }) {
 
   return (
     <div className={styles.wrapper}>
-      <table className={styles.table}>
-        <thead>
-          <tr>
-            <th className={styles.num}>#</th>
-            <th>Tag Name</th>
-            <th>ID</th>
-            <th className={styles.num}>Offset</th>
-            <th className={styles.num}>Size</th>
-            <th className={styles.num}>Pad</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tags.map((tag, i) => {
-            const changed = changedTagIds?.has(tag.id)
-            return (
-              <tr
-                key={i}
-                className={onTagClick ? styles.clickable : ''}
-                onClick={onTagClick ? () => onTagClick(tag) : undefined}
-                tabIndex={onTagClick ? 0 : undefined}
-                onKeyDown={onTagClick ? (e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    onTagClick(tag)
-                  }
-                } : undefined}
-              >
-                <td className={`${styles.num} ${styles.muted}`}>{i + 1}</td>
-                <td className={`${styles.name} ${changed ? styles.changed : ''}`} title={changed ? 'Bytes changed since load' : undefined}>
-                  {changed && <span className={styles.changedDot} aria-hidden>●</span>}
-                  {tag.name}
-                </td>
-                <td className={styles.id}>
-                  <code>{tag.id}</code>
-                </td>
-                <td className={`${styles.num} ${styles.mono}`}>{tag.offset}</td>
-                <td className={`${styles.num} ${styles.mono}`}>{tag.size}</td>
-                <td className={`${styles.num} ${styles.mono} ${padClass(tag.pad)}`}>
-                  {tag.pad}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+      <div className={`${styles.row} ${styles.head}`} role="row">
+        <span className={`${styles.num} ${styles.colNum}`}>#</span>
+        <span className={styles.colName}>Tag Name</span>
+        <span className={styles.colId}>ID</span>
+        <span className={`${styles.num} ${styles.colOffset}`}>Offset</span>
+        <span className={`${styles.num} ${styles.colSize}`}>Size</span>
+        <span className={`${styles.num} ${styles.colPad}`}>Pad</span>
+      </div>
+      {tags.map((tag, i) => {
+        const changed = changedTagIds?.has(tag.id)
+        const clickProps = onTagClick ? {
+          role: 'button',
+          tabIndex: 0,
+          onClick: () => onTagClick(tag),
+          onKeyDown: (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              onTagClick(tag)
+            }
+          },
+        } : {}
+        return (
+          <div
+            key={i}
+            className={`${styles.row} ${onTagClick ? styles.clickable : ''}`}
+            {...clickProps}
+          >
+            <span className={`${styles.num} ${styles.colNum} ${styles.muted}`}>{i + 1}</span>
+            <span className={`${styles.colName} ${styles.name} ${changed ? styles.changed : ''}`} title={changed ? 'Bytes changed since load' : undefined}>
+              {changed && <span className={styles.changedDot} aria-hidden>●</span>}
+              {tag.name}
+            </span>
+            <span className={styles.colId}>
+              <code>{tag.id}</code>
+            </span>
+            <span className={`${styles.num} ${styles.mono} ${styles.colOffset}`}>
+              <span className={styles.label}>Offset</span>
+              {tag.offset}
+            </span>
+            <span className={`${styles.num} ${styles.mono} ${styles.colSize}`}>
+              <span className={styles.label}>Size</span>
+              {tag.size}
+            </span>
+            <span className={`${styles.num} ${styles.mono} ${styles.colPad} ${padClass(tag.pad)}`}>
+              <span className={styles.label}>Pad</span>
+              {tag.pad}
+            </span>
+          </div>
+        )
+      })}
     </div>
   )
 }
