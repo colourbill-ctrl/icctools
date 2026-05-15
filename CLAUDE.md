@@ -102,9 +102,23 @@ nginx server block: the chardata.colourbill.com vhost needs a `location /profile
 
 ## Launch protocol (cross-app hand-off)
 
-When opened with `?source=chardata`, icctools posts `{type:'icctools:ready'}` to `window.opener` once on mount, then waits for a `{type:'icctools:load', filename, bytes}` reply. `bytes` is accepted as `Uint8Array`, `ArrayBuffer`, or array-like. Origin is not strictly checked — icctools is no-network so the worst a hostile opener can do is push bad bytes that fail validation. The flow is one-way: there is no return channel back to the opener.
+When opened with `?source=chardata`, icctools posts `{type:'icctools:ready'}` to `window.opener` once on mount, then waits for a `{type:'icctools:load', filename, bytes}` reply. `bytes` is accepted as `Uint8Array`, `ArrayBuffer`, or array-like. The flow is one-way: there is no return channel back to the opener.
+
+The listener (App.jsx) enforces two checks before accepting bytes:
+
+- **Sender identity**: `ev.source === window.opener` AND `ev.origin` is in an allowlist (`window.location.origin`, `http://localhost:3001`, `http://127.0.0.1:3001`). The dev-port entries cover chardata's local server; same-origin covers prod where both apps are served from `chardata.colourbill.com`. Adding a new caller means extending that allowlist.
+- **Size cap**: bytes are rejected if their `byteLength` exceeds `MAX_ICC_BYTES` (256 MB). Real profiles are well under 10 MB; this only stops a hostile opener from blowing the tab's heap before validation runs.
 
 chardata's `launchIccEditor()` in `public/index.html` is the canonical caller — it opens `http://localhost:5173/?source=chardata` in dev, `/profiletool/?source=chardata` in prod.
+
+## Security posture
+
+icctools makes no network requests after the initial asset load, so the threat model is "untrusted bytes inside the tab," not "untrusted server." The mitigations:
+
+- **CSP** is a `<meta http-equiv="Content-Security-Policy">` in `frontend/index.html`. `script-src` is `'self' 'wasm-unsafe-eval' blob:` — `blob:` is required by the dynamic-import-via-blob-URL pattern in `validator.js` / `xmlConverter.js` / `jsonConverter.js`; `wasm-unsafe-eval` is required by Emscripten. `connect-src 'self' blob:` keeps `connect-src` from going wider. `frame-ancestors 'none'` blocks embedding. Don't widen `script-src` to `'unsafe-eval'` — the WASM build is compiled with `DYNAMIC_EXECUTION=0` so embind doesn't need it.
+- **WASM input caps**: `kMaxJsonBytes` (json-wrapper.cpp) and `kMaxXmlBytes` (xml-wrapper.cpp) are both 32 MB; the JS counterparts in `lib/{jsonConverter,xmlConverter}.js` (`MAX_JSON_BYTES` / `MAX_XML_BYTES`) gate before MEMFS write. Keep the C++ and JS limits in sync — they're independently authoritative because either layer might be called first.
+- **XML entity-bomb guard**: `xml-wrapper.cpp::containsDoctypeOrEntity()` rejects any XML containing `<!DOCTYPE` or `<!ENTITY` before libxml2 sees it. Upstream IccLibXML calls libxml2 with `XML_PARSE_HUGE`, which disables libxml2's billion-laughs / nesting / name-length caps. We can't change that flag without patching iccDEV, so the pre-scan is the workaround. iccDEV's own XML emitter never writes a DTD, so the guard has zero legitimate-input false positives.
+- **Parse cache in wrapper.cpp**: `describeTagBytes` and friends parse the same profile bytes multiple times during normal UI use (validate → expand tag → expand another tag). `wrapper.cpp` keeps a single-slot cache keyed on FNV-1a64(bytes) + length, so re-describe of a different tag on the same profile skips the re-parse. Single-slot is enough because the UI only views one profile at a time; don't grow the cache to a map without measuring memory cost first.
 
 ## Responsive layout
 
