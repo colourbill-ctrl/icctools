@@ -1,0 +1,38 @@
+#!/bin/bash
+# Pre-commit hook for icctools:
+#   1. Regenerate frontend/public/help.html when MANUAL.md or
+#      scripts/generate-help.js is staged.
+#   2. Abort the commit if help.html is hand-edited (it's auto-generated).
+#
+# Activate after a fresh clone with:
+#   git config core.hooksPath hooks
+#
+# Pattern mirrors chardata/hooks/pre-commit. Keep the two in sync if you
+# extend one of them with new generator targets.
+
+STAGED=$(git diff --cached --name-only)
+
+HELP_SOURCE_CHANGED=false
+if echo "$STAGED" | grep -qE '^(MANUAL\.md|scripts/generate-help\.js)$'; then
+    HELP_SOURCE_CHANGED=true
+fi
+
+if echo "$STAGED" | grep -qE '^frontend/public/help\.html$' && [ "$HELP_SOURCE_CHANGED" = false ]; then
+    echo ""
+    echo "ERROR: frontend/public/help.html is auto-generated from MANUAL.md."
+    echo "Edit MANUAL.md (or scripts/generate-help.js for diagrams/layout) instead."
+    echo "Commit aborted."
+    exit 1
+fi
+
+if [ "$HELP_SOURCE_CHANGED" = true ]; then
+    echo "MANUAL.md or generate-help.js changed — regenerating help.html..."
+    node scripts/generate-help.js
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "ERROR: help.html generation failed — commit aborted."
+        exit 1
+    fi
+    git add frontend/public/help.html
+    echo "help.html regenerated and staged."
+fi

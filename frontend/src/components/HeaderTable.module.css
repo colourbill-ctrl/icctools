@@ -10,16 +10,16 @@
   gap: 12px;
   background: var(--surface-alt);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
   padding: 10px 14px;
 }
 
 .idLabel {
-  font-size: 10px;
-  font-weight: bold;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.04em;
   white-space: nowrap;
 }
 
@@ -27,7 +27,7 @@
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--accent);
-  font-weight: bold;
+  font-weight: 600;
   word-break: break-all;
 }
 
@@ -35,13 +35,16 @@
   width: 100%;
   border-collapse: collapse;
   border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
 .table tr:nth-child(odd)  { background: var(--surface-alt); }
 .table tr:nth-child(even) { background: var(--surface); }
+.table tr:hover { background: var(--surface-tint); }
 
 .key, .value {
-  padding: 6px 12px;
+  padding: 7px 12px;
   vertical-align: top;
   border-bottom: 1px solid var(--border-soft);
 }
@@ -51,24 +54,22 @@
 
 .key {
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: bold;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
+  font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
   width: 220px;
   min-width: 180px;
 }
 
 .value {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text);
   word-break: break-word;
 }
 
 .empty {
   color: var(--text-muted);
-  font-style: normal;
+  font-style: italic;
 }
 
 @media (max-width: 720px) {
@@ -85,8 +86,8 @@
     padding: 4px 10px;
     border-bottom: none;
   }
-  .key { padding-bottom: 0; }
-  .value { padding-top: 2px; }
+  .key { padding-bottom: 0; font-size: 11px; }
+  .value { padding-top: 2px; font-size: 12px; }
   .profileId {
     padding: 8px 10px;
     flex-wrap: wrap;

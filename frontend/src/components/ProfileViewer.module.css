@@ -1,7 +1,8 @@
 .viewer {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-top: 3px solid var(--accent);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
 }
 
 .titleBar {
@@ -29,10 +30,11 @@
 }
 
 .validBadge {
-  font-family: Arial, Verdana, Helvetica, sans-serif;
+  font-family: var(--font-sans);
   font-size: 10px;
   font-weight: bold;
   padding: 3px 10px;
+  border-radius: var(--radius);
   text-transform: uppercase;
   letter-spacing: 0.6px;
   border: 1px solid;
@@ -40,55 +42,70 @@
 
 .valid_valid   { background: #e3f3e6; border-color: var(--valid);   color: var(--valid); }
 .valid_warning { background: #fbf1d8; border-color: var(--warning); color: var(--warning); }
-.valid_error   { background: #fbe6ec; border-color: var(--error);   color: var(--error); }
+.valid_error   { background: var(--error-tint); border-color: #f4cccc; color: var(--error); }
 .valid_unknown { background: #eeeeee; border-color: var(--text-muted); color: var(--text-muted); }
+
+:global(body.dark) .valid_valid   { background: #1a2a1f; border-color: var(--valid);   color: var(--valid); }
+:global(body.dark) .valid_warning { background: #2a2418; border-color: var(--warning); color: var(--warning); }
+:global(body.dark) .valid_error   { background: #2a1818; border-color: #5a2424;       color: var(--error); }
+:global(body.dark) .valid_unknown { background: #2a2b2e; border-color: var(--text-muted); color: var(--text-muted); }
 
 .tabs {
   display: flex;
-  background: var(--header-bg);
-  padding: 0;
-  gap: 0;
+  gap: 4px;
+  padding: 0 12px;
+  background: var(--surface-alt);
+  border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
 
 .tab {
-  background: var(--header-bg);
-  color: #bfbfbf;
+  background: transparent;
+  color: #555;
   padding: 9px 16px;
   border: none;
-  border-right: 1px solid #222;
+  border-bottom: 3px solid transparent;
   border-radius: 0;
-  font-family: Verdana, Arial, Helvetica, sans-serif;
-  font-size: 11px;
-  font-weight: bold;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
   display: flex;
   align-items: center;
   gap: 6px;
-  transition: background 0.15s, color 0.15s;
+  box-shadow: none;
+  transition: color 0.15s, border-color 0.15s;
 }
 
-.tab:hover { color: #ffffff; background: #1a1a1a; }
+.tab:hover:not(:disabled) {
+  background: transparent;
+  color: var(--accent);
+}
+
+.tab:active:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  border-bottom-width: 3px;
+}
 
 .activeTab {
-  color: #ffffff !important;
-  background: var(--accent) !important;
-  border-right-color: var(--accent) !important;
+  color: var(--accent) !important;
+  border-bottom-color: var(--accent) !important;
 }
 
 .badge {
-  background: rgba(255, 255, 255, 0.2);
-  color: inherit;
-  font-size: 10px;
-  font-weight: bold;
-  padding: 1px 6px;
+  display: inline-block;
+  background: #a0b8d0;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 10px;
   min-width: 18px;
   text-align: center;
 }
 
 .activeTab .badge {
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--accent);
 }
 
 .panel {
@@ -110,6 +127,7 @@
   color: var(--text);
   background: var(--surface-alt);
   border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 12px;
   white-space: pre-wrap;
   word-break: break-all;
@@ -123,10 +141,10 @@
   }
   .filename { font-size: 12px; }
   .meta { font-size: 10px; flex-basis: 100%; }
+  .tabs { padding: 0 4px; }
   .tab {
-    padding: 7px 10px;
-    font-size: 10px;
-    letter-spacing: 0.3px;
+    padding: 8px 10px;
+    font-size: 12px;
   }
   .panel { padding: 12px; }
   .raw { font-size: 10px; padding: 10px; }

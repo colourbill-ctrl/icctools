@@ -1,46 +1,38 @@
 .layout {
   width: 841px;
   max-width: 100%;
-  margin: 6px auto;
+  margin: 16px auto;
   background: var(--surface);
-  min-height: calc(100vh - 12px);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  min-height: calc(100vh - 32px);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .header {
-  background: var(--header-bg);
-  color: #ffffff;
-  border-bottom: 2px solid #ffffff;
-  padding: 14px 22px;
+  padding: 22px 28px 6px 28px;
   display: flex;
   align-items: baseline;
   gap: 14px;
   flex-wrap: wrap;
 }
 
-.logo {
-  font-family: Arial, Verdana, Helvetica, sans-serif;
-  font-size: 18px;
+.title {
+  font-family: var(--font-sans);
+  font-size: 22px;
   font-weight: bold;
-  letter-spacing: 0.3px;
-  color: #ffffff;
-  text-transform: uppercase;
-}
-
-.subtitle {
-  font-size: 11px;
-  color: #bfbfbf;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  color: #333;
+  letter-spacing: 0.2px;
+  margin: 0;
 }
 
 .banner {
-  background: var(--surface);
-  border-bottom: 15px solid var(--header-bg);
-  padding: 16px 24px;
+  padding: 6px 28px 18px 28px;
   font-size: 13px;
-  color: var(--text);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
 }
 
 .banner strong {
@@ -49,10 +41,10 @@
 
 .main {
   flex: 1;
-  padding: 24px 25px 50px 25px;
+  padding: 22px 28px 40px 28px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
 }
 
 .status {
@@ -60,7 +52,7 @@
   align-items: center;
   gap: 10px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .spinner {
@@ -76,12 +68,13 @@
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .errorBanner {
-  background: #fbe6ec;
-  border: 1px solid var(--accent);
-  border-left-width: 4px;
+  background: var(--error-tint);
+  border: 1px solid #f4cccc;
+  border-left: 4px solid var(--error);
+  border-radius: var(--radius);
   padding: 10px 14px;
-  color: var(--accent);
-  font-size: 12px;
+  color: var(--error);
+  font-size: 13px;
 }
 
 .toolbar {
@@ -95,50 +88,52 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-tint);
+  color: var(--accent-hover);
+  border: 1px solid #cfdef5;
+  border-radius: var(--radius);
   font-size: 11px;
   font-weight: bold;
   padding: 4px 10px;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.4px;
   text-transform: uppercase;
 }
 
 .footer {
-  background: var(--header-bg);
-  color: #ffffff;
+  background: var(--surface-alt);
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
   text-align: center;
-  padding: 14px 22px;
+  padding: 12px 22px;
   font-size: 11px;
   letter-spacing: 0.3px;
 }
 
-.footer a { color: #ffffff; font-weight: normal; text-decoration: underline; }
+.footer a { color: var(--accent); font-weight: normal; }
 
 @media (max-width: 720px) {
   .layout {
     width: 100%;
     margin: 0;
+    border-radius: 0;
     min-height: 100vh;
   }
   .header {
-    padding: 12px 14px;
+    padding: 16px 16px 4px 16px;
     gap: 8px;
   }
-  .logo { font-size: 15px; }
-  .subtitle { font-size: 10px; }
+  .title { font-size: 19px; }
   .banner {
-    padding: 12px 14px;
-    border-bottom-width: 8px;
+    padding: 4px 16px 14px 16px;
     font-size: 12px;
   }
   .main {
-    padding: 14px 12px 32px 12px;
+    padding: 16px 12px 32px 12px;
     gap: 14px;
   }
   .toolbar { gap: 8px; }
   .footer {
-    padding: 12px 14px;
+    padding: 10px 14px;
     font-size: 10px;
   }
 }

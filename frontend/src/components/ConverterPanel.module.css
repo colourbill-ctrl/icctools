@@ -21,11 +21,12 @@
 }
 
 .error {
-  background: #fbe6ec;
-  border: 1px solid var(--accent);
-  border-left-width: 4px;
+  background: var(--error-tint);
+  border: 1px solid #f4cccc;
+  border-left: 4px solid var(--error);
+  border-radius: var(--radius);
   padding: 10px 14px;
-  color: var(--accent);
+  color: var(--error);
   font-size: 12px;
 }
 
@@ -40,6 +41,7 @@
 
 .placeholder {
   border: 1px dashed var(--border);
+  border-radius: var(--radius);
   padding: 28px 20px;
   color: var(--text-muted);
   font-size: 12px;
@@ -52,6 +54,7 @@
   font-family: var(--font-mono);
   background: var(--surface-alt);
   border: 1px solid var(--border);
+  border-radius: 4px;
   padding: 1px 5px;
 }
 
@@ -70,6 +73,7 @@
   font-family: var(--font-mono);
   font-size: 11px;
   border: 1px solid var(--border);
+  border-radius: 4px;
   background: var(--surface);
 }
 

@@ -2,6 +2,7 @@
   flex: 1;
   min-height: 500px;
   border: 1px solid var(--border);
+  border-radius: var(--radius);
   overflow: hidden;
 }
 

@@ -1,32 +1,49 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --page-bg:    #949CA3;
+  --page-bg:    #f0f2f5;
   --surface:    #ffffff;
-  --surface-alt:#f5f6f7;
-  --header-bg:  #000000;
-  --border:     #CACED1;
-  --border-soft:#CBD0D3;
-  --text:       #000000;
-  --text-muted: #555555;
-  --accent:     #BF003F;
-  --accent-hover:#8f002f;
-  --valid:      #2d7a3d;
-  --warning:    #b8860b;
-  --error:      #BF003F;
-  --tag-odd:    #f4f5f6;
-  --font-sans:  Verdana, Arial, Helvetica, sans-serif;
-  --font-mono:  'Consolas', 'Menlo', 'Liberation Mono', monospace;
-  --radius:     0;
+  --surface-alt:#f8fafd;
+  --surface-tint:#f0f6fd;
+  --border:     #e0e6ee;
+  --border-soft:#eef0f4;
+  --text:       #333333;
+  --text-muted: #888888;
+  --accent:     #4a90e2;
+  --accent-hover:#2a6ab5;
+  --accent-dark:#1f52a0;
+  --accent-tint:#e8f1fc;
+  --accent-tint-strong:#d6e4fb;
+  --valid:      #27ae60;
+  --warning:    #b87800;
+  --error:      #b91c1c;
+  --error-tint: #fdf2f2;
+  --tag-odd:    #f8fafd;
+  --font-sans:  Arial, 'Noto Sans SC', 'Hiragino Sans', 'Microsoft YaHei', 'Apple SD Gothic Neo', sans-serif;
+  --font-mono:  ui-monospace, Menlo, Consolas, 'Liberation Mono', monospace;
+  --radius:     6px;
+  --radius-lg:  10px;
 }
 
 body {
   background: var(--page-bg);
   color: var(--text);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
   min-height: 100vh;
+  transition: padding-right 0.2s ease;
+}
+
+/* SettingsBlade toggles these classes so the centered .layout can re-flow
+   instead of being overlapped by the right-side blade. The 44 px collapsed
+   width covers the 38 px floating tab column plus a 6 px breathing edge. */
+body.blade-open      { padding-right: 220px; }
+body.blade-collapsed { padding-right: 44px; }
+
+@media (max-width: 700px) {
+  body.blade-open,
+  body.blade-collapsed { padding-right: 0; }
 }
 
 a {
@@ -39,22 +56,91 @@ a:visited { color: var(--accent); }
 
 button {
   cursor: pointer;
-  border: 1px solid var(--accent);
+  border: 1px solid #bbb;
+  border-bottom: 3px solid #999;
   border-radius: var(--radius);
-  padding: 6px 16px;
-  font-size: 12px;
+  padding: 7px 14px;
+  font-size: 13px;
   font-family: var(--font-sans);
   font-weight: bold;
-  transition: background 0.15s, color 0.15s;
+  background: linear-gradient(to bottom, #f5f5f5, #e0e0e0);
+  color: #444;
+  box-shadow: 0 2px 3px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.8);
+  transition: background 0.08s ease, color 0.08s ease;
 }
-button:hover { opacity: 1; }
-button:disabled { opacity: 0.4; cursor: not-allowed; }
+button:hover:not(:disabled) {
+  background: linear-gradient(to bottom, #ffffff, #e8e8e8);
+  color: #4a90e2;
+}
+button:active:not(:disabled) {
+  border-bottom-width: 1px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.15);
+  transform: translateY(1px);
+}
+button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .btn-primary {
-  background: var(--accent);
+  background: linear-gradient(to bottom, #6aa8f0, #3a7fd5);
   color: #fff;
+  border: 1px solid #2a6ab5;
+  border-bottom: 3px solid #1f52a0;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.2);
 }
 .btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: linear-gradient(to bottom, #7ab5f5, #4a8fe5);
+  color: #fff;
+}
+.btn-primary:active:not(:disabled) {
+  border-bottom-width: 1px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.15);
+  transform: translateY(1px);
+}
+
+/* ── Dark mode ─────────────────────────────────────────────────────────────
+   Toggled by SettingsBlade adding `.dark` to <body>. Overrides the CSS
+   variables so all variable-consuming components flip automatically; only a
+   handful of cases (gradient buttons, tag-table head, modal chrome) need
+   extra rules below. */
+body.dark {
+  --page-bg:    #1a1b1e;
+  --surface:    #242529;
+  --surface-alt:#1e1f22;
+  --surface-tint:#1c2738;
+  --border:     #38393e;
+  --border-soft:#2e2f33;
+  --text:       #d0d0d0;
+  --text-muted: #888888;
+  --accent:     #6aacf0;
+  --accent-hover:#4a90e2;
+  --accent-dark:#2a6ab5;
+  --accent-tint:#1e2a40;
+  --accent-tint-strong:#243650;
+  --valid:      #5fc97a;
+  --warning:    #d49930;
+  --error:      #e57373;
+  --error-tint: #2a1818;
+  --tag-odd:    #1e1f22;
+}
+
+body.dark a:visited { color: var(--accent); }
+
+body.dark button {
+  background: linear-gradient(to bottom, #2c2d31, #232427);
+  color: #ccc;
+  border-color: #444;
+  border-bottom-color: #555;
+}
+body.dark button:hover:not(:disabled) {
+  background: linear-gradient(to bottom, #33343a, #2a2b2e);
+  color: var(--accent);
+}
+body.dark .btn-primary {
+  background: linear-gradient(to bottom, #4a90e2, #2a6ab5);
+  color: #fff;
+  border-color: #2a6ab5;
+  border-bottom-color: #1f52a0;
+}
+body.dark .btn-primary:hover:not(:disabled) {
+  background: linear-gradient(to bottom, #5fa0ef, #3a7fd5);
+  color: #fff;
 }

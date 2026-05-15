@@ -1,0 +1,252 @@
+/* Right settings blade — mirrors chardata's #blade pattern. Desktop: pinned
+   to the right edge, slides between 220 px (open) and 6 px (collapsed) with
+   a floating column of tab buttons hanging off the inner edge. Mobile: a
+   drawer that slides in from the right; tab buttons are hidden and replaced
+   by fixed-position mobile FABs. */
+
+.blade {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 220px;
+  height: 100vh;
+  background: var(--surface);
+  box-shadow: -3px 0 8px rgba(0,0,0,0.18), -1px 0 3px rgba(0,0,0,0.12);
+  transition: width 0.2s;
+  overflow: visible; /* tab column overhangs when collapsed */
+  display: flex;
+  z-index: 200;
+}
+
+.blade.collapsed {
+  width: 6px;
+}
+
+.content {
+  flex: 1;
+  padding: 24px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.blade.collapsed .content { display: none; }
+
+/* Tab column. Sits inside the flex flow on the inner edge when expanded; when
+   collapsed it floats anchored to the panel's right (screen) edge. */
+.tabs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 20px;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.blade.collapsed .tabs {
+  position: absolute;
+  right: 0;
+  top: 20px;
+  margin-top: 0;
+  z-index: 5;
+}
+
+.tabBtn {
+  width: 38px;
+  height: 34px;
+  flex-shrink: 0;
+  background: linear-gradient(to bottom, #f5f5f5, #e0e0e0);
+  border: 1px solid #bbb;
+  border-bottom: 3px solid #999;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: bold;
+  color: #666;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  box-shadow: 0 2px 3px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8);
+  transition: all 0.08s ease;
+}
+
+.tabBtn:hover:not(:disabled) {
+  background: linear-gradient(to bottom, #fff, #e8e8e8);
+  color: var(--accent);
+}
+
+.tabBtn:active:not(:disabled) {
+  border-bottom-width: 1px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.15);
+  transform: translateY(1px);
+}
+
+.tabArrow {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.tabIcon {
+  font-size: 16px;
+  line-height: 1;
+  color: #6aabd8;
+}
+
+.heading {
+  font-size: 15px;
+  font-weight: bold;
+  color: var(--text);
+}
+
+.sectionLabel {
+  font-size: 11px;
+  font-weight: bold;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 12px;
+  margin-top: -4px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.label {
+  font-size: 12px;
+  font-weight: bold;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.select {
+  padding: 6px 10px;
+  border: 1px solid #bbb;
+  border-bottom: 3px solid #999;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  color: #333;
+  width: 100%;
+  background: linear-gradient(to bottom, #f8f9fa, #e8eaed);
+  box-shadow: 0 2px 3px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.8);
+  cursor: pointer;
+  appearance: auto;
+  transition: all 0.08s ease;
+}
+
+.select:hover {
+  background: linear-gradient(to bottom, #fff, #eef0f4);
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--accent);
+  border-bottom-color: var(--accent-hover);
+  box-shadow: 0 0 0 2px rgba(74,144,226,0.2), inset 0 1px 0 rgba(255,255,255,0.8);
+}
+
+/* Mobile FABs and drawer behaviour. Desktop-default is hidden; ≤700 px reveals
+   them and the blade becomes a slide-in drawer. */
+.mobileBackdrop,
+.mobileHamburger,
+.mobileHelp,
+.mobileContact { display: none; }
+
+@media (max-width: 700px) {
+  .blade {
+    width: min(300px, 85vw) !important;
+    min-width: 0;
+    box-shadow: -4px 0 24px rgba(0,0,0,0.22);
+    transform: translateX(100%);
+    transition: transform 0.3s ease;
+    z-index: 1000;
+    overflow-y: auto;
+  }
+  .blade.collapsed { width: min(300px, 85vw) !important; }
+  .blade:not(.collapsed) { transform: translateX(0); }
+  .blade .tabs { display: none; }
+  .blade .content { display: flex !important; }
+
+  .mobileBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 999;
+  }
+
+  .mobileHamburger,
+  .mobileHelp,
+  .mobileContact {
+    display: inline-flex;
+    position: fixed;
+    right: 12px;
+    z-index: 1001;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid #2a6ab5;
+    border-bottom: 3px solid #1f52a0;
+    background: linear-gradient(to bottom, #6aa8f0, #3a7fd5);
+    color: #fff;
+    font-size: 16px;
+    font-weight: bold;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .mobileHamburger { top: 12px; font-size: 18px; }
+  .mobileHelp     { top: 56px; font-size: 14px; }
+  .mobileContact  { top: 100px; }
+}
+
+/* Dark-mode overrides. The blade itself, the tab buttons, and the gradient
+   selects all have hardcoded light-mode gradients that don't follow the CSS
+   variables, so they need explicit dark counterparts. */
+:global(body.dark) .blade {
+  background: var(--surface-alt);
+}
+
+:global(body.dark) .tabBtn {
+  background: linear-gradient(to bottom, #2c2d31, #232427);
+  color: #bbb;
+  border-color: #444;
+  border-bottom-color: #555;
+  box-shadow: 0 2px 3px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+:global(body.dark) .tabBtn:hover:not(:disabled) {
+  background: linear-gradient(to bottom, #33343a, #2a2b2e);
+  color: var(--accent);
+}
+:global(body.dark) .tabIcon { color: var(--accent); }
+
+:global(body.dark) .heading { color: #e0e0e0; }
+:global(body.dark) .sectionLabel { color: #666; border-top-color: var(--border); }
+:global(body.dark) .label { color: #777; }
+
+:global(body.dark) .select {
+  background: linear-gradient(to bottom, #2c2d31, #232427);
+  color: #f0f0f0;
+  border-color: #444;
+  border-bottom-color: #555;
+  box-shadow: 0 2px 3px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+:global(body.dark) .select:hover {
+  background: linear-gradient(to bottom, #33343a, #2a2b2e);
+}
+:global(body.dark) .select option {
+  background: #232427;
+  color: #f0f0f0;
+}
+

@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import DropZone from './components/DropZone.jsx'
 import LoadButton from './components/LoadButton.jsx'
 import ProfileViewer from './components/ProfileViewer.jsx'
+import SettingsBlade from './components/SettingsBlade.jsx'
 import { validateProfile, validateBytes, preloadValidator } from './lib/validator.js'
 import { computeChangedTagIds } from './lib/tagDiff.js'
+import { useT } from './i18n.jsx'
 import styles from './App.module.css'
 
 // Defence against a hostile postMessage opener (or accidental huge drop) that
@@ -36,6 +38,7 @@ export default function App() {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState(null)
+  const t = useT()
 
   useEffect(() => { preloadValidator() }, [])
 
@@ -198,71 +201,73 @@ export default function App() {
   }, [profile])
 
   return (
-    <div className={styles.layout}>
-      <header className={styles.header}>
-        <span className={styles.logo}>International Color Consortium</span>
-        <span className={styles.subtitle}>Profile Validator</span>
-      </header>
+    <>
+      <div className={styles.layout}>
+        <header className={styles.header}>
+          <h1 className={styles.title}>{t('app_title')}</h1>
+        </header>
 
-      <div className={styles.banner}>
-        Upload an ICC profile to validate it against the <strong>ICC.1</strong> specification
-        using the <a href="https://github.com/InternationalColorConsortium/iccDEV" target="_blank" rel="noreferrer">iccDEV</a> reference implementation.
+        <div className={styles.banner}>
+          {t('banner_part1')} <strong>ICC.1</strong> {t('banner_part2')}{' '}
+          <a href="https://github.com/InternationalColorConsortium/iccDEV" target="_blank" rel="noreferrer">iccDEV</a> {t('banner_part3')}
+        </div>
+
+        <main className={styles.main}>
+          {!profile && <DropZone onFile={handleFile} disabled={loading} />}
+
+          {profile && (
+            <div className={styles.toolbar} ref={saveRef}>
+              <LoadButton onFile={handleFile} disabled={loading} />
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleSave}
+                disabled={loading}
+              >
+                {t('save_profile')}
+              </button>
+              {profile.iccDirty && (
+                <span className={styles.modifiedPill} aria-live="polite">
+                  {t('modified_pill')}
+                </span>
+              )}
+            </div>
+          )}
+
+          {loading && (
+            <div className={styles.status}>
+              <span className={styles.spinner} /> {t('validating')}
+            </div>
+          )}
+
+          {error && (
+            <div className={styles.errorBanner}>
+              <strong>{t('error_label')}</strong> {error}
+            </div>
+          )}
+
+          {profile && (
+            <ProfileViewer
+              data={profile.parsed}
+              bytes={profile.currentBytes}
+              xml={profile.xml}
+              xmlDirty={profile.xmlDirty}
+              json={profile.json}
+              jsonDirty={profile.jsonDirty}
+              changedTagIds={changedTagIds}
+              onXmlChanged={handleXmlChanged}
+              onJsonChanged={handleJsonChanged}
+              onIccProduced={handleIccProduced}
+            />
+          )}
+        </main>
+
+        <footer className={styles.footer}>
+          {t('footer')}
+        </footer>
       </div>
-
-      <main className={styles.main}>
-        {!profile && <DropZone onFile={handleFile} disabled={loading} />}
-
-        {profile && (
-          <div className={styles.toolbar} ref={saveRef}>
-            <LoadButton onFile={handleFile} disabled={loading} />
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={handleSave}
-              disabled={loading}
-            >
-              Save ICC profile
-            </button>
-            {profile.iccDirty && (
-              <span className={styles.modifiedPill} aria-live="polite">
-                ● Modified — unsaved edits
-              </span>
-            )}
-          </div>
-        )}
-
-        {loading && (
-          <div className={styles.status}>
-            <span className={styles.spinner} /> Validating…
-          </div>
-        )}
-
-        {error && (
-          <div className={styles.errorBanner}>
-            <strong>Error:</strong> {error}
-          </div>
-        )}
-
-        {profile && (
-          <ProfileViewer
-            data={profile.parsed}
-            bytes={profile.currentBytes}
-            xml={profile.xml}
-            xmlDirty={profile.xmlDirty}
-            json={profile.json}
-            jsonDirty={profile.jsonDirty}
-            changedTagIds={changedTagIds}
-            onXmlChanged={handleXmlChanged}
-            onJsonChanged={handleJsonChanged}
-            onIccProduced={handleIccProduced}
-          />
-        )}
-      </main>
-
-      <footer className={styles.footer}>
-        ICC Profile Validator · powered by IccProfLib
-      </footer>
-    </div>
+      <SettingsBlade />
+    </>
   )
 }
 

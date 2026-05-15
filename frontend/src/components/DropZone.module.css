@@ -1,6 +1,7 @@
 .zone {
   border: 2px dashed var(--border);
   background: var(--surface-alt);
+  border-radius: var(--radius-lg);
   padding: 36px 24px;
   display: flex;
   flex-direction: column;
@@ -14,12 +15,12 @@
 .zone:not(.disabled) { cursor: pointer; }
 .zone:not(.disabled):hover {
   border-color: var(--accent);
-  background: #fbe6ec;
+  background: var(--accent-tint);
 }
 
 .dragging {
   border-color: var(--accent) !important;
-  background: #f4cdd6 !important;
+  background: var(--accent-tint-strong) !important;
 }
 
 .disabled {
@@ -29,10 +30,11 @@
 .icon {
   font-size: 32px;
   line-height: 1;
+  color: var(--accent);
 }
 
 .headline {
-  font-family: Arial, Verdana, Helvetica, sans-serif;
+  font-family: var(--font-sans);
   font-size: 15px;
   font-weight: bold;
   color: var(--text);
@@ -40,9 +42,7 @@
 
 .sub {
   color: var(--text-muted);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-size: 12px;
 }
 
 .hint {

@@ -1,9 +1,11 @@
 import { useRef, useState } from 'react'
+import { useT } from '../i18n.jsx'
 import styles from './DropZone.module.css'
 
 export default function DropZone({ onFile, disabled }) {
   const inputRef = useRef(null)
   const [dragging, setDragging] = useState(false)
+  const t = useT()
 
   function handleDragOver(e) {
     e.preventDefault()
@@ -38,17 +40,17 @@ export default function DropZone({ onFile, disabled }) {
       aria-label="Drop zone for ICC profile files"
     >
       <div className={styles.icon}>🎨</div>
-      <p className={styles.headline}>Drop an ICC profile here</p>
-      <p className={styles.sub}>or</p>
+      <p className={styles.headline}>{t('dropzone_headline')}</p>
+      <p className={styles.sub}>{t('dropzone_or')}</p>
       <button
         className="btn-primary"
         onClick={() => inputRef.current?.click()}
         disabled={disabled}
         type="button"
       >
-        Load ICC profile
+        {t('dropzone_button')}
       </button>
-      <p className={styles.hint}>.icc and .icm files</p>
+      <p className={styles.hint}>{t('dropzone_hint')}</p>
 
       <input
         ref={inputRef}

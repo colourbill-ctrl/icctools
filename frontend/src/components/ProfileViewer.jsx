@@ -3,6 +3,7 @@ import ValidationPanel from './ValidationPanel.jsx'
 import HeaderTable from './HeaderTable.jsx'
 import TagTable from './TagTable.jsx'
 import TagDetailModal from './TagDetailModal.jsx'
+import { useT } from '../i18n.jsx'
 import styles from './ProfileViewer.module.css'
 
 // XmlPanel and JsonPanel each pull in CodeMirror + a language bundle. Keep
@@ -10,7 +11,15 @@ import styles from './ProfileViewer.module.css'
 const XmlPanel  = lazy(() => import('./XmlPanel.jsx'))
 const JsonPanel = lazy(() => import('./JsonPanel.jsx'))
 
-const TABS = ['Header', 'Tags', 'Validation', 'Raw Output', 'XML', 'JSON']
+// Tab keys are stable internal identifiers; labels come from i18n.
+const TABS = [
+  { key: 'Header',     i18n: 'tab_header' },
+  { key: 'Tags',       i18n: 'tab_tags' },
+  { key: 'Validation', i18n: 'tab_validation' },
+  { key: 'Raw Output', i18n: 'tab_raw' },
+  { key: 'XML',        i18n: 'tab_xml' },
+  { key: 'JSON',       i18n: 'tab_json' },
+]
 
 export default function ProfileViewer({
   data,
@@ -26,6 +35,7 @@ export default function ProfileViewer({
 }) {
   const [activeTab, setActiveTab] = useState('Header')
   const [selectedTag, setSelectedTag] = useState(null)
+  const t = useT()
 
   return (
     <div className={styles.viewer}>
@@ -43,17 +53,17 @@ export default function ProfileViewer({
       </div>
 
       <nav className={styles.tabs} role="tablist">
-        {TABS.map((tab) => (
+        {TABS.map(({ key, i18n }) => (
           <button
-            key={tab}
+            key={key}
             role="tab"
-            aria-selected={activeTab === tab}
-            className={`${styles.tab} ${activeTab === tab ? styles.activeTab : ''}`}
-            onClick={() => setActiveTab(tab)}
+            aria-selected={activeTab === key}
+            className={`${styles.tab} ${activeTab === key ? styles.activeTab : ''}`}
+            onClick={() => setActiveTab(key)}
             type="button"
           >
-            {tab}
-            {tab === 'Tags' && data.tags.length > 0 && (
+            {t(i18n)}
+            {key === 'Tags' && data.tags.length > 0 && (
               <span className={styles.badge}>{data.tags.length}</span>
             )}
           </button>

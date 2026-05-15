@@ -13,6 +13,8 @@ icctools is a web-based ICC profile validation tool that wraps the [iccDEV](http
 | `frontend/` | Vite + React SPA (port 5173 in dev). Loads the WASM module from `public/wasm/` and runs `validateProfile(bytes) → JSON` in the browser. |
 | `validator-wasm/` | Emscripten project: `wrapper.cpp` + a standalone `CMakeLists.txt` that compiles IccProfLib sources directly (bypassing iccDEV's top-level CMake). Produces `iccprofiledump.{mjs,wasm}`. |
 | `scripts/build-wasm.sh` | Rebuilds the WASM, copies artifacts into `frontend/public/wasm/`, refreshes `SHA256SUMS`. Pass `--verify` to check the committed artifacts still match source. |
+| `MANUAL.md` + `scripts/generate-help.js` | User-facing help source + generator. Produces `frontend/public/help.html` (served at `/help.html` in dev, `/profiletool/help.html` in prod). Edit `MANUAL.md`, run `node scripts/generate-help.js`. |
+| `hooks/pre-commit` | Auto-regenerates `help.html` when `MANUAL.md` or the generator is staged; rejects hand edits to `help.html`. Activate with `git config core.hooksPath hooks` after a fresh clone. |
 
 Both packages use ES modules (`"type": "module"`).
 
@@ -77,13 +79,73 @@ Tags are sorted by `offset`. `pad < 0` means overlapping tags (non-compliant); `
 App.jsx                  — preloads WASM, orchestrates validation, top-level error/loading state
 └── DropZone.jsx         — drag-and-drop + <input type=file>; calls onFile(File)
 └── ProfileViewer.jsx    — tabbed shell (Header / Tags / Validation / Raw Output)
-    ├── HeaderTable.jsx  — renders header{} as a key/value table
-    ├── TagTable.jsx     — renders tags[] with pad colouring; rows open the modal
-    ├── ValidationPanel.jsx — status card + messages list
-    └── TagDetailModal.jsx — signature + type + offset + size + Describe() text
+│   ├── HeaderTable.jsx  — renders header{} as a key/value table
+│   ├── TagTable.jsx     — renders tags[] with pad colouring; rows open the modal
+│   ├── ValidationPanel.jsx — status card + messages list
+│   └── TagDetailModal.jsx — signature + type + offset + size + Describe() text
+└── SettingsBlade.jsx    — right-side slide-out panel (Background + Language)
 ```
 
-Each component has a co-located `*.module.css` file. Global tokens (colours, fonts) are CSS custom properties in `src/index.css`. Style targets the institutional look of color.org (crimson `#BF003F` accent, Verdana on grey).
+Each component has a co-located `*.module.css` file. Global tokens (colours, fonts) are CSS custom properties in `src/index.css`. The visual identity matches chardata (Arial on `#f0f2f5` blue-grey, blue `#4a90e2` accent, rounded white card with light shadow, gradient `.btn-primary` buttons) so users moving between the two apps see a consistent look. When tweaking colours, edit the CSS variables in `index.css` first — most components consume them.
+
+### Settings blade
+
+`components/SettingsBlade.jsx` mirrors chardata's `#blade` pattern: a fixed right-side panel that collapses to a 6 px bar with a floating column of three tab buttons (gear / `?` help / `✉` contact). On ≤700 px viewports it becomes a drawer that slides in from the right behind a backdrop, with three matching FABs pinned to the right edge.
+
+State is in `localStorage`:
+- `icctools.bladeCollapsed` — `'0' | '1'`
+- `icctools.bgTheme` — `'system' | 'light' | 'dark'`
+- `icctools.lang` — `'system'` or any code from `i18n.jsx::LANG_OPTIONS`
+
+When the user picks **System** for theme, the blade subscribes to `prefers-color-scheme` and re-applies; switching to Light/Dark detaches the listener (matches chardata's `_attachSystemListener` / `_detachSystemListener`). Theme flips `body.dark` and the dark-mode rules in `index.css` override the CSS variables — most components recolour automatically, but anything with a hardcoded gradient (tab buttons, selects, the `.btn-primary` blue) has explicit `body.dark` rules.
+
+The blade also toggles `body.blade-open` / `body.blade-collapsed` so the centred 841 px `.layout` gets `padding-right` to avoid being overlapped on narrow viewports. The mobile breakpoint resets the padding to zero.
+
+The **Help** button (`?`) opens `${import.meta.env.BASE_URL}help.html` — the static page generated from `MANUAL.md` (see "Help / MANUAL.md" below).
+
+The **Contact** button (`✉`) opens `https://www.colourbill.com/?contact=chardata` — note: **deliberately `chardata`, not `icctools`**. The IIFE on colourbill.com that opens the contact modal does an exact-string check (`params.get('contact') === 'chardata'`), so anything else falls through to the homepage without opening the panel. Submissions originated from icctools are therefore tagged with `cb-source=chardata` in the form's hidden source field. **TODO (open work in colourbill.com)**: generalise the IIFE to accept either `'chardata'` or `'icctools'` (or a list) and pass the matched value through to `cb-source`, then flip `CONTACT_URL` in `SettingsBlade.jsx` back to `?contact=icctools` so analytics attribution is correct. Surface this whenever the user asks about open work.
+
+### Help / MANUAL.md
+
+`frontend/public/help.html` is **auto-generated** from `MANUAL.md` (repo root) via `scripts/generate-help.js`. The script:
+- Strips the H1 title (replaced with hardcoded HTML in the page chrome).
+- Splits the doc into intro (before the first `---`) and body (after it).
+- Renders a small markdown subset → HTML (headings, lists, tables, paragraphs, fenced inline `code`, `**bold**` / `*italic*`, `[links](…)`, raw HTML blocks like `<div class="note">`).
+- Inlines two SVG diagrams under `id="1-loading-a-profile"` and `id="2-settings-panel"` via `insertAfter()`. Diagram colours follow a `prefers-color-scheme` `:root` variable scheme so the help page works in both light and dark UA themes (independently of icctools's own theme switch).
+
+The pre-commit hook regenerates `help.html` when `MANUAL.md` or `scripts/generate-help.js` is staged, and **aborts the commit** if `help.html` is hand-edited. Edit `MANUAL.md` (or the generator for diagrams / layout) instead.
+
+This setup mirrors chardata's `MANUAL.md` / `scripts/generate-help.js` / `hooks/pre-commit` flow exactly. If you extend one generator with a new feature (new diagram primitive, new markdown construct), consider keeping the two in sync so future maintainers can copy patterns between them.
+
+### i18n
+
+`src/i18n.jsx` provides `<LangProvider>` (wraps the app in `main.jsx`), `useT()`, and `useLang()`. The dictionary covers the same 12 locales as chardata plus `en` (the fallback). Resolution order on a missing key: `I18N[lang][key] ?? I18N.en[key] ?? key`.
+
+Scope is intentionally narrow — only the app chrome (heading, banner, footer, drop zone, save toolbar, tab labels, settings panel) is translated. ICC tag names, header field names, validation messages and Describe() output come from IccProfLib and stay in their source form (usually English). When adding a new user-facing chrome string, add a key to **every** language in `I18N` and route it through `t()`; missing entries silently fall back to EN.
+
+`<select>` for Language shows "System default (Native name)" as the first option; the native-name suffix is computed from `navigator.languages` so the OS locale is reflected. Persistence and detection follow chardata's `_lang` / `resolveLang()` / `detectLang()` shape.
+
+### Translation spreadsheets
+
+`translations/Eng-*.xlsx` are the parallel canonical source for the I18N dictionary, kept alongside `frontend/src/i18n.jsx` so reviewers can edit translations in a spreadsheet tool and round-trip them through the pipeline. The layout mirrors chardata's `translations/` exactly:
+
+| File | Columns |
+|---|---|
+| `Eng-De.xlsx`, `Eng-Es.xlsx`, `Eng-Fr.xlsx`, `Eng-It.xlsx`, `Eng-Ja.xlsx`, `Eng-Ko.xlsx`, `Eng-Sv.xlsx` | English + single target language |
+| `Eng-Pt.xlsx` | English + Portuguese (PT) + Portuguese (BR) |
+| `Eng-Zh.xlsx` | English + Chinese Simplified + Chinese Traditional |
+
+Regenerate from the dictionary with:
+
+```bash
+node scripts/sync-translations.mjs
+```
+
+The script extracts the `I18N` object literal from `i18n.jsx` via brace-depth matching (same trick `chardata/scripts/check-translations.js` uses) and writes the xlsx files. **`xlsx` is not pinned in `package.json`** — same call as chardata. Install ad-hoc with `(cd frontend && npm i --no-save xlsx@^0.18.5)`, or the script will fall back to the sibling chardata install if both repos live on the same machine.
+
+The xlsx 0.18.5 package has two unfixed advisories (prototype pollution, ReDoS). The script never parses untrusted spreadsheets — it reads our own committed `i18n.jsx` and writes new files — so the attack surface here is nil, but don't repurpose this script for reading uploaded xlsx without revisiting that.
+
+When adding a new user-facing string: add the key to **every** language in `I18N`, then re-run `sync-translations.mjs` so the xlsx files stay current. Drifted translations fall back to EN at runtime (no crash) so a missed regen won't break the app — but the canonical source is the JSX dictionary, not the spreadsheets.
 
 ## Deployment
 

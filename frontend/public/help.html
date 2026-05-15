@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ICC Profile Validator — Help</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, 'Noto Sans SC', 'Hiragino Sans', 'Microsoft YaHei', 'Apple SD Gothic Neo', sans-serif; background: #f0f2f5; color: #333; line-height: 1.6; }
+    .page { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+    h1 { font-size: 24px; color: #1a5a8a; margin-bottom: 6px; }
+    .subtitle { color: #888; font-size: 14px; margin-bottom: 32px; }
+    h2 { font-size: 17px; color: #1a5a8a; margin: 36px 0 10px; padding-bottom: 5px; border-bottom: 2px solid #d0e6f5; }
+    h3 { font-size: 14px; font-weight: bold; color: #333; margin: 20px 0 6px; }
+    h4 { font-size: 13px; font-weight: bold; color: #555; margin: 14px 0 4px; }
+    p { font-size: 14px; margin-bottom: 10px; }
+    ul, ol { font-size: 14px; margin: 8px 0 10px 24px; }
+    li { margin-bottom: 4px; }
+    code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; background: #e8edf2; padding: 1px 5px; border-radius: 3px; }
+    table { border-collapse: collapse; width: 100%; margin: 10px 0 14px; font-size: 13px; }
+    th { background: #e8edf2; text-align: left; padding: 6px 10px; border: 1px solid #ccd6e0; font-weight: bold; color: #444; }
+    td { padding: 5px 10px; border: 1px solid #dde4ec; vertical-align: top; }
+    tr:nth-child(even) td { background: #f7f9fb; }
+    .note { background: #fff8e6; border-left: 3px solid #f0b429; padding: 8px 12px; font-size: 13px; margin: 10px 0; border-radius: 0 4px 4px 0; }
+    nav { background: #fff; border: 1px solid #dde; border-radius: 8px; padding: 16px 20px; margin-bottom: 32px; font-size: 13px; }
+    nav ol { margin-left: 18px; }
+    nav li { margin-bottom: 3px; }
+    nav a { color: #1a5a8a; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    hr { border: none; border-top: 1px solid #dde; margin: 32px 0; }
+    strong { color: #222; }
+    section { margin-bottom: 8px; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #1a1c1f; color: #d0d4da; }
+      h1 { color: #7ab8e8; }
+      h2 { color: #7ab8e8; border-bottom-color: #2a4a60; }
+      h3 { color: #c8cdd4; }
+      h4 { color: #9aa0a8; }
+      code { background: #2a2e35; color: #a8d4f0; }
+      table { color: #c8cdd4; }
+      th { background: #252930; border-color: #3a4048; color: #9aa0a8; }
+      td { border-color: #2e3440; }
+      tr:nth-child(even) td { background: #1e2128; }
+      .note { background: #2a2410; border-left-color: #c08820; color: #c8b880; }
+      nav { background: #22262e; border-color: #333a44; }
+      nav a { color: #7ab8e8; }
+      hr { border-top-color: #2e3440; }
+      strong { color: #e0e4ea; }
+      .subtitle { color: #666e7a; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <h1>ICC Profile Validator — Help</h1>
+  <p class="subtitle">Browser-based ICC profile inspector, validator, and round-trip editor</p>
+
+<p><strong>ICC Profile Validator</strong> (icctools) is a browser-based tool for inspecting, validating, and round-trip editing <strong>ICC.1</strong> colour profiles. It runs entirely in your browser — no upload, no install — using a WebAssembly build of <a href="https://github.com/InternationalColorConsortium/iccDEV">iccDEV</a>, the ICC's official reference implementation of IccProfLib.</p>
+<p><strong>What you can do:</strong></p>
+<ul>
+<li><strong>Validate</strong> an ICC profile against the ICC.1 specification — see the severity (valid / warning / error) and every diagnostic message produced by IccProfLib.</li>
+<li><strong>Browse the header</strong> — every field of the 128-byte profile header, decoded into human-readable strings.</li>
+<li><strong>Browse the tag directory</strong> — every tag with its signature, type, byte offset, size, and pad bytes. Click any tag to open a full type-specific description (the same output as the iccDEV <code>wxProfileDump</code> "Describe" view).</li>
+<li><strong>Round-trip edit</strong> — convert the profile to XML or JSON, edit it in the built-in code editor, convert back to ICC, and re-validate. The save button downloads the edited binary.</li>
+<li><strong>Launch from chardata</strong> — open a profile that's loaded in <a href="https://chardata.colourbill.com/">chardata</a> directly here, with the bytes handed over in-browser via <code>postMessage</code>.</li>
+</ul>
+<p>Everything runs client-side. Profile bytes never leave the browser tab.</p>
+
+  <nav>
+    <strong>Contents</strong>
+    <ol>
+      <li><a href="#1-loading-a-profile">Loading a profile</a></li>
+      <li><a href="#2-settings-panel">Settings panel</a></li>
+      <li><a href="#3-profile-views">Profile views</a>
+        <ol>
+          <li><a href="#3-1-header">Header</a></li>
+          <li><a href="#3-2-tags">Tags</a></li>
+          <li><a href="#3-3-validation">Validation</a></li>
+          <li><a href="#3-4-raw-output">Raw Output</a></li>
+          <li><a href="#3-5-xml">XML</a></li>
+          <li><a href="#3-6-json">JSON</a></li>
+        </ol>
+      </li>
+      <li><a href="#4-round-trip-editing">Round-trip editing</a></li>
+      <li><a href="#5-launching-from-chardata">Launching from chardata</a></li>
+      <li><a href="#6-mobile">Mobile</a></li>
+      <li><a href="#7-limits-and-security">Limits and security</a></li>
+    </ol>
+  </nav>
+
+<h2 id="1-loading-a-profile">1. Loading a profile</h2>
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 420"
+  style="width:100%;max-width:780px;display:block;margin:20px 0;border-radius:8px;overflow:visible;">
+
+<style>
+:root {
+  --bg:#f0f2f5; --pnl:#fff; --pnl-bd:#ccd6e0; --hd:#e8edf2; --hd-bd:#c0ccd8;
+  --sec:#f5f6f8; --sec-bd:#dde4ec; --btn:#e8edf2; --btn-bd:#bbb;
+  --act:#4a90e2; --act2:#2a6ab5; --red:#e24a4a; --amber:#d49930; --green:#27ae60;
+  --tx:#333; --tx2:#555; --tx3:#888; --txW:#fff; --txA:#1a5a8a;
+  --ln:#dde4ec;
+}
+@media(prefers-color-scheme:dark){
+  :root{
+    --bg:#1a1c1f; --pnl:#22262e; --pnl-bd:#3a4048; --hd:#252930; --hd-bd:#3a4048;
+    --sec:#1e2128; --sec-bd:#333a44; --btn:#252930; --btn-bd:#444;
+    --act:#2a5a90; --act2:#1f4070; --red:#8a2a2a; --amber:#7a5418; --green:#1f6a3a;
+    --tx:#c8cdd4; --tx2:#9aa0a8; --tx3:#555e6a; --txW:#c8cdd4; --txA:#7ab8e8;
+    --ln:#2e3440;
+  }
+}
+rect.bg    { fill:var(--bg); }
+rect.pnl   { fill:var(--pnl);  stroke:var(--pnl-bd); stroke-width:1.5; }
+rect.hd    { fill:var(--hd);   stroke:var(--hd-bd);  stroke-width:1; }
+rect.sec   { fill:var(--sec);  stroke:var(--sec-bd); stroke-width:1; }
+rect.btn   { fill:var(--btn);  stroke:var(--btn-bd); stroke-width:1; }
+rect.act   { fill:var(--act);  stroke:var(--act2);   stroke-width:1; }
+rect.red   { fill:var(--red);  stroke:#a03030;       stroke-width:1; }
+rect.amber { fill:var(--amber);stroke:#a07418;       stroke-width:1; }
+rect.green { fill:var(--green);stroke:#1f7a44;       stroke-width:1; }
+rect.lnbd  { fill:none; stroke:var(--ln); stroke-width:1; }
+line.div   { stroke:var(--ln); stroke-width:1; }
+text       { font-family:Arial,sans-serif; font-size:11px; fill:var(--tx); }
+text.tT    { font-size:13px; font-weight:bold; fill:var(--txA); }
+text.tB    { font-weight:bold; }
+text.t2    { fill:var(--tx2); }
+text.t3    { fill:var(--tx3); font-size:10px; }
+text.tW    { fill:var(--txW); }
+text.tA    { fill:var(--txA); font-weight:bold; }
+text.mono  { font-family:ui-monospace,Menlo,Consolas,monospace; }
+</style>
+<rect x="0" y="0" width="780" height="420" rx="0" class="bg"/><rect x="30" y="10" width="640" height="400" rx="8" class="pnl"/><text x="50" y="36" text-anchor="start" class="tT">ICC Profile Validator</text><text x="50" y="60" text-anchor="start" class="t3">Upload an ICC profile to validate it against the ICC.1 specification</text><text x="50" y="74" text-anchor="start" class="t3">using the iccDEV reference implementation.</text><line x1="50" y1="84" x2="650" y2="84" class="div"/><rect x="50" y="96" width="110" height="22" rx="4" class="act"/><text x="105" y="111" text-anchor="middle" class="tW tB">Save ICC profile</text><rect x="166" y="96" width="100" height="22" rx="4" class="btn"/><text x="216" y="111" text-anchor="middle" class="t2">Load another</text><rect x="274" y="100" width="130" height="16" rx="3" class="lnbd"/><text x="339" y="112" text-anchor="middle" class="tA">● Modified — unsaved</text><rect x="50" y="130" width="600" height="260" rx="6" class="pnl"/><rect x="50" y="130" width="600" height="28" rx="6" class="sec"/><text x="60" y="148" text-anchor="start" class="tB mono">sample-cmyk.icc</text><text x="180" y="148" text-anchor="start" class="t3">· 488 bytes · IccProfLib 2.3.1</text><rect x="590" y="136" width="50" height="16" rx="3" class="green"/><text x="615" y="148" text-anchor="middle" class="tW tB">VALID</text><line x1="60" y1="188" x2="120" y2="188" stroke="var(--act)" stroke-width="3"/><text x="90" y="178" text-anchor="middle" class="tA">Header</text><text x="161" y="178" text-anchor="middle" class="t2">Tags</text><rect x="174" y="167" width="20" height="12" rx="6" class="act"/><text x="184" y="177" text-anchor="middle" class="tW">14</text><text x="241" y="178" text-anchor="middle" class="t2">Validation</text><text x="325" y="178" text-anchor="middle" class="t2">Raw Output</text><text x="395" y="178" text-anchor="middle" class="t2">XML</text><text x="451" y="178" text-anchor="middle" class="t2">JSON</text><line x1="50" y1="190" x2="650" y2="190" class="div"/><rect x="60" y="202" width="580" height="24" rx="4" class="sec"/><text x="70" y="217" text-anchor="start" class="t3 tB">PROFILE ID</text><text x="150" y="217" text-anchor="start" class="tA mono">9efa8dc6c12f4e0b8b3a04e6c5a6e51c</text><rect x="60" y="230" width="580" height="18" rx="0" class="sec"/><text x="70" y="242" text-anchor="start" class="t3">Profile Class</text><text x="250" y="242" text-anchor="start" class="t2">Output Profile</text><text x="70" y="260" text-anchor="start" class="t3">Data Color Space</text><text x="250" y="260" text-anchor="start" class="t2">CMYK</text><rect x="60" y="266" width="580" height="18" rx="0" class="sec"/><text x="70" y="278" text-anchor="start" class="t3">PCS</text><text x="250" y="278" text-anchor="start" class="t2">Lab</text><text x="70" y="296" text-anchor="start" class="t3">Profile Version</text><text x="250" y="296" text-anchor="start" class="t2">4.30.00</text><rect x="60" y="302" width="580" height="18" rx="0" class="sec"/><text x="70" y="314" text-anchor="start" class="t3">Rendering Intent</text><text x="250" y="314" text-anchor="start" class="t2">Perceptual</text><text x="70" y="332" text-anchor="start" class="t3">Creation Date</text><text x="250" y="332" text-anchor="start" class="t2">2025-08-14 10:24:09 UTC</text><rect x="60" y="338" width="580" height="18" rx="0" class="sec"/><text x="70" y="350" text-anchor="start" class="t3">Cmm</text><text x="250" y="350" text-anchor="start" class="t2">Adobe ACMS</text><text x="70" y="368" text-anchor="start" class="t3">Platform</text><text x="250" y="368" text-anchor="start" class="t2">Apple</text><rect x="700" y="10" width="6" height="400" rx="0" class="pnl"/><rect x="706" y="30" width="38" height="34" rx="5" class="btn"/><text x="725" y="51" text-anchor="middle" class="t2 tB">⚙</text><rect x="706" y="70" width="38" height="34" rx="5" class="btn"/><text x="725" y="91" text-anchor="middle" class="t2 tB">?</text><rect x="706" y="110" width="38" height="34" rx="5" class="btn"/><text x="725" y="131" text-anchor="middle" class="t2">✉</text><line x1="105" y1="111" x2="105" y2="88" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="105" y="85" text-anchor="end" class="t3">Toolbar</text><line x1="615" y1="148" x2="615" y2="128" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="615" y="125" text-anchor="end" class="t3">Validity badge</text><line x1="180" y1="177" x2="570" y2="166" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="570" y="163" text-anchor="start" class="t3">Tabs · count badge on Tags</text><line x1="725" y1="51" x2="690" y2="51" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="690" y="48" text-anchor="end" class="t3">⚙ Settings</text><line x1="725" y1="91" x2="690" y2="91" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="690" y="88" text-anchor="end" class="t3">? Help</text><line x1="725" y1="131" x2="690" y2="131" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="690" y="128" text-anchor="end" class="t3">✉ Contact</text>
+</svg><p>When the app first opens, the centre of the page shows a drop zone.</p>
+<ul>
+<li><strong>Drag and drop</strong> an <code>.icc</code> or <code>.icm</code> file onto the drop zone, or</li>
+<li>Click <strong>Choose file</strong> and pick one from the file system.</li>
+</ul>
+<p>Once a profile loads, the drop zone is replaced by a toolbar with <strong>Load another</strong> and <strong>Save ICC profile</strong> buttons, followed by a tabbed viewer.</p>
+<p>A profile is accepted if its first 36 bytes contain the <code>acsp</code> signature and it parses through IccProfLib's <code>ValidateIccProfile</code>. Files that fail header parsing are rejected with the specific IccProfLib error message; bytes are not retained.</p>
+<div class="note">
+<strong>Size limit:</strong> the loader rejects anything larger than 256 MB. Real profiles are normally well under 10 MB; the cap exists only to prevent a hostile drop or postMessage from exhausting the tab's WASM heap.
+</div>
+<hr>
+<h2 id="2-settings-panel">2. Settings panel</h2>
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 156"
+  style="width:100%;max-width:380px;display:block;margin:20px 0;border-radius:8px;overflow:visible;">
+
+<style>
+:root {
+  --bg:#f0f2f5; --pnl:#fff; --pnl-bd:#ccd6e0; --hd:#e8edf2; --hd-bd:#c0ccd8;
+  --sec:#f5f6f8; --sec-bd:#dde4ec; --btn:#e8edf2; --btn-bd:#bbb;
+  --act:#4a90e2; --act2:#2a6ab5; --red:#e24a4a; --amber:#d49930; --green:#27ae60;
+  --tx:#333; --tx2:#555; --tx3:#888; --txW:#fff; --txA:#1a5a8a;
+  --ln:#dde4ec;
+}
+@media(prefers-color-scheme:dark){
+  :root{
+    --bg:#1a1c1f; --pnl:#22262e; --pnl-bd:#3a4048; --hd:#252930; --hd-bd:#3a4048;
+    --sec:#1e2128; --sec-bd:#333a44; --btn:#252930; --btn-bd:#444;
+    --act:#2a5a90; --act2:#1f4070; --red:#8a2a2a; --amber:#7a5418; --green:#1f6a3a;
+    --tx:#c8cdd4; --tx2:#9aa0a8; --tx3:#555e6a; --txW:#c8cdd4; --txA:#7ab8e8;
+    --ln:#2e3440;
+  }
+}
+rect.bg    { fill:var(--bg); }
+rect.pnl   { fill:var(--pnl);  stroke:var(--pnl-bd); stroke-width:1.5; }
+rect.hd    { fill:var(--hd);   stroke:var(--hd-bd);  stroke-width:1; }
+rect.sec   { fill:var(--sec);  stroke:var(--sec-bd); stroke-width:1; }
+rect.btn   { fill:var(--btn);  stroke:var(--btn-bd); stroke-width:1; }
+rect.act   { fill:var(--act);  stroke:var(--act2);   stroke-width:1; }
+rect.red   { fill:var(--red);  stroke:#a03030;       stroke-width:1; }
+rect.amber { fill:var(--amber);stroke:#a07418;       stroke-width:1; }
+rect.green { fill:var(--green);stroke:#1f7a44;       stroke-width:1; }
+rect.lnbd  { fill:none; stroke:var(--ln); stroke-width:1; }
+line.div   { stroke:var(--ln); stroke-width:1; }
+text       { font-family:Arial,sans-serif; font-size:11px; fill:var(--tx); }
+text.tT    { font-size:13px; font-weight:bold; fill:var(--txA); }
+text.tB    { font-weight:bold; }
+text.t2    { fill:var(--tx2); }
+text.t3    { fill:var(--tx3); font-size:10px; }
+text.tW    { fill:var(--txW); }
+text.tA    { fill:var(--txA); font-weight:bold; }
+text.mono  { font-family:ui-monospace,Menlo,Consolas,monospace; }
+</style>
+<rect x="0" y="0" width="380" height="156" rx="0" class="bg"/><rect x="8" y="8" width="364" height="140" rx="8" class="pnl"/><rect x="8" y="24" width="38" height="34" rx="5" class="btn"/><text x="27" y="45" text-anchor="middle" class="t2 tB">⚙</text><rect x="8" y="64" width="38" height="34" rx="5" class="btn"/><text x="27" y="85" text-anchor="middle" class="t2 tB">?</text><rect x="8" y="104" width="38" height="34" rx="5" class="btn"/><text x="27" y="125" text-anchor="middle" class="t2">✉</text><line x1="46" y1="8" x2="46" y2="148" class="div"/><text x="54" y="32" text-anchor="start" class="tT">Settings</text><line x1="50" y1="44" x2="366" y2="44" class="div"/><text x="54" y="69" text-anchor="start" class="tA tB">Display</text><text x="54" y="91" text-anchor="start" class="t3 tB">Background</text><rect x="232" y="78" width="130" height="22" rx="4" class="btn"/><text x="242" y="93" text-anchor="start" class="t2">System</text><text x="352" y="93" text-anchor="end" class="t3">▾</text><text x="54" y="121" text-anchor="start" class="t3 tB">Language</text><rect x="232" y="108" width="130" height="22" rx="4" class="btn"/><text x="242" y="123" text-anchor="start" class="t2">System default (English)</text><text x="352" y="123" text-anchor="end" class="t3">▾</text>
+</svg><p>Open Settings by clicking the <strong>⚙</strong> button on the right edge of the screen (or the gear icon at the top-right on mobile). The panel slides over the content without resizing it. A <strong>?</strong> button below ⚙ opens this help page in a new tab; a <strong>✉</strong> button opens the contact form.</p>
+<p>The panel currently exposes the <strong>Display</strong> group:</p>
+<h3 id="background">Background</h3>
+<p>Switches the app between <strong>Light</strong>, <strong>Dark</strong>, and <strong>System</strong> (follows the OS preference) themes. The choice persists across sessions. In <strong>System</strong> mode the app subscribes to <code>prefers-color-scheme</code> and flips automatically when the OS theme changes; choosing Light or Dark explicitly detaches that listener.</p>
+<h3 id="language">Language</h3>
+<p>Overrides the interface language. <strong>System default (…)</strong> detects the browser locale and uses the closest supported language, with the native name in the parenthetical so you can see which it picked. Translation covers the app chrome (heading, banner, drop zone, save toolbar, tab labels, settings panel). Strings produced by IccProfLib — tag descriptions, validation messages, header field names — are emitted by the C++ library in English and are not translated.</p>
+<p>Supported languages: English, Français, Deutsch, Italiano, Español, Português (PT), Português (BR), Svenska, 中文（简体）, 中文（繁體）, 日本語, 한국어. The chardata Settings panel offers the same set, so toggling Language in one app gives a consistent reading experience in the other.</p>
+<hr>
+<h2 id="3-profile-views">3. Profile views</h2>
+<p>Once a profile is loaded the viewer shows a title bar (filename · size · IccProfLib version · validity badge) and a tab strip. The badge colour summarises validation: green = valid, amber = warning, red = error.</p>
+<h3 id="3-1-header">3.1 Header</h3>
+<p>A two-column table of every field in the ICC profile's 128-byte binary header. Values are decoded into human-readable strings (signatures expanded, dates formatted, fixed-point values converted) using IccProfLib's <code>CIccInfo</code>. The <strong>profile ID</strong> (MD5 hash from the header) is shown in a highlighted strip at the top.</p>
+<h3 id="3-2-tags">3.2 Tags</h3>
+<p>A six-column grid of every tag in the profile's tag directory:</p>
+<table><thead>
+<tr><th>Column</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>#</code></td><td>Position in the directory (1-based)</td></tr>
+<tr><td><code>Name</code></td><td>Long human-readable name (e.g. <code>profileDescriptionTag</code>)</td></tr>
+<tr><td><code>ID</code></td><td>4-character signature (e.g. <code>desc</code>)</td></tr>
+<tr><td><code>Type</code></td><td>Tag type signature (e.g. <code>descType</code>, <code>mft2</code>, <code>mAB</code>)</td></tr>
+<tr><td><code>Offset</code></td><td>Byte offset from the start of the file</td></tr>
+<tr><td><code>Size</code></td><td>Byte size of the tag data</td></tr>
+<tr><td><code>Pad</code></td><td>Padding bytes between this tag and the next</td></tr>
+</tbody></table>
+<p>Tags are sorted by offset. The <strong>Pad</strong> column is colour-coded — <code>Pad < 0</code> (overlapping tags, non-compliant) is shown in red; <code>Pad > 3</code> (above-spec padding) is shown in amber.</p>
+<p><strong>Click any row</strong> to open a modal showing the full type-specific description for that tag — equivalent to running IccProfLib's <code>CIccTag::Describe(verbosity = 100)</code>. For tags that contain large CLUTs or curves (e.g. <code>A2B0</code>, <code>B2A0</code>), this includes every grid cell or curve point.</p>
+<h3 id="3-3-validation">3.3 Validation</h3>
+<p>The status card at the top summarises the overall result:</p>
+<ul>
+<li><strong>Valid</strong> — <code>ValidateIccProfile</code> returned <code>icValidateOK</code></li>
+<li><strong>Warning</strong> — at least one warning, no errors</li>
+<li><strong>Error</strong> — at least one error (including critical errors)</li>
+<li><strong>Unknown</strong> — IccProfLib couldn't classify the result</li>
+</ul>
+<p>Below the card, every message returned by IccProfLib is listed as a bullet. The text is verbatim from IccProfLib so you can match it against the iccDEV source.</p>
+<h3 id="3-4-raw-output">3.4 Raw Output</h3>
+<p>The complete JSON object produced by the validator wrapper — header, tags, validation, profile ID, sizes, library version. Useful when copy-pasting into a bug report or diffing two profiles textually.</p>
+<h3 id="3-5-xml">3.5 XML</h3>
+<p>Converts the profile to XML (via IccLibXML, the same writer the iccDEV <code>iccToXml</code> CLI uses) and shows it in a CodeMirror editor with syntax highlighting. Edit the XML and click <strong>Convert to ICC</strong> to round-trip back to binary; the viewer re-validates and the <strong>Save ICC profile</strong> button downloads the result.</p>
+<p>A <strong>dirty</strong> indicator shows when the editor text differs from the last converter output, so you can tell at a glance whether your edits have been applied. If conversion fails, IccLibXML's parse error is shown above the editor with the offending line / column.</p>
+<h3 id="3-6-json">3.6 JSON</h3>
+<p>Same idea as the XML tab but using a JSON representation of the profile produced by the validator wrapper (<code>json-wrapper.cpp</code>). Edit, click <strong>Convert to ICC</strong>, save. The JSON form is more compact and easier to script against; the XML form is more familiar if you've used the iccDEV CLI tools.</p>
+<hr>
+<h2 id="4-round-trip-editing">4. Round-trip editing</h2>
+<p>Both the XML and JSON tabs can write the profile back to ICC binary. The typical workflow:</p>
+<p>
+1. <strong>Load</strong> an ICC profile.
+ 
+2. Open the <strong>XML</strong> or <strong>JSON</strong> tab. Click <strong>Convert to XML</strong> / <strong>Convert to JSON</strong> to populate the editor.
+ 
+3. <strong>Edit</strong> in the in-page editor. A dirty indicator appears next to the toolbar.
+ 
+4. Click <strong>Convert to ICC</strong>. The wrapper builds a new profile, re-runs validation, and updates the Header / Tags / Validation tabs.
+ 
+5. A <strong>● Modified — unsaved edits</strong> pill appears in the top toolbar.
+ 
+6. Click <strong>Save ICC profile</strong>. The edited bytes are downloaded as <code><original>-edited.icc</code>.
+</p>
+<p>Both editors are independent — editing XML then editing JSON doesn't mix the two paths. The most recently produced ICC bytes are what gets saved.</p>
+<div class="note">
+<strong>Caveat:</strong> conversion fidelity depends on what IccLibXML / the JSON wrapper supports for each tag type. If a tag type isn't representable, the round-trip will lose detail; check the Validation tab after the convert-back to confirm everything still parses cleanly.
+</div>
+<p>The Tags tab highlights any tag whose bytes differ from the original load, so it's easy to see what your edits changed.</p>
+<hr>
+<h2 id="5-launching-from-chardata">5. Launching from chardata</h2>
+<p>In <strong>chardata</strong>, after loading an ICC profile, click <strong>Display File</strong> to open the in-page viewer, then click <strong>Launch editor</strong>. A new tab opens here with <code>?source=chardata</code> in the URL.</p>
+<p>The handover works entirely in-browser:</p>
+<p>
+1. icctools opens, detects <code>?source=chardata</code>, and sends <code>{type:'icctools:ready'}</code> to <code>window.opener</code> via <code>postMessage</code>.
+ 
+2. chardata replies with <code>{type:'icctools:load', filename, bytes}</code>.
+ 
+3. icctools accepts the bytes (after verifying the sender's origin against an allowlist and the size against the 256 MB cap), runs validation, and shows the profile.
+</p>
+<p>No upload, no server round-trip. The flow is one-way — edits made here are saved by clicking <strong>Save ICC profile</strong>, not handed back to chardata.</p>
+<hr>
+<h2 id="6-mobile">6. Mobile</h2>
+<p>On screens narrower than 700 px:</p>
+<ul>
+<li>The Settings panel collapses into a slide-in drawer from the right.</li>
+<li>A <strong>⚙</strong> floating button at the top-right opens / closes Settings.</li>
+<li>A <strong>?</strong> button below ⚙ opens this help page.</li>
+<li>A <strong>✉</strong> button opens the contact form.</li>
+<li>Tapping the dimmed backdrop closes the open drawer.</li>
+<li>The tag table reflows from a wide grid into stacked cards so every column stays readable without horizontal scrolling.</li>
+<li>The tag detail modal goes full-screen.</li>
+</ul>
+<p>All features are available; the layout adapts to the smaller screen.</p>
+<hr>
+<h2 id="7-limits-and-security">7. Limits and security</h2>
+<p>icctools makes no network requests after the initial page load. The validator, the XML converter, and the JSON converter are all WebAssembly compiled from iccDEV C++ sources and run entirely client-side.</p>
+<table><thead>
+<tr><th>Limit</th><th>Where</th><th>Notes</th></tr></thead><tbody>
+<tr><td><strong>256 MB</strong></td><td>postMessage / drop-zone load</td><td>Refuses to load anything larger; prevents heap exhaustion from a hostile opener</td></tr>
+<tr><td><strong>32 MB</strong></td><td>XML and JSON converters</td><td>Both the JS guard (<code>MAX_XML_BYTES</code> / <code>MAX_JSON_BYTES</code>) and the C++ wrappers (<code>kMaxXmlBytes</code> / <code>kMaxJsonBytes</code>) enforce this; the C++ side is independently authoritative</td></tr>
+<tr><td><strong>XML entity-bomb guard</strong></td><td>XML converter</td><td>Any XML containing <code><!DOCTYPE</code> or <code><!ENTITY</code> is rejected before libxml2 sees it (defence against billion-laughs since IccLibXML enables <code>XML_PARSE_HUGE</code>)</td></tr>
+<tr><td><strong>Origin allowlist</strong></td><td>postMessage launch</td><td>Only same-origin and chardata's dev-host origins can send <code>icctools:load</code> bytes</td></tr>
+</tbody></table>
+<p>If you need to inspect a profile that exceeds these limits, build iccDEV from source and use the native CLI tools — those have no JS-side caps.</p>
+
+</div>
+</body>
+</html>

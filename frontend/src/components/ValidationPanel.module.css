@@ -11,14 +11,19 @@
   padding: 12px 16px;
   border: 1px solid;
   border-left-width: 4px;
+  border-radius: var(--radius);
   font-size: 13px;
-  font-weight: bold;
+  font-weight: 600;
 }
 
-.level_valid   { background: #e3f3e6; border-color: var(--valid);       color: var(--valid); }
-.level_warning { background: #fbf1d8; border-color: var(--warning);     color: var(--warning); }
-.level_error   { background: #fbe6ec; border-color: var(--error);       color: var(--error); }
+.level_valid   { background: #e3f3e6; border-color: var(--valid);   color: var(--valid); }
+.level_warning { background: #fbf1d8; border-color: var(--warning); color: var(--warning); }
+.level_error   { background: var(--error-tint); border-color: #f4cccc; color: var(--error); }
 .level_unknown { background: var(--surface-alt); border-color: var(--text-muted); color: var(--text-muted); }
+
+:global(body.dark) .level_valid   { background: #1a2a1f; border-color: var(--valid);   color: var(--valid); }
+:global(body.dark) .level_warning { background: #2a2418; border-color: var(--warning); color: var(--warning); }
+:global(body.dark) .level_error   { background: #2a1818; border-color: #5a2424;       color: var(--error); }
 
 .icon {
   font-size: 18px;
@@ -35,6 +40,8 @@
   flex-direction: column;
   gap: 0;
   border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
 .message {
