@@ -59,6 +59,20 @@ static constexpr std::size_t kMaxXmlBytes = 32ULL * 1024 * 1024;
 
 namespace {
 
+// IccLibXML calls libxml2 with XML_PARSE_HUGE | XML_PARSE_NONET upstream
+// (IccProfileXml.cpp:878). XML_PARSE_HUGE disables libxml2's
+// entity-expansion / nesting-depth / name-length caps, so a small crafted
+// XML can trigger billion-laughs and OOM the tab. We can't change that flag
+// without modifying iccDEV. Instead, refuse any XML that declares a DTD or
+// entity: ICC profile XML emitted by iccDEV doesn't use either, so a
+// presence check is safe and defeats the entire entity-expansion vector
+// (and XXE — XML_PARSE_NONET blocks network fetches, but entity recursion
+// alone is the heap-exhaustion concern).
+bool containsDoctypeOrEntity(const std::string& xml) {
+  return xml.find("<!DOCTYPE") != std::string::npos
+      || xml.find("<!ENTITY")  != std::string::npos;
+}
+
 // Per-call counter so concurrent calls (e.g. from a future Web Worker pool or
 // reentrant Promise.all) don't collide on a shared MEMFS path.
 std::string uniqueMemfsPath(const char* prefix, const char* ext) {
@@ -164,6 +178,12 @@ static emscripten::val xmlToIccImpl(const std::string& xml) {
   if (xml.size() > kMaxXmlBytes) {
     throw std::runtime_error(
         "XML exceeds " + std::to_string(kMaxXmlBytes / (1024 * 1024)) + " MB limit");
+  }
+
+  // Entity-bomb guard — see containsDoctypeOrEntity().
+  if (containsDoctypeOrEntity(xml)) {
+    throw std::runtime_error(
+        "XML must not contain <!DOCTYPE or <!ENTITY declarations");
   }
 
   const std::string srcPath = uniqueMemfsPath("in", "xml");

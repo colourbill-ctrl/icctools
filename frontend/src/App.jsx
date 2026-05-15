@@ -6,6 +6,11 @@ import { validateProfile, validateBytes, preloadValidator } from './lib/validato
 import { computeChangedTagIds } from './lib/tagDiff.js'
 import styles from './App.module.css'
 
+// Defence against a hostile postMessage opener (or accidental huge drop) that
+// could OOM the tab by handing us a multi-GB Uint8Array. The validator path
+// previously had no cap, while XML/JSON converters already enforce 32 MB.
+const MAX_ICC_BYTES = 256 * 1024 * 1024
+
 /**
  * App state model — a single `profile` object (or null):
  *   filename         — e.g. "foo.icc"
@@ -39,6 +44,9 @@ export default function App() {
   const loadFromBytes = useCallback(async (filename, bytes) => {
     setLoading(true); setError(null); setProfile(null)
     try {
+      if (bytes.length > MAX_ICC_BYTES) {
+        throw new Error(`Profile is ${(bytes.length / (1024*1024)).toFixed(1)} MB; refusing to load anything larger than ${MAX_ICC_BYTES / (1024*1024)} MB.`)
+      }
       const parsed = await validateBytes(bytes, filename)
       setProfile({
         filename,
@@ -68,17 +76,29 @@ export default function App() {
   }, [loadFromBytes])
 
   // Launch protocol: when opened with ?source=chardata, signal readiness to
-  // window.opener and accept {type:'icctools:load', filename, bytes} once.
-  // The opener (chardata) drops the reference after sending. The handshake is
-  // intentionally permissive about origin — icctools is no-network and the
-  // worst a hostile opener can do is push bad bytes that fail validation.
+  // window.opener and accept {type:'icctools:load', filename, bytes}.
+  //
+  // The opener must be same-origin in prod (chardata.colourbill.com/ →
+  // chardata.colourbill.com/profiletool/) or one of the dev-host localhost
+  // origins. We post 'ready' only to the matching origin so a hostile
+  // opener at a different origin cannot induce us to leak anything (we don't
+  // carry any state, but defence in depth), and we drop inbound 'load'
+  // messages from non-allowlisted origins so a hostile site that opens us
+  // with ?source=chardata cannot push bytes.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('source') !== 'chardata') return
     if (!window.opener) return
 
+    const allowedOrigins = new Set([
+      window.location.origin,             // prod same-origin
+      'http://localhost:3001',            // dev: chardata
+      'http://127.0.0.1:3001',
+    ])
+
     function onMessage(ev) {
       if (ev.source !== window.opener) return
+      if (!allowedOrigins.has(ev.origin)) return
       const msg = ev.data
       if (!msg || msg.type !== 'icctools:load') return
       const { filename, bytes } = msg
@@ -89,7 +109,11 @@ export default function App() {
       loadFromBytes(filename || 'profile.icc', u8)
     }
     window.addEventListener('message', onMessage)
-    window.opener.postMessage({ type: 'icctools:ready' }, '*')
+    // Send 'ready' to every allowed origin; the opener whose origin matches
+    // receives it, the others silently drop it.
+    for (const origin of allowedOrigins) {
+      try { window.opener.postMessage({ type: 'icctools:ready' }, origin) } catch (_) {}
+    }
     return () => window.removeEventListener('message', onMessage)
   }, [loadFromBytes])
 

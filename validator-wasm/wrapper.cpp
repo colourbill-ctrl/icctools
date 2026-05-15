@@ -52,13 +52,74 @@ static std::string formatSpectralRange(const icSpectralRange& r) {
   return std::string(buf);
 }
 
+// ── Parsed-profile cache ─────────────────────────────────────────────────────
+// A single-slot cache so describeTag() doesn't re-parse the entire profile on
+// every tag-detail open — for a multi-MB nCLR profile that meant tens of full
+// parses per browsing session, a trivial DoS vector for a hostile postMessage
+// opener that hands us a borderline-huge profile. The cache key is FNV-1a64
+// over the byte buffer plus its length; collisions would require an attacker
+// to craft two distinct profiles that hash-collide AND both validate, neither
+// of which is plausible. The cache owns the parsed CIccProfile* and replaces
+// it on every miss; peak memory is bounded by one parsed profile.
+namespace {
+
+std::uint64_t fnv1a64(const std::uint8_t* data, std::size_t len) {
+  std::uint64_t h = 0xCBF29CE484222325ULL;
+  for (std::size_t i = 0; i < len; ++i) {
+    h ^= data[i];
+    h *= 0x100000001B3ULL;
+  }
+  return h;
+}
+
+struct ParseCache {
+  std::uint64_t hash = 0;
+  std::size_t   len  = 0;
+  CIccProfile*  profile = nullptr;
+  std::string   report;
+  icValidateStatus status = icValidateOK;
+};
+
+ParseCache& parseCache() { static ParseCache c; return c; }
+
+// Returns a cached parsed profile if (hash, len) match; otherwise parses
+// fresh, replaces the cache slot, and returns the new profile (or nullptr on
+// parse failure). On nullptr return, the cache is cleared. `outReport` and
+// `outStatus` always reflect the parse that produced the returned profile
+// (cached or fresh) so callers can build validation messages.
+CIccProfile* getOrParse(const std::uint8_t* data, std::size_t len,
+                        std::string& outReport, icValidateStatus& outStatus) {
+  ParseCache& c = parseCache();
+  std::uint64_t h = fnv1a64(data, len);
+  if (c.profile && c.hash == h && c.len == len) {
+    outReport = c.report;
+    outStatus = c.status;
+    return c.profile;
+  }
+  if (c.profile) { delete c.profile; c.profile = nullptr; c.report.clear(); c.len = 0; c.hash = 0; }
+  std::string report;
+  icValidateStatus status = icValidateOK;
+  CIccProfile* p = ValidateIccProfile(data, static_cast<icUInt32Number>(len), report, status);
+  if (p) {
+    c.profile = p;
+    c.report  = report;
+    c.status  = status;
+    c.hash    = h;
+    c.len     = len;
+  }
+  outReport = report;
+  outStatus = status;
+  return p;
+}
+
+} // namespace
+
 // ── Core validator ───────────────────────────────────────────────────────────
 
 static std::string validateBytes(const std::uint8_t* data, std::size_t len) {
   std::string sReport;
   icValidateStatus nStatus = icValidateOK;
-  CIccProfile* pProfile = ValidateIccProfile(
-      data, static_cast<icUInt32Number>(len), sReport, nStatus);
+  CIccProfile* pProfile = getOrParse(data, len, sReport, nStatus);
 
   if (!pProfile) {
     json err = {{"error", "Failed to parse ICC profile"}};
@@ -211,7 +272,7 @@ static std::string validateBytes(const std::uint8_t* data, std::size_t len) {
   validation["messages"] = messages;
   result["validation"]   = validation;
 
-  delete pProfile;
+  // pProfile is owned by parseCache(); do not delete here.
 
   // Replace invalid UTF-8 (from Describe() hex dumps on malformed tags) with
   // the U+FFFD replacement character so dump() doesn't throw.
@@ -262,21 +323,18 @@ static std::string describeTagBytes(const std::uint8_t* data, std::size_t len,
 
   std::string sReport;
   icValidateStatus nStatus = icValidateOK;
-  CIccProfile* pProfile = ValidateIccProfile(
-      data, static_cast<icUInt32Number>(len), sReport, nStatus);
+  CIccProfile* pProfile = getOrParse(data, len, sReport, nStatus);
   if (!pProfile) {
     return json{{"error", "Failed to parse ICC profile"}}.dump();
   }
 
   CIccTag* pTag = pProfile->FindTag(static_cast<icSignature>(sig));
   if (!pTag) {
-    delete pProfile;
     return json{{"error", "Tag not found: " + tagSig}}.dump();
   }
 
   std::string description;
   pTag->Describe(description, 100);
-  delete pProfile;
   return json{{"description", description}}.dump(
       -1, ' ', false, json::error_handler_t::replace);
 }
