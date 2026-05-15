@@ -2,7 +2,6 @@ import { lazy, Suspense, useState } from 'react'
 import ValidationPanel from './ValidationPanel.jsx'
 import HeaderTable from './HeaderTable.jsx'
 import TagTable from './TagTable.jsx'
-import TagDetailModal from './TagDetailModal.jsx'
 import { useT } from '../i18n.jsx'
 import styles from './ProfileViewer.module.css'
 
@@ -34,7 +33,6 @@ export default function ProfileViewer({
   onIccProduced,
 }) {
   const [activeTab, setActiveTab] = useState('Header')
-  const [selectedTag, setSelectedTag] = useState(null)
   const t = useT()
 
   return (
@@ -72,7 +70,7 @@ export default function ProfileViewer({
 
       <div className={styles.panel}>
         {activeTab === 'Header'     && <HeaderTable header={data.header} profileId={data.profileId} />}
-        {activeTab === 'Tags'       && <TagTable tags={data.tags} onTagClick={setSelectedTag} changedTagIds={changedTagIds} />}
+        {activeTab === 'Tags'       && <TagTable tags={data.tags} bytes={bytes} changedTagIds={changedTagIds} />}
         {activeTab === 'Validation' && <ValidationPanel validation={data.validation} />}
         {activeTab === 'Raw Output' && <RawOutput data={data} />}
         {activeTab === 'XML'        && (
@@ -98,10 +96,6 @@ export default function ProfileViewer({
           </Suspense>
         )}
       </div>
-
-      {selectedTag && (
-        <TagDetailModal tag={selectedTag} bytes={bytes} onClose={() => setSelectedTag(null)} />
-      )}
     </div>
   )
 }
