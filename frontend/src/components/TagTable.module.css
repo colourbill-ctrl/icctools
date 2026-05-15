@@ -89,6 +89,12 @@
 .padError   { color: var(--error)   !important; font-weight: bold; }
 .padWarning { color: var(--warning) !important; font-weight: bold; }
 
+/* Desktop: hide the mobile-only meta line + caret. They render in the DOM so
+   the markup stays static, but only become visible inside the mobile media
+   query below. */
+.meta  { display: none; }
+.caret { display: none; }
+
 .empty {
   color: var(--text-muted);
   font-style: italic;
@@ -97,52 +103,89 @@
 }
 
 @media (max-width: 720px) {
-  .wrapper { border: none; border-radius: 0; }
+  /* chardata-style mobile reflow: 3-col grid with num on the left, name +
+     monospace meta summary in the middle, and a chevron on the right hinting
+     at the tap-for-detail affordance. The id / offset / size / pad cells are
+     collapsed into the meta line, so each row stays a single tap-target with
+     no horizontal scroll. */
+  .wrapper {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+  }
 
   .head { display: none; }
 
   .row {
-    grid-template-columns: 40px 1fr 1fr 1fr;
+    grid-template-columns: 28px 1fr auto;
     grid-template-areas:
-      "num  name name name"
-      "num  id   id   id"
-      "num  off  size pad";
-    column-gap: 10px;
-    row-gap: 2px;
-    padding: 8px 10px;
-    margin-bottom: 6px;
+      "num name caret"
+      "num meta meta";
+    column-gap: 8px;
+    row-gap: 1px;
+    padding: 9px 10px;
+    margin-bottom: 4px;
     border: 1px solid var(--border-soft);
     border-radius: var(--radius);
+    background: var(--surface);
   }
+  .row:nth-child(odd),
+  .row:nth-child(even) { background: var(--surface); }
 
   .row > span { padding: 0; }
 
   .colNum {
     grid-area: num;
     align-self: center;
-    text-align: center;
-    font-weight: bold;
+    text-align: right;
     color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
   }
   .colName {
     grid-area: name;
     font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
   }
-  .colId {
-    grid-area: id;
-    text-align: left;
-  }
-  .colOffset { grid-area: off;  text-align: left; }
-  .colSize   { grid-area: size; text-align: left; }
-  .colPad    { grid-area: pad;  text-align: left; }
 
-  .label {
-    display: inline;
-    font-size: 10px;
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
+  /* Hide the standalone id / offset / size / pad cells — their info is folded
+     into the meta line below. */
+  .colId,
+  .colOffset,
+  .colSize,
+  .colPad { display: none; }
+
+  .meta {
+    display: block;
+    grid-area: meta;
+    font-family: var(--font-mono);
+    font-size: 11px;
     color: var(--text-muted);
-    margin-right: 4px;
+    word-break: break-word;
+  }
+  .idInline,
+  .meta code {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .padMetaWarning { color: var(--warning); font-weight: 600; }
+  .padMetaError   { color: var(--error);   font-weight: 700; }
+
+  .caret {
+    display: block;
+    grid-area: caret;
+    align-self: center;
+    justify-self: end;
+    color: var(--text-muted);
+    font-size: 18px;
+    line-height: 1;
+    width: 14px;
+    text-align: center;
   }
 }

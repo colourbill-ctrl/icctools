@@ -41,7 +41,11 @@ body {
 body.blade-open      { padding-right: 220px; }
 body.blade-collapsed { padding-right: 44px; }
 
-@media (max-width: 700px) {
+/* Mobile breakpoint matches the rest of the app (720 px). Below this width
+   the blade becomes a slide-in drawer (see SettingsBlade.module.css) and
+   the centred layout goes full-bleed, so the desktop padding-right tracking
+   must reset to 0 to avoid stealing horizontal space. */
+@media (max-width: 720px) {
   body.blade-open,
   body.blade-collapsed { padding-right: 0; }
 }

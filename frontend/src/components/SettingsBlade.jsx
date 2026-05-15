@@ -13,10 +13,12 @@ const HELP_URL    = `${import.meta.env.BASE_URL}help.html`
 // updated to recognise 'icctools' too (see CLAUDE.md / repo notes).
 const CONTACT_URL = 'https://www.colourbill.com/?contact=chardata'
 
-// Detect mobile by viewport width (matches chardata's <=700 threshold). The
-// blade defaults to collapsed on mobile so the main content isn't covered.
+// Detect mobile by viewport width. The threshold matches the 720 px media
+// query used across the rest of icctools (layout, header table, tag table,
+// profile viewer) and chardata's own ICC viewer breakpoint. The blade
+// defaults to collapsed on mobile so the main content isn't covered.
 function isMobile() {
-  return typeof window !== 'undefined' && window.innerWidth <= 700
+  return typeof window !== 'undefined' && window.innerWidth <= 720
 }
 
 function readTheme() {

@@ -73,21 +73,20 @@
 }
 
 @media (max-width: 720px) {
-  .table, .table tbody, .table tr { display: block; width: 100%; }
-  .table tr {
-    border-bottom: 1px solid var(--border-soft);
-    padding: 4px 0;
-  }
-  .table tr:last-child { border-bottom: none; }
+  /* chardata-style: keep the two-column key/value table instead of stacking,
+     just shrink the typography and tighten widths. Stacking turned out to
+     waste vertical space and made it harder to scan the header at a glance. */
   .key, .value {
-    display: block;
-    width: auto;
-    min-width: 0;
-    padding: 4px 10px;
-    border-bottom: none;
+    padding: 6px 10px;
+    font-size: 12px;
   }
-  .key { padding-bottom: 0; font-size: 11px; }
-  .value { padding-top: 2px; font-size: 12px; }
+  .key {
+    width: 45%;
+    min-width: 0;
+    padding-right: 8px;
+  }
+  .value { padding-left: 0; }
+
   .profileId {
     padding: 8px 10px;
     flex-wrap: wrap;

@@ -28,6 +28,12 @@
   margin: 0;
 }
 
+/* Dark-mode title needs explicit high-contrast colour — the default `#333` is
+   nearly invisible on the dark surface. Pure white maximises contrast against
+   `--surface` (#242529) ≈ 16.5:1, which feels right for a top-level page
+   heading and matches chardata's preference for bright, punchy headings. */
+:global(body.dark) .title { color: #ffffff; }
+
 .banner {
   padding: 6px 28px 18px 28px;
   font-size: 13px;

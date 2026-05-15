@@ -43,17 +43,28 @@ export default function TagTable({ tags, onTagClick, changedTagIds }) {
               <code>{tag.id}</code>
             </span>
             <span className={`${styles.num} ${styles.mono} ${styles.colOffset}`}>
-              <span className={styles.label}>Offset</span>
               {tag.offset}
             </span>
             <span className={`${styles.num} ${styles.mono} ${styles.colSize}`}>
-              <span className={styles.label}>Size</span>
               {tag.size}
             </span>
             <span className={`${styles.num} ${styles.mono} ${styles.colPad} ${padClass(tag.pad)}`}>
-              <span className={styles.label}>Pad</span>
               {tag.pad}
             </span>
+            {/*
+              Mobile-only meta line + tap caret. Both elements are display:none
+              on desktop (TagTable.module.css). On ≤720 px the CSS swaps the row
+              into a 3-col grid (num · name+meta · caret) so the offset/size/pad
+              cells collapse into a single monospace summary line — matches the
+              chardata ICC viewer's mobile reflow.
+            */}
+            <span className={styles.meta} aria-hidden>
+              <code className={styles.idInline}>{tag.id}</code>
+              {' · '}{tag.size?.toLocaleString?.() ?? tag.size}B
+              {' · off '}{tag.offset?.toLocaleString?.() ?? tag.offset}
+              {' · pad '}<span className={padMetaClass(tag.pad)}>{tag.pad}</span>
+            </span>
+            <span className={styles.caret} aria-hidden>›</span>
           </div>
         )
       })}
@@ -64,5 +75,11 @@ export default function TagTable({ tags, onTagClick, changedTagIds }) {
 function padClass(pad) {
   if (pad < 0) return styles.padError
   if (pad > 3) return styles.padWarning
+  return ''
+}
+
+function padMetaClass(pad) {
+  if (pad < 0) return styles.padMetaError
+  if (pad > 3) return styles.padMetaWarning
   return ''
 }

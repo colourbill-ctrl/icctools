@@ -160,7 +160,7 @@
 .mobileHelp,
 .mobileContact { display: none; }
 
-@media (max-width: 700px) {
+@media (max-width: 720px) {
   .blade {
     width: min(300px, 85vw) !important;
     min-width: 0;
