@@ -87,7 +87,7 @@ function diag_layout() {
   b += R(CX,10,CW,H-20,'pnl',8);
 
   // Title row + banner
-  b += T(CX+20, 36, 'ICC Profile Validator', 'tT', 'start');
+  b += T(CX+20, 36, 'ICC Profile Tool', 'tT', 'start');
   b += T(CX+20, 60, 'Upload an ICC profile to validate it against the ICC.1 specification', 't3', 'start');
   b += T(CX+20, 74, 'using the iccDEV reference implementation.', 't3', 'start');
   b += L(CX+20, 84, CX+CW-20, 84);
@@ -291,7 +291,7 @@ function slug(h) {
 const manual = fs.readFileSync(path.join(__dirname, '../MANUAL.md'), 'utf8');
 
 // Strip the H1 title (replaced by hardcoded HTML below) plus the optional
-// single-line "ICC Profile Validator is a …" subtitle that may follow.
+// single-line "ICC Profile Tool is a …" subtitle that may follow.
 const stripped = manual
   .replace(/^#[^#].*\n+/, '');
 
@@ -322,7 +322,7 @@ const html = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ICC Profile Validator — Help</title>
+  <title>ICC Profile Tool — Help</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, 'Noto Sans SC', 'Hiragino Sans', 'Microsoft YaHei', 'Apple SD Gothic Neo', sans-serif; background: #f0f2f5; color: #333; line-height: 1.6; }
@@ -372,7 +372,7 @@ const html = `<!DOCTYPE html>
 <body>
 <div class="page">
 
-  <h1>ICC Profile Validator — Help</h1>
+  <h1>ICC Profile Tool — Help</h1>
   <p class="subtitle">Browser-based ICC profile inspector, validator, and round-trip editor</p>
 
 ${intro}
