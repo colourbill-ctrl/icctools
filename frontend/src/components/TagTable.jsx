@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import { describeTag } from '../lib/validator.js'
+import { useT } from '../i18n.jsx'
 import styles from './TagTable.module.css'
 
 // Inline-expanding tag table. One row open at a time (accordion). Mirrors
@@ -11,6 +12,7 @@ import styles from './TagTable.module.css'
 export default function TagTable({ tags, bytes, changedTagIds }) {
   const [openId, setOpenId]       = useState(null)
   const [descCache, setDescCache] = useState({})  // { [tagId]: { text, error, loading } }
+  const t = useT()
 
   // Round-trip edits replace the profile bytes — invalidate the cache and
   // collapse any open row so a stale Describe() text never lingers.
@@ -44,7 +46,7 @@ export default function TagTable({ tags, bytes, changedTagIds }) {
   }, [openId, bytes])
 
   if (tags.length === 0) {
-    return <p className={styles.empty}>No tags found.</p>
+    return <p className={styles.empty}>{t('no_tags')}</p>
   }
 
   function toggle(id) {
@@ -55,18 +57,18 @@ export default function TagTable({ tags, bytes, changedTagIds }) {
     <div className={styles.wrapper}>
       <div className={`${styles.row} ${styles.head}`} role="row">
         <span className={`${styles.num} ${styles.colNum}`}>#</span>
-        <span className={styles.colName}>Tag Name</span>
-        <span className={styles.colId}>ID</span>
-        <span className={`${styles.num} ${styles.colOffset}`}>Offset</span>
-        <span className={`${styles.num} ${styles.colSize}`}>Size</span>
-        <span className={`${styles.num} ${styles.colPad}`}>Pad</span>
+        <span className={styles.colName}>{t('tag_name')}</span>
+        <span className={styles.colId}>{t('tag_id')}</span>
+        <span className={`${styles.num} ${styles.colOffset}`}>{t('tag_offset')}</span>
+        <span className={`${styles.num} ${styles.colSize}`}>{t('tag_size')}</span>
+        <span className={`${styles.num} ${styles.colPad}`}>{t('tag_pad')}</span>
       </div>
       {tags.map((tag, i) => {
         const isOpen  = openId === tag.id
         const changed = changedTagIds?.has(tag.id)
         const cached  = descCache[tag.id]
         const fullText = cached?.text
-        const initial  = tag.description || '(No content)'
+        const initial  = tag.description || t('tag_no_content')
         const shown    = fullText ?? initial
         return (
           <Fragment key={i}>
@@ -84,7 +86,7 @@ export default function TagTable({ tags, bytes, changedTagIds }) {
               }}
             >
               <span className={`${styles.num} ${styles.colNum} ${styles.muted}`}>{i + 1}</span>
-              <span className={`${styles.colName} ${styles.name} ${changed ? styles.changed : ''}`} title={changed ? 'Bytes changed since load' : undefined}>
+              <span className={`${styles.colName} ${styles.name} ${changed ? styles.changed : ''}`} title={changed ? t('tag_bytes_changed') : undefined}>
                 <span className={styles.caret} aria-hidden>▶</span>
                 {changed && <span className={styles.changedDot} aria-hidden>●</span>}
                 {tag.name}
@@ -112,19 +114,19 @@ export default function TagTable({ tags, bytes, changedTagIds }) {
             {isOpen && (
               <div className={styles.detail}>
                 <div className={styles.detailMeta}>
-                  <span><span className={styles.detailKey}>Type</span> {tag.isArrayType ? `Array of ${tag.type}` : (tag.type || '—')}</span>
-                  <span><span className={styles.detailKey}>Offset</span> {tag.offset}</span>
-                  <span><span className={styles.detailKey}>Size</span> {tag.size} bytes</span>
+                  <span><span className={styles.detailKey}>{t('tag_type')}</span> {tag.isArrayType ? t('tag_array_of', { type: tag.type }) : (tag.type || '—')}</span>
+                  <span><span className={styles.detailKey}>{t('tag_offset')}</span> {tag.offset}</span>
+                  <span><span className={styles.detailKey}>{t('tag_size')}</span> {tag.size} {t('bytes_suffix')}</span>
                 </div>
                 <pre className={styles.detailBody}>{shown}</pre>
                 {cached?.loading && (
                   <div className={styles.detailLoading} aria-live="polite">
-                    Loading full description…
+                    {t('loading_full_description')}
                   </div>
                 )}
                 {cached?.error && (
                   <div className={styles.detailError} role="alert">
-                    Could not load full description: {cached.error}
+                    {t('failed_load_description')} {cached.error}
                   </div>
                 )}
               </div>

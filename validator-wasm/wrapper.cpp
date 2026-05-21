@@ -287,10 +287,14 @@ static std::string validateBytes(const std::uint8_t* data, std::size_t len) {
 // is converted to a JSON {"error": ...} response so the browser surfaces a
 // readable message instead of an opaque CppException.
 
-static std::string validateProfile(emscripten::val bytes) {
+static std::string validateProfile(const std::string& bytes) {
+  // Taking `bytes` as std::string lets embind copy the Uint8Array into the
+  // wasm heap in a single memcpy. The previous convertJSArrayToNumberVector
+  // path made one boundary crossing per byte, which dominated runtime on
+  // any non-trivial profile.
   try {
-    auto vec = emscripten::convertJSArrayToNumberVector<std::uint8_t>(bytes);
-    return validateBytes(vec.data(), vec.size());
+    return validateBytes(
+        reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
   } catch (const std::exception& e) {
     json err = {{"error", std::string("validator threw: ") + e.what()}};
     return err.dump();
@@ -339,10 +343,11 @@ static std::string describeTagBytes(const std::uint8_t* data, std::size_t len,
       -1, ' ', false, json::error_handler_t::replace);
 }
 
-static std::string describeTag(emscripten::val bytes, std::string tagSig) {
+static std::string describeTag(const std::string& bytes, std::string tagSig) {
+  // Same std::string-as-binary-blob trick as validateProfile above.
   try {
-    auto vec = emscripten::convertJSArrayToNumberVector<std::uint8_t>(bytes);
-    return describeTagBytes(vec.data(), vec.size(), tagSig);
+    return describeTagBytes(
+        reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(), tagSig);
   } catch (const std::exception& e) {
     return json{{"error", std::string("describeTag threw: ") + e.what()}}.dump();
   } catch (...) {

@@ -41,13 +41,13 @@ export default function ProfileViewer({
         <span className={styles.filename}>{data.filename}</span>
         <span className={styles.meta}>
           {data.sizeBytes != null && (
-            <>{data.sizeBytes.toLocaleString()} bytes</>
+            <>{data.sizeBytes.toLocaleString()} {t('bytes_suffix')}</>
           )}
           {data.libraryVersion && (
             <> · IccProfLib {data.libraryVersion}</>
           )}
         </span>
-        <ValidationBadge level={data.validation.level} />
+        <ValidationBadge level={data.validation.level} t={t} />
       </div>
 
       <nav className={styles.tabs} role="tablist">
@@ -74,7 +74,7 @@ export default function ProfileViewer({
         {activeTab === 'Validation' && <ValidationPanel validation={data.validation} />}
         {activeTab === 'Raw Output' && <RawOutput data={data} />}
         {activeTab === 'XML'        && (
-          <Suspense fallback={<div className={styles.loading}>Loading XML editor…</div>}>
+          <Suspense fallback={<div className={styles.loading}>{t('loading_xml_editor')}</div>}>
             <XmlPanel
               bytes={bytes}
               xml={xml}
@@ -85,7 +85,7 @@ export default function ProfileViewer({
           </Suspense>
         )}
         {activeTab === 'JSON'       && (
-          <Suspense fallback={<div className={styles.loading}>Loading JSON editor…</div>}>
+          <Suspense fallback={<div className={styles.loading}>{t('loading_json_editor')}</div>}>
             <JsonPanel
               bytes={bytes}
               json={json}
@@ -100,11 +100,11 @@ export default function ProfileViewer({
   )
 }
 
-function ValidationBadge({ level }) {
-  const labels = { valid: 'Valid', warning: 'Warning', error: 'Error', unknown: 'Unknown' }
+function ValidationBadge({ level, t }) {
+  const labelKey = { valid: 'badge_valid', warning: 'badge_warning', error: 'badge_error', unknown: 'badge_unknown' }[level]
   return (
     <span className={`${styles.validBadge} ${styles[`valid_${level}`]}`}>
-      {labels[level] ?? level}
+      {labelKey ? t(labelKey) : level}
     </span>
   )
 }

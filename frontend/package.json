@@ -1,6 +1,6 @@
 {
   "name": "profiletool-frontend",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "ICC profile viewer and validation UI",
   "type": "module",
   "scripts": {

@@ -138,29 +138,23 @@ emscripten::val makeUint8Array(const std::uint8_t* data, std::size_t size) {
 
 } // namespace
 
-static std::string iccToXmlImpl(emscripten::val bytes) {
+static std::string iccToXmlImpl(const std::string& bytes) {
   ensureFactoriesPushed();
-  auto vec = emscripten::convertJSArrayToNumberVector<std::uint8_t>(bytes);
 
-  const std::string srcPath = uniqueMemfsPath("in", "icc");
-  if (!writeFile(srcPath.c_str(), vec.data(), vec.size())) {
-    throw std::runtime_error("failed to write MEMFS input");
-  }
-
-  CIccFileIO srcIO;
-  if (!srcIO.Open(srcPath.c_str(), "r")) {
-    std::remove(srcPath.c_str());
+  // Read path: CIccMemIO::Attach on the inbound buffer — no MEMFS hop, no
+  // per-byte embind marshalling (embind copies the Uint8Array into `bytes`
+  // as one memcpy). Attach is read-only so the const_cast is sound.
+  CIccMemIO srcIO;
+  if (!srcIO.Attach(
+        reinterpret_cast<icUInt8Number*>(const_cast<char*>(bytes.data())),
+        bytes.size(), false)) {
     throw std::runtime_error("failed to open profile bytes");
   }
 
   CIccProfileXml profile;
   if (!profile.Read(&srcIO)) {
-    srcIO.Close();
-    std::remove(srcPath.c_str());
     throw std::runtime_error("failed to parse ICC profile");
   }
-  srcIO.Close();
-  std::remove(srcPath.c_str());
 
   std::string xml;
   xml.reserve(1 << 20);
@@ -233,7 +227,7 @@ static emscripten::val xmlToIccImpl(const std::string& xml) {
 // CppException pointer that would also leave the module instance in a
 // terminated state for the rest of the session. Mirrors the json-wrapper.cpp
 // pattern.
-static std::string iccToXml(emscripten::val bytes) {
+static std::string iccToXml(const std::string& bytes) {
   try { return iccToXmlImpl(bytes); }
   catch (const std::runtime_error&) { throw; }
   catch (const std::exception& e) {

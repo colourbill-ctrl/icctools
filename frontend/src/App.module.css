@@ -117,6 +117,16 @@
 
 .footer a { color: var(--accent); font-weight: normal; }
 
+/* Footer build label. Mono so the digits line up nicely next to the slug
+   and stay visually distinct from the slug text. Subdued colour by design —
+   the version is contextual info, not a call-out. */
+.version {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
 @media (max-width: 720px) {
   .layout {
     width: 100%;

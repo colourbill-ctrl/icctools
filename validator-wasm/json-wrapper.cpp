@@ -107,7 +107,7 @@ nlohmann::ordered_json sortJsonKeys(const IccJson& j) {
     for (const auto& e : j) arr.push_back(sortJsonKeys(e));
     return arr;
   }
-  return nlohmann::ordered_json::parse(j.dump());
+  return j;
 }
 
 bool writeFile(const char* path, const void* data, std::size_t size) {
@@ -140,33 +140,23 @@ emscripten::val makeUint8Array(const std::uint8_t* data, std::size_t size) {
 
 } // namespace
 
-static std::string iccToJson(emscripten::val bytes, int indent, bool sort) {
+static std::string iccToJson(const std::string& bytes, int indent, bool sort) {
   ensureFactoriesPushed();
-  auto vec = emscripten::convertJSArrayToNumberVector<std::uint8_t>(bytes);
 
-  // Read path: MEMFS → CIccFileIO → CIccProfileJson::Read. We could use
-  // CIccMemIO here (size is known), but matching xml-wrapper.cpp keeps the
-  // two modules structurally identical for readers. If profile loads
-  // dominate a future benchmark we can switch this one path.
-  const std::string srcPath = uniqueMemfsPath("in", "icc");
-  if (!writeFile(srcPath.c_str(), vec.data(), vec.size())) {
-    throw std::runtime_error("failed to write MEMFS input");
-  }
-
-  CIccFileIO srcIO;
-  if (!srcIO.Open(srcPath.c_str(), "r")) {
-    std::remove(srcPath.c_str());
+  // Read path: CIccMemIO::Attach on the inbound buffer — no MEMFS hop, no
+  // per-byte embind marshalling (embind copies the Uint8Array into `bytes`
+  // as one memcpy). Attach is read-only so the const_cast is sound.
+  CIccMemIO srcIO;
+  if (!srcIO.Attach(
+        reinterpret_cast<icUInt8Number*>(const_cast<char*>(bytes.data())),
+        bytes.size(), false)) {
     throw std::runtime_error("failed to open profile bytes");
   }
 
   CIccProfileJson profile;
   if (!profile.Read(&srcIO)) {
-    srcIO.Close();
-    std::remove(srcPath.c_str());
     throw std::runtime_error("failed to parse ICC profile");
   }
-  srcIO.Close();
-  std::remove(srcPath.c_str());
 
   if (sort) {
     IccJson doc;

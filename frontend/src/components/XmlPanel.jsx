@@ -2,7 +2,18 @@ import { useState } from 'react'
 import { xml as xmlLang } from '@codemirror/lang-xml'
 import TextEditor from './TextEditor.jsx'
 import { iccToXml, xmlToIcc } from '../lib/xmlConverter.js'
+import { useT } from '../i18n.jsx'
 import styles from './ConverterPanel.module.css'
+
+// The WASM converters run synchronously on the main thread, so without a
+// forced frame yield the "Converting…" status set just above doesn't paint
+// before the work blocks the UI thread. rAF + microtask flush is enough to
+// let React commit the busy state and the browser render one frame.
+function yieldToPaint() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve))
+  })
+}
 
 export default function XmlPanel({
   bytes,           // Uint8Array of the currently-loaded profile
@@ -13,16 +24,16 @@ export default function XmlPanel({
 }) {
   const [busy, setBusy] = useState(null)  // 'toXml' | 'toIcc' | null
   const [error, setError] = useState(null)
+  const t = useT()
 
   async function handleToXml() {
     if (xmlDirty && xml) {
-      const ok = window.confirm(
-        'You have unsaved XML edits. Overwrite them with a fresh conversion from the ICC profile?'
-      )
+      const ok = window.confirm(t('confirm_overwrite_xml'))
       if (!ok) return
     }
     setBusy('toXml'); setError(null)
     try {
+      await yieldToPaint()
       const result = await iccToXml(bytes)
       onXmlChanged(result, { baseline: result })
     } catch (e) {
@@ -36,6 +47,7 @@ export default function XmlPanel({
     if (!xml) return
     setBusy('toIcc'); setError(null)
     try {
+      await yieldToPaint()
       const newBytes = await xmlToIcc(xml)
       onIccProduced(newBytes)
     } catch (e) {
@@ -54,7 +66,7 @@ export default function XmlPanel({
           onClick={handleToXml}
           disabled={busy !== null}
         >
-          {busy === 'toXml' ? 'Converting…' : 'Convert to XML'}
+          {t('convert_to_xml')}
         </button>
         <button
           type="button"
@@ -62,25 +74,30 @@ export default function XmlPanel({
           onClick={handleToIcc}
           disabled={busy !== null || !xml}
         >
-          {busy === 'toIcc' ? 'Converting…' : 'Convert to ICC'}
+          {t('convert_to_icc')}
         </button>
+        {busy !== null && (
+          <span className={styles.status} role="status" aria-live="polite">
+            <span className={styles.spinner} aria-hidden="true" />
+            {busy === 'toXml' ? t('converting_to_xml') : t('converting_to_icc')}
+          </span>
+        )}
         {xmlDirty && xml && (
-          <span className={styles.dirtyTag}>● unsaved XML edits</span>
+          <span className={styles.dirtyTag}>{t('unsaved_xml_edits')}</span>
         )}
       </div>
 
       {error && (
         <div className={styles.error}>
-          <strong>Error:</strong> <pre className={styles.errorText}>{error}</pre>
+          <strong>{t('error_label')}</strong> <pre className={styles.errorText}>{error}</pre>
         </div>
       )}
 
       {xml === null ? (
-        <div className={styles.placeholder}>
-          Click <em>Convert to XML</em> to generate an editable XML representation
-          of this profile. The XML is produced by the same IccLibXML code path
-          used by the upstream <code>IccToXml</code> tool.
-        </div>
+        <div
+          className={styles.placeholder}
+          dangerouslySetInnerHTML={{ __html: t('xml_placeholder') }}
+        />
       ) : (
         <TextEditor
           value={xml}

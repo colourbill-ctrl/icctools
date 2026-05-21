@@ -169,11 +169,11 @@ export default function App() {
         iccDirty: !bytesEqual(p.originalBytes, newBytes),
       }))
     } catch (e) {
-      setError('Profile written from edits, but re-validation failed: ' + e.message)
+      setError(t('revalidation_failed') + ' ' + e.message)
     } finally {
       setLoading(false)
     }
-  }, [profile])
+  }, [profile, t])
 
   const handleSave = useCallback(() => {
     if (!profile) return
@@ -264,6 +264,8 @@ export default function App() {
 
         <footer className={styles.footer}>
           {t('footer')}
+          {' · '}
+          <span className={styles.version}>v{__APP_VERSION__}</span>
         </footer>
       </div>
       <SettingsBlade />

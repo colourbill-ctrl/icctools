@@ -37,7 +37,7 @@ export default function DropZone({ onFile, disabled }) {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      aria-label="Drop zone for ICC profile files"
+      aria-label={t('dropzone_aria')}
     >
       <div className={styles.icon}>🎨</div>
       <p className={styles.headline}>{t('dropzone_headline')}</p>
