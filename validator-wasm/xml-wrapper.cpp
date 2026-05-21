@@ -78,7 +78,7 @@ bool containsDoctypeOrEntity(const std::string& xml) {
 std::string uniqueMemfsPath(const char* prefix, const char* ext) {
   static std::atomic<std::uint64_t> counter{0};
   char buf[64];
-  std::snprintf(buf, sizeof(buf), "/tmp/icctools_%s_%llu.%s",
+  std::snprintf(buf, sizeof(buf), "/tmp/profiletool_%s_%llu.%s",
                 prefix,
                 static_cast<unsigned long long>(counter.fetch_add(1)),
                 ext);
@@ -253,7 +253,7 @@ static emscripten::val xmlToIcc(const std::string& xml) {
   }
 }
 
-EMSCRIPTEN_BINDINGS(icctools_xml) {
+EMSCRIPTEN_BINDINGS(profiletool_xml) {
   emscripten::function("iccToXml", &iccToXml);
   emscripten::function("xmlToIcc", &xmlToIcc);
 }

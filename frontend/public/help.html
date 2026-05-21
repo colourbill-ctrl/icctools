@@ -56,7 +56,7 @@
   <h1>ICC Profile Tool — Help</h1>
   <p class="subtitle">Browser-based ICC profile inspector, validator, and round-trip editor</p>
 
-<p><strong>ICC Profile Tool</strong> (icctools) is a browser-based tool for inspecting, validating, and round-trip editing <strong>ICC.1</strong> colour profiles. It runs entirely in your browser — no upload, no install — using a WebAssembly build of <a href="https://github.com/InternationalColorConsortium/iccDEV">iccDEV</a>, the ICC's official reference implementation of IccProfLib.</p>
+<p><strong>ICC Profile Tool</strong> (profiletool) is a browser-based tool for inspecting, validating, and round-trip editing <strong>ICC.1</strong> colour profiles. It runs entirely in your browser — no upload, no install — using a WebAssembly build of <a href="https://github.com/InternationalColorConsortium/iccDEV">iccDEV</a>, the ICC's official reference implementation of IccProfLib.</p>
 <p><strong>What you can do:</strong></p>
 <ul>
 <li><strong>Validate</strong> an ICC profile against the ICC.1 specification — see the severity (valid / warning / error) and every diagnostic message produced by IccProfLib.</li>
@@ -260,11 +260,11 @@ text.mono  { font-family:ui-monospace,Menlo,Consolas,monospace; }
 <p>In <strong>chardata</strong>, after loading an ICC profile, click <strong>Display File</strong> to open the in-page viewer, then click <strong>Launch editor</strong>. A new tab opens here with <code>?source=chardata</code> in the URL.</p>
 <p>The handover works entirely in-browser:</p>
 <p>
-1. icctools opens, detects <code>?source=chardata</code>, and sends <code>{type:'icctools:ready'}</code> to <code>window.opener</code> via <code>postMessage</code>.
+1. profiletool opens, detects <code>?source=chardata</code>, and sends <code>{type:'profiletool:ready'}</code> to <code>window.opener</code> via <code>postMessage</code>.
  
-2. chardata replies with <code>{type:'icctools:load', filename, bytes}</code>.
+2. chardata replies with <code>{type:'profiletool:load', filename, bytes}</code>.
  
-3. icctools accepts the bytes (after verifying the sender's origin against an allowlist and the size against the 256 MB cap), runs validation, and shows the profile.
+3. profiletool accepts the bytes (after verifying the sender's origin against an allowlist and the size against the 256 MB cap), runs validation, and shows the profile.
 </p>
 <p>No upload, no server round-trip. The flow is one-way — edits made here are saved by clicking <strong>Save ICC profile</strong>, not handed back to chardata.</p>
 <hr>
@@ -282,13 +282,13 @@ text.mono  { font-family:ui-monospace,Menlo,Consolas,monospace; }
 <p>All features are available; the layout adapts to the smaller screen.</p>
 <hr>
 <h2 id="7-limits-and-security">7. Limits and security</h2>
-<p>icctools makes no network requests after the initial page load. The validator, the XML converter, and the JSON converter are all WebAssembly compiled from iccDEV C++ sources and run entirely client-side.</p>
+<p>profiletool makes no network requests after the initial page load. The validator, the XML converter, and the JSON converter are all WebAssembly compiled from iccDEV C++ sources and run entirely client-side.</p>
 <table><thead>
 <tr><th>Limit</th><th>Where</th><th>Notes</th></tr></thead><tbody>
 <tr><td><strong>256 MB</strong></td><td>postMessage / drop-zone load</td><td>Refuses to load anything larger; prevents heap exhaustion from a hostile opener</td></tr>
 <tr><td><strong>32 MB</strong></td><td>XML and JSON converters</td><td>Both the JS guard (<code>MAX_XML_BYTES</code> / <code>MAX_JSON_BYTES</code>) and the C++ wrappers (<code>kMaxXmlBytes</code> / <code>kMaxJsonBytes</code>) enforce this; the C++ side is independently authoritative</td></tr>
 <tr><td><strong>XML entity-bomb guard</strong></td><td>XML converter</td><td>Any XML containing <code><!DOCTYPE</code> or <code><!ENTITY</code> is rejected before libxml2 sees it (defence against billion-laughs since IccLibXML enables <code>XML_PARSE_HUGE</code>)</td></tr>
-<tr><td><strong>Origin allowlist</strong></td><td>postMessage launch</td><td>Only same-origin and chardata's dev-host origins can send <code>icctools:load</code> bytes</td></tr>
+<tr><td><strong>Origin allowlist</strong></td><td>postMessage launch</td><td>Only same-origin and chardata's dev-host origins can send <code>profiletool:load</code> bytes</td></tr>
 </tbody></table>
 <p>If you need to inspect a profile that exceeds these limits, build iccDEV from source and use the native CLI tools — those have no JS-side caps.</p>
 

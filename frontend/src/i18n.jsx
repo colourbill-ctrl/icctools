@@ -314,11 +314,11 @@ export function systemLangNative() {
 const LangContext = createContext(null)
 
 export function LangProvider({ children }) {
-  const [lang, setLangState] = useState(() => localStorage.getItem('icctools.lang') || 'system')
+  const [lang, setLangState] = useState(() => localStorage.getItem('profiletool.lang') || 'system')
 
   const setLang = useCallback((next) => {
     setLangState(next)
-    localStorage.setItem('icctools.lang', next)
+    localStorage.setItem('profiletool.lang', next)
   }, [])
 
   const resolved = lang === 'system' ? detectLang() : lang

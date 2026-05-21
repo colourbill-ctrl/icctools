@@ -62,7 +62,7 @@ namespace {
 std::string uniqueMemfsPath(const char* prefix, const char* ext) {
   static std::atomic<std::uint64_t> counter{0};
   char buf[64];
-  std::snprintf(buf, sizeof(buf), "/tmp/icctools_%s_%llu.%s",
+  std::snprintf(buf, sizeof(buf), "/tmp/profiletool_%s_%llu.%s",
                 prefix,
                 static_cast<unsigned long long>(counter.fetch_add(1)),
                 ext);
@@ -254,7 +254,7 @@ static emscripten::val jsonToIcc(const std::string& json) {
   return makeUint8Array(bytes.data(), bytes.size());
 }
 
-EMSCRIPTEN_BINDINGS(icctools_json) {
+EMSCRIPTEN_BINDINGS(profiletool_json) {
   emscripten::function("iccToJson", &iccToJson);
   emscripten::function("jsonToIcc", &jsonToIcc);
 }

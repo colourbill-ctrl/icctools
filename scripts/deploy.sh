@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebuild and deploy icctools to chardata.colourbill.com/profiletool/.
+# Rebuild and deploy profiletool to chardata.colourbill.com/profiletool/.
 #
 # Usage:
 #   scripts/deploy.sh            # full rebuild: WASM + frontend + rsync

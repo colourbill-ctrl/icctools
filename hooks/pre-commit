@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pre-commit hook for icctools:
+# Pre-commit hook for profiletool:
 #   1. Regenerate frontend/public/help.html when MANUAL.md or
 #      scripts/generate-help.js is staged.
 #   2. Abort the commit if help.html is hand-edited (it's auto-generated).

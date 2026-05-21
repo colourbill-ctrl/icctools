@@ -79,7 +79,7 @@ export default function App() {
   }, [loadFromBytes])
 
   // Launch protocol: when opened with ?source=chardata, signal readiness to
-  // window.opener and accept {type:'icctools:load', filename, bytes}.
+  // window.opener and accept {type:'profiletool:load', filename, bytes}.
   //
   // The opener must be same-origin in prod (chardata.colourbill.com/ →
   // chardata.colourbill.com/profiletool/) or one of the dev-host localhost
@@ -103,7 +103,7 @@ export default function App() {
       if (ev.source !== window.opener) return
       if (!allowedOrigins.has(ev.origin)) return
       const msg = ev.data
-      if (!msg || msg.type !== 'icctools:load') return
+      if (!msg || msg.type !== 'profiletool:load') return
       const { filename, bytes } = msg
       if (!bytes) return
       const u8 = bytes instanceof Uint8Array ? bytes
@@ -115,7 +115,7 @@ export default function App() {
     // Send 'ready' to every allowed origin; the opener whose origin matches
     // receives it, the others silently drop it.
     for (const origin of allowedOrigins) {
-      try { window.opener.postMessage({ type: 'icctools:ready' }, origin) } catch (_) {}
+      try { window.opener.postMessage({ type: 'profiletool:ready' }, origin) } catch (_) {}
     }
     return () => window.removeEventListener('message', onMessage)
   }, [loadFromBytes])

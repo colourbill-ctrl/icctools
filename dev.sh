@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the icctools frontend. Validation runs client-side via WASM, so no
+# Start the profiletool frontend. Validation runs client-side via WASM, so no
 # backend service is required.
 #
 # Prerequisites:

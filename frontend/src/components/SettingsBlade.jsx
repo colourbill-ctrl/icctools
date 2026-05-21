@@ -6,15 +6,13 @@ import styles from './SettingsBlade.module.css'
 // scripts/generate-help.js). BASE_URL resolves to '/' in dev and '/profiletool/'
 // in production, matching vite.config.js's `base` setting.
 const HELP_URL    = `${import.meta.env.BASE_URL}help.html`
-// Contact piggybacks on chardata's known-good URL because colourbill.com's
-// query-string handler hard-codes the string 'chardata' for opening the modal.
-// Submissions originated here will therefore be tagged as 'chardata' in the
-// form's hidden source field — that's intentional until colourbill.com is
-// updated to recognise 'icctools' too (see CLAUDE.md / repo notes).
-const CONTACT_URL = 'https://www.colourbill.com/?contact=chardata'
+// Contact opens colourbill.com's modal with profiletool as the source, so
+// submissions are attributed to profiletool in the form's hidden source field.
+// The colourbill.com handler allow-lists 'chardata' and 'profiletool'.
+const CONTACT_URL = 'https://www.colourbill.com/?contact=profiletool'
 
 // Detect mobile by viewport width. The threshold matches the 720 px media
-// query used across the rest of icctools (layout, header table, tag table,
+// query used across the rest of profiletool (layout, header table, tag table,
 // profile viewer) and chardata's own ICC viewer breakpoint. The blade
 // defaults to collapsed on mobile so the main content isn't covered.
 function isMobile() {
@@ -22,7 +20,7 @@ function isMobile() {
 }
 
 function readTheme() {
-  return localStorage.getItem('icctools.bgTheme') || 'system'
+  return localStorage.getItem('profiletool.bgTheme') || 'system'
 }
 
 function applyTheme(theme) {
@@ -39,7 +37,7 @@ export default function SettingsBlade() {
   const { lang, setLang, t } = useLang()
   const [theme, setTheme]       = useState(readTheme)
   const [collapsed, setCollapsed] = useState(() =>
-    isMobile() || localStorage.getItem('icctools.bladeCollapsed') === '1'
+    isMobile() || localStorage.getItem('profiletool.bladeCollapsed') === '1'
   )
 
   // Theme: apply on mount + whenever it changes; subscribe to system theme
@@ -66,13 +64,13 @@ export default function SettingsBlade() {
 
   const onThemeChange = useCallback((v) => {
     setTheme(v)
-    localStorage.setItem('icctools.bgTheme', v)
+    localStorage.setItem('profiletool.bgTheme', v)
   }, [])
 
   const toggleBlade = useCallback(() => {
     setCollapsed(c => {
       const next = !c
-      localStorage.setItem('icctools.bladeCollapsed', next ? '1' : '0')
+      localStorage.setItem('profiletool.bladeCollapsed', next ? '1' : '0')
       return next
     })
   }, [])

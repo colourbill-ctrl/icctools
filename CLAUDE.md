@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-icctools is a web-based ICC profile validation tool that wraps the [iccDEV](https://github.com/InternationalColorConsortium/iccDEV) C++ reference implementation. Validation runs **entirely client-side** via a WASM build of IccProfLib — there is no backend service. The iccDEV source is expected at `/home/colour/code/iccdev` and must **not** be modified.
+profiletool is a web-based ICC profile validation tool that wraps the [iccDEV](https://github.com/InternationalColorConsortium/iccDEV) C++ reference implementation. Validation runs **entirely client-side** via a WASM build of IccProfLib — there is no backend service. The iccDEV source is expected at `/home/colour/code/iccdev` and must **not** be modified.
 
 ## Layout
 
@@ -93,9 +93,9 @@ Each component has a co-located `*.module.css` file. Global tokens (colours, fon
 `components/SettingsBlade.jsx` mirrors chardata's `#blade` pattern: a fixed right-side panel that collapses to a 6 px bar with a floating column of three tab buttons (gear / `?` help / `✉` contact). On ≤700 px viewports it becomes a drawer that slides in from the right behind a backdrop, with three matching FABs pinned to the right edge.
 
 State is in `localStorage`:
-- `icctools.bladeCollapsed` — `'0' | '1'`
-- `icctools.bgTheme` — `'system' | 'light' | 'dark'`
-- `icctools.lang` — `'system'` or any code from `i18n.jsx::LANG_OPTIONS`
+- `profiletool.bladeCollapsed` — `'0' | '1'`
+- `profiletool.bgTheme` — `'system' | 'light' | 'dark'`
+- `profiletool.lang` — `'system'` or any code from `i18n.jsx::LANG_OPTIONS`
 
 When the user picks **System** for theme, the blade subscribes to `prefers-color-scheme` and re-applies; switching to Light/Dark detaches the listener (matches chardata's `_attachSystemListener` / `_detachSystemListener`). Theme flips `body.dark` and the dark-mode rules in `index.css` override the CSS variables — most components recolour automatically, but anything with a hardcoded gradient (tab buttons, selects, the `.btn-primary` blue) has explicit `body.dark` rules.
 
@@ -103,7 +103,7 @@ The blade also toggles `body.blade-open` / `body.blade-collapsed` so the centred
 
 The **Help** button (`?`) opens `${import.meta.env.BASE_URL}help.html` — the static page generated from `MANUAL.md` (see "Help / MANUAL.md" below).
 
-The **Contact** button (`✉`) opens `https://www.colourbill.com/?contact=chardata` — note: **deliberately `chardata`, not `icctools`**. The IIFE on colourbill.com that opens the contact modal does an exact-string check (`params.get('contact') === 'chardata'`), so anything else falls through to the homepage without opening the panel. Submissions originated from icctools are therefore tagged with `cb-source=chardata` in the form's hidden source field. **TODO (open work in colourbill.com)**: generalise the IIFE to accept either `'chardata'` or `'icctools'` (or a list) and pass the matched value through to `cb-source`, then flip `CONTACT_URL` in `SettingsBlade.jsx` back to `?contact=icctools` so analytics attribution is correct. Surface this whenever the user asks about open work.
+The **Contact** button (`✉`) opens `https://www.colourbill.com/?contact=profiletool`. The IIFE on colourbill.com that opens the contact modal allow-lists `['chardata', 'profiletool']` and passes the matched value through to the form's hidden `cb-source` field; the server-side handler (`colourbill_handle_contact()` in `colourbill-customizations.php`) mirrors the same allow-list and prefixes the email subject with `[profiletool]` for attribution.
 
 ### Help / MANUAL.md
 
@@ -111,7 +111,7 @@ The **Contact** button (`✉`) opens `https://www.colourbill.com/?contact=charda
 - Strips the H1 title (replaced with hardcoded HTML in the page chrome).
 - Splits the doc into intro (before the first `---`) and body (after it).
 - Renders a small markdown subset → HTML (headings, lists, tables, paragraphs, fenced inline `code`, `**bold**` / `*italic*`, `[links](…)`, raw HTML blocks like `<div class="note">`).
-- Inlines two SVG diagrams under `id="1-loading-a-profile"` and `id="2-settings-panel"` via `insertAfter()`. Diagram colours follow a `prefers-color-scheme` `:root` variable scheme so the help page works in both light and dark UA themes (independently of icctools's own theme switch).
+- Inlines two SVG diagrams under `id="1-loading-a-profile"` and `id="2-settings-panel"` via `insertAfter()`. Diagram colours follow a `prefers-color-scheme` `:root` variable scheme so the help page works in both light and dark UA themes (independently of profiletool's own theme switch).
 
 The pre-commit hook regenerates `help.html` when `MANUAL.md` or `scripts/generate-help.js` is staged, and **aborts the commit** if `help.html` is hand-edited. Edit `MANUAL.md` (or the generator for diagrams / layout) instead.
 
@@ -149,7 +149,7 @@ When adding a new user-facing string: add the key to **every** language in `I18N
 
 ## Deployment
 
-Production instance: `https://chardata.colourbill.com/profiletool/` — nginx on the same Lightsail box that serves chardata. icctools is a static dist; nginx serves it from `/var/www/profiletool/` at the `/profiletool/` location.
+Production instance: `https://chardata.colourbill.com/profiletool/` — nginx on the same Lightsail box that serves chardata. profiletool is a static dist; nginx serves it from `/var/www/profiletool/` at the `/profiletool/` location.
 
 Vite's `base` is `/profiletool/` for `npm run build` and `/` for `npm run dev` (see `vite.config.js`), so dev URLs stay at `http://localhost:5173/` while production assets resolve under `/profiletool/`. Each `WASM_DIR` constant in `src/lib/*.js` is computed from `import.meta.env.BASE_URL` so the WASM loader follows the same prefix.
 
@@ -164,7 +164,7 @@ nginx server block: the chardata.colourbill.com vhost needs a `location /profile
 
 ## Launch protocol (cross-app hand-off)
 
-When opened with `?source=chardata`, icctools posts `{type:'icctools:ready'}` to `window.opener` once on mount, then waits for a `{type:'icctools:load', filename, bytes}` reply. `bytes` is accepted as `Uint8Array`, `ArrayBuffer`, or array-like. The flow is one-way: there is no return channel back to the opener.
+When opened with `?source=chardata`, profiletool posts `{type:'profiletool:ready'}` to `window.opener` once on mount, then waits for a `{type:'profiletool:load', filename, bytes}` reply. `bytes` is accepted as `Uint8Array`, `ArrayBuffer`, or array-like. The flow is one-way: there is no return channel back to the opener.
 
 The listener (App.jsx) enforces two checks before accepting bytes:
 
@@ -175,7 +175,7 @@ chardata's `launchIccEditor()` in `public/index.html` is the canonical caller �
 
 ## Security posture
 
-icctools makes no network requests after the initial asset load, so the threat model is "untrusted bytes inside the tab," not "untrusted server." The mitigations:
+profiletool makes no network requests after the initial asset load, so the threat model is "untrusted bytes inside the tab," not "untrusted server." The mitigations:
 
 - **CSP** is a `<meta http-equiv="Content-Security-Policy">` in `frontend/index.html`. `script-src` is `'self' 'wasm-unsafe-eval' blob:` — `blob:` is required by the dynamic-import-via-blob-URL pattern in `validator.js` / `xmlConverter.js` / `jsonConverter.js`; `wasm-unsafe-eval` is required by Emscripten. `connect-src 'self' blob:` keeps `connect-src` from going wider. `frame-ancestors 'none'` blocks embedding. Don't widen `script-src` to `'unsafe-eval'` — the WASM build is compiled with `DYNAMIC_EXECUTION=0` so embind doesn't need it.
 - **WASM input caps**: `kMaxJsonBytes` (json-wrapper.cpp) and `kMaxXmlBytes` (xml-wrapper.cpp) are both 32 MB; the JS counterparts in `lib/{jsonConverter,xmlConverter}.js` (`MAX_JSON_BYTES` / `MAX_XML_BYTES`) gate before MEMFS write. Keep the C++ and JS limits in sync — they're independently authoritative because either layer might be called first.

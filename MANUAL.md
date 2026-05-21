@@ -1,6 +1,6 @@
 # ICC Profile Tool — User Manual
 
-**ICC Profile Tool** (icctools) is a browser-based tool for inspecting, validating, and round-trip editing **ICC.1** colour profiles. It runs entirely in your browser — no upload, no install — using a WebAssembly build of [iccDEV](https://github.com/InternationalColorConsortium/iccDEV), the ICC's official reference implementation of IccProfLib.
+**ICC Profile Tool** (profiletool) is a browser-based tool for inspecting, validating, and round-trip editing **ICC.1** colour profiles. It runs entirely in your browser — no upload, no install — using a WebAssembly build of [iccDEV](https://github.com/InternationalColorConsortium/iccDEV), the ICC's official reference implementation of IccProfLib.
 
 **What you can do:**
 
@@ -147,9 +147,9 @@ In **chardata**, after loading an ICC profile, click **Display File** to open th
 
 The handover works entirely in-browser:
 
-1. icctools opens, detects `?source=chardata`, and sends `{type:'icctools:ready'}` to `window.opener` via `postMessage`.
-2. chardata replies with `{type:'icctools:load', filename, bytes}`.
-3. icctools accepts the bytes (after verifying the sender's origin against an allowlist and the size against the 256 MB cap), runs validation, and shows the profile.
+1. profiletool opens, detects `?source=chardata`, and sends `{type:'profiletool:ready'}` to `window.opener` via `postMessage`.
+2. chardata replies with `{type:'profiletool:load', filename, bytes}`.
+3. profiletool accepts the bytes (after verifying the sender's origin against an allowlist and the size against the 256 MB cap), runs validation, and shows the profile.
 
 No upload, no server round-trip. The flow is one-way — edits made here are saved by clicking **Save ICC profile**, not handed back to chardata.
 
@@ -173,13 +173,13 @@ All features are available; the layout adapts to the smaller screen.
 
 ## 7. Limits and security
 
-icctools makes no network requests after the initial page load. The validator, the XML converter, and the JSON converter are all WebAssembly compiled from iccDEV C++ sources and run entirely client-side.
+profiletool makes no network requests after the initial page load. The validator, the XML converter, and the JSON converter are all WebAssembly compiled from iccDEV C++ sources and run entirely client-side.
 
 | Limit | Where | Notes |
 |---|---|---|
 | **256 MB** | postMessage / drop-zone load | Refuses to load anything larger; prevents heap exhaustion from a hostile opener |
 | **32 MB** | XML and JSON converters | Both the JS guard (`MAX_XML_BYTES` / `MAX_JSON_BYTES`) and the C++ wrappers (`kMaxXmlBytes` / `kMaxJsonBytes`) enforce this; the C++ side is independently authoritative |
 | **XML entity-bomb guard** | XML converter | Any XML containing `<!DOCTYPE` or `<!ENTITY` is rejected before libxml2 sees it (defence against billion-laughs since IccLibXML enables `XML_PARSE_HUGE`) |
-| **Origin allowlist** | postMessage launch | Only same-origin and chardata's dev-host origins can send `icctools:load` bytes |
+| **Origin allowlist** | postMessage launch | Only same-origin and chardata's dev-host origins can send `profiletool:load` bytes |
 
 If you need to inspect a profile that exceeds these limits, build iccDEV from source and use the native CLI tools — those have no JS-side caps.
