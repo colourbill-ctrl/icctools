@@ -4,17 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!--
-      profiletool is a no-network app: WASM modules are fetched from the same
-      origin and instantiated via blob URLs (Vite + Emscripten pattern).
-      Locking connect-src to 'self' preserves the "no exfiltration" property
-      that justifies a permissive postMessage launch protocol — a future XSS
-      regression can't phone home. 'wasm-unsafe-eval' is required by the
-      Emscripten glue; 'blob:' covers our blob-URL imports for the glue mjs
-      files and the WASM binaries.
+      profiletool is a near-no-network app: WASM modules are fetched from the
+      same origin and instantiated via blob URLs (Vite + Emscripten pattern).
+      Locking connect-src to 'self' preserved a "no exfiltration" property that
+      justified the permissive postMessage launch protocol (an XSS regression
+      couldn't phone home). 'wasm-unsafe-eval' is required by the Emscripten
+      glue; 'blob:' covers our blob-URL imports for the glue mjs files and the
+      WASM binaries.
+
+      DELIBERATE EXCEPTION (analytics): the only off-origin hosts allowed are
+      Google Analytics — googletagmanager.com (the gtag loader) on script-src,
+      and google-analytics.com / region1 on connect-src + img-src (beacons).
+      This is the single outbound channel profiletool now has, added knowingly
+      for usage metrics. To keep the inline-script ban intact we do NOT allow
+      'unsafe-inline': the gtag loader is the external <script async> below and
+      the init lives in bundled JS (src/lib/analytics.js), not an inline block.
+      The postMessage allowedOrigins allowlist (src/App.jsx) is now the guard
+      that keeps hostile inbound bytes from reaching this channel — keep it strict.
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.google-analytics.com; connect-src 'self' blob: https://www.google-analytics.com https://region1.google-analytics.com; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'" />
     <title>ICC Profile Tool</title>
     <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-WJN2XTVMG8"></script>
   </head>
   <body>
     <div id="root"></div>
