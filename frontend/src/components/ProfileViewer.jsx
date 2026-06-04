@@ -71,7 +71,7 @@ export default function ProfileViewer({
       <div className={styles.panel}>
         {activeTab === 'Header'     && <HeaderTable header={data.header} profileId={data.profileId} />}
         {activeTab === 'Tags'       && <TagTable tags={data.tags} bytes={bytes} changedTagIds={changedTagIds} />}
-        {activeTab === 'Validation' && <ValidationPanel validation={data.validation} />}
+        {activeTab === 'Validation' && <ValidationPanel validation={data.validation} data={data} bytes={bytes} />}
         {activeTab === 'Raw Output' && <RawOutput data={data} />}
         {activeTab === 'XML'        && (
           <Suspense fallback={<div className={styles.loading}>{t('loading_xml_editor')}</div>}>
