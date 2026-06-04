@@ -27,7 +27,7 @@ set(ICCPROFLIB_SOURCES
   IccSparseMatrix.cpp IccStructBasic.cpp IccStructFactory.cpp IccTagBasic.cpp
   IccTagComposite.cpp IccTagDict.cpp IccTagEmbedIcc.cpp IccTagFactory.cpp
   IccTagLut.cpp IccTagMPE.cpp IccTagProfSeqId.cpp IccUtil.cpp IccXformFactory.cpp
-  IccMD5.cpp IccCmmSearch.cpp)
+  IccMD5.cpp IccCmmSearch.cpp IccObject.cpp)
 
 list(TRANSFORM ICCPROFLIB_SOURCES PREPEND "${ICCPROFLIB_DIR}/")
 

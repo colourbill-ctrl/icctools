@@ -9,7 +9,7 @@ import styles from './TagTable.module.css'
 // verbosity-100 Describe() output once the WASM fetch completes. On mobile
 // it's a much better UX than the old modal because there's no
 // take-over-the-screen popup interrupting the scroll position.
-export default function TagTable({ tags, bytes, changedTagIds }) {
+export default function TagTable({ tags, bytes, changedTagIds, describable = true }) {
   const [openId, setOpenId]       = useState(null)
   const [descCache, setDescCache] = useState({})  // { [tagId]: { text, error, loading } }
   const t = useT()
@@ -24,7 +24,7 @@ export default function TagTable({ tags, bytes, changedTagIds }) {
   // Fetch the verbosity-100 dump the first time a tag is expanded. Cancel
   // gracefully if the user re-clicks before the WASM call resolves.
   useEffect(() => {
-    if (!openId || !bytes) return
+    if (!describable || !openId || !bytes) return
     const cached = descCache[openId]
     if (cached && (cached.text != null || cached.error != null)) return
     let cancelled = false
@@ -118,16 +118,22 @@ export default function TagTable({ tags, bytes, changedTagIds }) {
                   <span><span className={styles.detailKey}>{t('tag_offset')}</span> {tag.offset}</span>
                   <span><span className={styles.detailKey}>{t('tag_size')}</span> {tag.size} {t('bytes_suffix')}</span>
                 </div>
-                <pre className={styles.detailBody}>{shown}</pre>
-                {cached?.loading && (
-                  <div className={styles.detailLoading} aria-live="polite">
-                    {t('loading_full_description')}
-                  </div>
-                )}
-                {cached?.error && (
-                  <div className={styles.detailError} role="alert">
-                    {t('failed_load_description')} {cached.error}
-                  </div>
+                {describable ? (
+                  <>
+                    <pre className={styles.detailBody}>{shown}</pre>
+                    {cached?.loading && (
+                      <div className={styles.detailLoading} aria-live="polite">
+                        {t('loading_full_description')}
+                      </div>
+                    )}
+                    {cached?.error && (
+                      <div className={styles.detailError} role="alert">
+                        {t('failed_load_description')} {cached.error}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <pre className={styles.detailBody}>{t('tag_contents_unavailable')}</pre>
                 )}
               </div>
             )}

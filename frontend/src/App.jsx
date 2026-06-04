@@ -4,6 +4,7 @@ import LoadButton from './components/LoadButton.jsx'
 import ProfileViewer from './components/ProfileViewer.jsx'
 import SettingsBlade from './components/SettingsBlade.jsx'
 import { validateProfile, validateBytes, preloadValidator } from './lib/validator.js'
+import { bestEffortParse } from './lib/bestEffortParse.js'
 import { computeChangedTagIds } from './lib/tagDiff.js'
 import { useT } from './i18n.jsx'
 import styles from './App.module.css'
@@ -66,7 +67,29 @@ export default function App() {
         iccDirty:       false,
       })
     } catch (e) {
-      setError(e.message)
+      // The validator hit a critical error (e.g. a tag whose data runs past
+      // end-of-file). Rather than a dead-end, do a best-effort structural read
+      // of the header + tag directory so the user can inspect it — clearly
+      // flagged as a critical, do-not-apply profile.
+      const partial = bytes.length <= MAX_ICC_BYTES ? bestEffortParse(bytes, filename) : null
+      if (partial) {
+        setProfile({
+          filename,
+          originalBytes:  bytes,
+          originalParsed: partial,
+          currentBytes:   bytes,
+          parsed:         partial,
+          xml:            null,
+          xmlBaseline:    null,
+          xmlDirty:       false,
+          json:           null,
+          jsonBaseline:   null,
+          jsonDirty:      false,
+          iccDirty:       false,
+        })
+      } else {
+        setError(e.message)
+      }
     } finally {
       setLoading(false)
     }

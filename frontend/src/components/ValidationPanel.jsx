@@ -15,6 +15,12 @@ export default function ValidationPanel({ validation, data, bytes }) {
   // Interpret every message once: clean off the IccProfLib status prefix and
   // resolve a click target (header field-set or tag) where we can.
   const interpreted = useMemo(() => {
+    // A best-effort/partial profile's messages are our own structural notes, not
+    // IccProfLib report lines — show them verbatim at error severity and don't
+    // make them clickable (the detail modal's describeTag would fail anyway).
+    if (data?.partial) {
+      return messages.map((raw) => ({ raw, severity: 'error', statusLabel: '', text: raw, target: null }))
+    }
     const ctx = {
       header: data?.header,
       profileId: data?.profileId,

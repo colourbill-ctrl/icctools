@@ -35,6 +35,12 @@ export default function ProfileViewer({
   const [activeTab, setActiveTab] = useState('Header')
   const t = useT()
 
+  // A best-effort/partial profile (the validator couldn't fully parse it) is
+  // read-only and can't be round-tripped, so hide the XML/JSON converter tabs
+  // and fall back to a visible tab if the active one is now hidden.
+  const tabs = data.partial ? TABS.filter(tab => tab.key !== 'XML' && tab.key !== 'JSON') : TABS
+  const active = tabs.some(tab => tab.key === activeTab) ? activeTab : 'Header'
+
   return (
     <div className={styles.viewer}>
       <div className={styles.titleBar}>
@@ -50,13 +56,20 @@ export default function ProfileViewer({
         <ValidationBadge level={data.validation.level} t={t} />
       </div>
 
+      {data.partial && (
+        <div className={styles.partialBanner} role="alert">
+          <span className={styles.partialIcon} aria-hidden>⚠</span>
+          <span>{t('partial_banner')}</span>
+        </div>
+      )}
+
       <nav className={styles.tabs} role="tablist">
-        {TABS.map(({ key, i18n }) => (
+        {tabs.map(({ key, i18n }) => (
           <button
             key={key}
             role="tab"
-            aria-selected={activeTab === key}
-            className={`${styles.tab} ${activeTab === key ? styles.activeTab : ''}`}
+            aria-selected={active === key}
+            className={`${styles.tab} ${active === key ? styles.activeTab : ''}`}
             onClick={() => setActiveTab(key)}
             type="button"
           >
@@ -69,11 +82,11 @@ export default function ProfileViewer({
       </nav>
 
       <div className={styles.panel}>
-        {activeTab === 'Header'     && <HeaderTable header={data.header} profileId={data.profileId} />}
-        {activeTab === 'Tags'       && <TagTable tags={data.tags} bytes={bytes} changedTagIds={changedTagIds} />}
-        {activeTab === 'Validation' && <ValidationPanel validation={data.validation} data={data} bytes={bytes} />}
-        {activeTab === 'Raw Output' && <RawOutput data={data} />}
-        {activeTab === 'XML'        && (
+        {active === 'Header'     && <HeaderTable header={data.header} profileId={data.profileId} />}
+        {active === 'Tags'       && <TagTable tags={data.tags} bytes={bytes} changedTagIds={changedTagIds} describable={!data.partial} />}
+        {active === 'Validation' && <ValidationPanel validation={data.validation} data={data} bytes={bytes} />}
+        {active === 'Raw Output' && <RawOutput data={data} />}
+        {active === 'XML'        && (
           <Suspense fallback={<div className={styles.loading}>{t('loading_xml_editor')}</div>}>
             <XmlPanel
               bytes={bytes}
@@ -84,7 +97,7 @@ export default function ProfileViewer({
             />
           </Suspense>
         )}
-        {activeTab === 'JSON'       && (
+        {active === 'JSON'       && (
           <Suspense fallback={<div className={styles.loading}>{t('loading_json_editor')}</div>}>
             <JsonPanel
               bytes={bytes}
