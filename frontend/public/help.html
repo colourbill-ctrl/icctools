@@ -62,6 +62,7 @@
 <li><strong>Validate</strong> an ICC profile against the ICC.1 specification — see the severity (valid / warning / error) and every diagnostic message produced by IccProfLib.</li>
 <li><strong>Browse the header</strong> — every field of the 128-byte profile header, decoded into human-readable strings.</li>
 <li><strong>Browse the tag directory</strong> — every tag with its signature, type, byte offset, size, and pad bytes. Click any tag to open a full type-specific description (the same output as the iccDEV <code>wxProfileDump</code> "Describe" view).</li>
+<li><strong>Run the Profile Assessment WG checklist</strong> — the ICC Profile Assessment Working Group's checks (Security / Conformance / Quality), each with a verdict, filterable by category.</li>
 <li><strong>Round-trip edit</strong> — convert the profile to XML or JSON, edit it in the built-in code editor, convert back to ICC, and re-validate. The save button downloads the edited binary.</li>
 <li><strong>Launch from chardata</strong> — open a profile that's loaded in <a href="https://chardata.colourbill.com/">chardata</a> directly here, with the bytes handed over in-browser via <code>postMessage</code>.</li>
 </ul>
@@ -227,12 +228,25 @@ text.mono  { font-family:ui-monospace,Menlo,Consolas,monospace; }
 <li><strong>Unknown</strong> — IccProfLib couldn't classify the result</li>
 </ul>
 <p>Below the card, every message returned by IccProfLib is listed as a bullet. The text is verbatim from IccProfLib so you can match it against the iccDEV source.</p>
-<h3 id="3-4-raw-output">3.4 Raw Output</h3>
+<h3 id="3-4-profile-assessment-wg">3.4 Profile Assessment WG</h3>
+<p>Runs the <strong>ICC Profile Assessment Working Group</strong> checklist against the loaded profile and shows it as a report. The checks come from the iccDEV <code>iccPawgReport</code> tool, compiled to a separate WebAssembly module that's fetched only when you first open this tab.</p>
+<p>Each check is grouped under <strong>Security</strong>, <strong>Conformance</strong>, or <strong>Quality</strong>, and carries one verdict:</p>
+<table><thead>
+<tr><th>Verdict</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><strong>Pass</strong></td><td>The check succeeded</td></tr>
+<tr><td><strong>Warn</strong></td><td>A non-fatal concern worth reviewing</td></tr>
+<tr><td><strong>Fail</strong></td><td>The profile does not satisfy the check</td></tr>
+<tr><td><strong>Gap</strong></td><td>The check could not be fully evaluated (e.g. not yet implemented)</td></tr>
+<tr><td><strong>N/A</strong></td><td>The check does not apply to this profile</td></tr>
+<tr><td><strong>Not Run</strong></td><td>The check was skipped</td></tr>
+</tbody></table>
+<p>The summary row at the top tallies each verdict as a coloured pill. <strong>Click a pill to filter</strong> the report below — a blue halo marks the categories currently shown, and pills with zero items are inactive. For example, switch off <strong>Pass</strong> and <strong>N/A</strong> to focus on just the Warns and Fails.</p>
+<h3 id="3-5-raw-output">3.5 Raw Output</h3>
 <p>The complete JSON object produced by the validator wrapper — header, tags, validation, profile ID, sizes, library version. Useful when copy-pasting into a bug report or diffing two profiles textually.</p>
-<h3 id="3-5-xml">3.5 XML</h3>
+<h3 id="3-6-xml">3.6 XML</h3>
 <p>Converts the profile to XML (via IccLibXML, the same writer the iccDEV <code>iccToXml</code> CLI uses) and shows it in a CodeMirror editor with syntax highlighting. Edit the XML and click <strong>Convert to ICC</strong> to round-trip back to binary; the viewer re-validates and the <strong>Save ICC profile</strong> button downloads the result.</p>
 <p>A <strong>dirty</strong> indicator shows when the editor text differs from the last converter output, so you can tell at a glance whether your edits have been applied. If conversion fails, IccLibXML's parse error is shown above the editor with the offending line / column.</p>
-<h3 id="3-6-json">3.6 JSON</h3>
+<h3 id="3-7-json">3.7 JSON</h3>
 <p>Same idea as the XML tab but using a JSON representation of the profile produced by the validator wrapper (<code>json-wrapper.cpp</code>). Edit, click <strong>Convert to ICC</strong>, save. The JSON form is more compact and easier to script against; the XML form is more familiar if you've used the iccDEV CLI tools.</p>
 <hr>
 <h2 id="4-round-trip-editing">4. Round-trip editing</h2>
