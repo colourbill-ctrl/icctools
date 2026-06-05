@@ -14,7 +14,7 @@ async function loadModule() {
   if (!modulePromise) {
     modulePromise = (async () => {
       const res = await fetch(WASM_DIR + 'iccpawg.mjs')
-      if (!res.ok) throw new Error(`Failed to load PAWG module: HTTP ${res.status}`)
+      if (!res.ok) throw new Error(`Failed to load Profile Assessment WG module: HTTP ${res.status}`)
       const source = await res.text()
       const blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
       try {

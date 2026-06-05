@@ -89,7 +89,7 @@ export default function ProfileViewer({
         {active === 'Tags'       && <TagTable tags={data.tags} bytes={bytes} changedTagIds={changedTagIds} describable={!data.partial} />}
         {active === 'Validation' && <ValidationPanel validation={data.validation} data={data} bytes={bytes} />}
         {active === 'PAWG'       && (
-          <Suspense fallback={<div className={styles.loading}>{t('loading_pawg') || 'Loading PAWG report…'}</div>}>
+          <Suspense fallback={<div className={styles.loading}>{t('loading_pawg') || 'Loading Profile Assessment WG report…'}</div>}>
             <PawgPanel bytes={bytes} />
           </Suspense>
         )}

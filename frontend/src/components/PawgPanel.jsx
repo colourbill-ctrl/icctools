@@ -55,7 +55,7 @@ export default function PawgPanel({ bytes }) {
   }, [report])
 
   if (status === 'loading') {
-    return <div className={styles.status}><span className={styles.spinner} /> {t('pawg_running') || 'Running PAWG assessment…'}</div>
+    return <div className={styles.status}><span className={styles.spinner} /> {t('pawg_running') || 'Running Profile Assessment WG checks…'}</div>
   }
   if (status === 'error') {
     return <div className={styles.errorBanner}><strong>{t('error_label')}</strong> {error}</div>
@@ -82,7 +82,7 @@ export default function PawgPanel({ bytes }) {
 
   return (
     <div className={styles.panel}>
-      <h2 className={styles.panelTitle}>{t('pawg_title') || 'PAWG Report'}</h2>
+      <h2 className={styles.panelTitle}>{t('pawg_title') || 'Profile Assessment WG Report'}</h2>
 
       <div className={styles.summary}>
         <span className={`${styles.overall} ${overallFail ? styles.overallFail : styles.overallOk}`}>
