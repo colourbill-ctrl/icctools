@@ -7,10 +7,28 @@ import styles from './ValidationPanel.module.css'
 
 const ICONS = { valid: '✓', warning: '⚠', error: '✕', unknown: '?' }
 
+// The WASM wrapper emits a fixed set of English status strings; map them to i18n
+// keys so the status line localizes (unknown strings fall back to the raw text).
+const STATUS_KEY = {
+  'Profile is valid': 'status_valid',
+  'Profile has warning(s)': 'status_warning',
+  'Profile is non-compliant': 'status_noncompliant',
+  'Critical validation error': 'status_critical',
+  'Unknown validation status': 'status_unknown',
+}
+
 export default function ValidationPanel({ validation, data, bytes }) {
   const { level, status, messages } = validation
   const t = useT()
   const [selected, setSelected] = useState(null)
+
+  // Localize the status line. The best-effort/partial case has its own status;
+  // otherwise map the wrapper's fixed status strings, falling back to raw.
+  const statusText = data?.partial
+    ? t('status_partial')
+    : status
+      ? (STATUS_KEY[status] ? t(STATUS_KEY[status]) : status)
+      : t('no_validation_output')
 
   // Interpret every message once: clean off the IccProfLib status prefix and
   // resolve a click target (header field-set or tag) where we can.
@@ -34,7 +52,7 @@ export default function ValidationPanel({ validation, data, bytes }) {
     <div className={styles.wrapper}>
       <div className={`${styles.statusCard} ${styles[`level_${level}`]}`}>
         <span className={styles.icon}>{ICONS[level] ?? '?'}</span>
-        <span className={styles.statusText}>{status || t('no_validation_output')}</span>
+        <span className={styles.statusText}>{statusText}</span>
       </div>
 
       {interpreted.length > 0 && (
