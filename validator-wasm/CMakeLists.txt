@@ -246,3 +246,53 @@ if(BUILD_ICCJSON)
 
   set_target_properties(iccjson PROPERTIES SUFFIX ".mjs")
 endif()
+
+
+# ── iccpawg (PAWG assessment report, lazy-loaded) ───────────────────────────
+# Wraps the iccPawgReport tool (Tools/CmdLine/IccPawgReport), which emits the
+# ICC Profile Assessment Working Group checklist. DumpPawgReport() is a normal
+# extern function, so pawg-wrapper.cpp just compiles PawgReport.cpp alongside
+# it and captures the tool's --json stdout via MEMFS. No third-party deps (the
+# JSON is hand-rolled), so the module stays small. Shipped separately, fetched
+# only when the user opens the PAWG tab.
+option(BUILD_ICCPAWG "Build the lazy-loaded PAWG assessment module" ON)
+
+if(BUILD_ICCPAWG)
+  set(ICCPAWG_DIR "${ICCDEV_ROOT}/Tools/CmdLine/IccPawgReport")
+  if(NOT EXISTS "${ICCPAWG_DIR}/PawgReport.cpp")
+    message(FATAL_ERROR "iccPawgReport sources not found at ${ICCPAWG_DIR}")
+  endif()
+
+  add_executable(iccpawg pawg-wrapper.cpp ${ICCPROFLIB_SOURCES}
+    "${ICCPAWG_DIR}/PawgReport.cpp")
+
+  target_include_directories(iccpawg PRIVATE
+    "${ICCPROFLIB_DIR}"
+    "${ICCPAWG_DIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    "${NLOHMANN_JSON_INCLUDE_DIR}")
+
+  target_compile_options(iccpawg PRIVATE
+    -O3
+    -fexceptions
+    -Wno-deprecated-declarations)
+
+  target_link_options(iccpawg PRIVATE
+    -O3
+    -fexceptions
+    -lembind
+    -sMODULARIZE=1
+    -sEXPORT_ES6=1
+    -sEXPORT_NAME=createIccPawgModule
+    -sENVIRONMENT=web,worker,node
+    -sALLOW_MEMORY_GROWTH=1
+    -sINITIAL_MEMORY=32MB
+    -sMAXIMUM_MEMORY=512MB
+    -sSTACK_SIZE=1MB
+    -sDYNAMIC_EXECUTION=0
+    -sEXPORTED_RUNTIME_METHODS=getExceptionMessage,decrementExceptionRefcount
+    # The tool writes its report to stdout; we redirect that into MEMFS.
+    -sFORCE_FILESYSTEM=1)
+
+  set_target_properties(iccpawg PROPERTIES SUFFIX ".mjs")
+endif()

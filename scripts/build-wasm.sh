@@ -50,6 +50,9 @@ fi
 if [ -f "$BUILD_DIR/iccjson.mjs" ]; then
   ARTIFACTS+=(iccjson.mjs iccjson.wasm)
 fi
+if [ -f "$BUILD_DIR/iccpawg.mjs" ]; then
+  ARTIFACTS+=(iccpawg.mjs iccpawg.wasm)
+fi
 
 if [ "${1:-}" = "--verify" ]; then
   if [ ! -f "$CHECKSUM_FILE" ]; then

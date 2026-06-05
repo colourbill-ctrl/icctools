@@ -7,14 +7,17 @@ import styles from './ProfileViewer.module.css'
 
 // XmlPanel and JsonPanel each pull in CodeMirror + a language bundle. Keep
 // both out of the main bundle — only fetched when the user opens the tab.
-const XmlPanel  = lazy(() => import('./XmlPanel.jsx'))
-const JsonPanel = lazy(() => import('./JsonPanel.jsx'))
+const XmlPanel       = lazy(() => import('./XmlPanel.jsx'))
+const JsonPanel      = lazy(() => import('./JsonPanel.jsx'))
+// PAWG assessment report; its WASM module loads on tab open.
+const PawgPanel      = lazy(() => import('./PawgPanel.jsx'))
 
 // Tab keys are stable internal identifiers; labels come from i18n.
 const TABS = [
   { key: 'Header',     i18n: 'tab_header' },
   { key: 'Tags',       i18n: 'tab_tags' },
   { key: 'Validation', i18n: 'tab_validation' },
+  { key: 'PAWG',       i18n: 'tab_pawg' },
   { key: 'Raw Output', i18n: 'tab_raw' },
   { key: 'XML',        i18n: 'tab_xml' },
   { key: 'JSON',       i18n: 'tab_json' },
@@ -85,6 +88,11 @@ export default function ProfileViewer({
         {active === 'Header'     && <HeaderTable header={data.header} profileId={data.profileId} />}
         {active === 'Tags'       && <TagTable tags={data.tags} bytes={bytes} changedTagIds={changedTagIds} describable={!data.partial} />}
         {active === 'Validation' && <ValidationPanel validation={data.validation} data={data} bytes={bytes} />}
+        {active === 'PAWG'       && (
+          <Suspense fallback={<div className={styles.loading}>{t('loading_pawg') || 'Loading PAWG report…'}</div>}>
+            <PawgPanel bytes={bytes} />
+          </Suspense>
+        )}
         {active === 'Raw Output' && <RawOutput data={data} />}
         {active === 'XML'        && (
           <Suspense fallback={<div className={styles.loading}>{t('loading_xml_editor')}</div>}>

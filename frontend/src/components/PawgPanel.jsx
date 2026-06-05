@@ -1,0 +1,173 @@
+import { useEffect, useMemo, useState } from 'react'
+import { pawgReport } from '../lib/pawg.js'
+import { useT } from '../i18n.jsx'
+import styles from './PawgPanel.module.css'
+
+// Map the tool's verdict strings to a stable style key + label.
+const VERDICT = {
+  OK:     { cls: 'pass', label: 'PASS' },
+  WARN:   { cls: 'warn', label: 'WARN' },
+  FAIL:   { cls: 'fail', label: 'FAIL' },
+  'N/A':  { cls: 'na',   label: 'N/A'  },
+  GAP:    { cls: 'gap',  label: 'GAP'  },
+  '--':   { cls: 'notrun', label: 'NOT RUN' },
+}
+
+const SECTIONS = [
+  { key: 'security',    i18n: 'pawg_security' },
+  { key: 'conformance', i18n: 'pawg_conformance' },
+  { key: 'quality',     i18n: 'pawg_quality' },
+]
+
+// Filter pills, in display order. `cls` is the style key shared with the row
+// badges; `count` pulls the matching tally out of report.summary.
+const FILTERS = [
+  { cls: 'pass',   label: 'PASS',    count: (s) => s.pass },
+  { cls: 'warn',   label: 'WARN',    count: (s) => s.warn },
+  { cls: 'fail',   label: 'FAIL',    count: (s) => s.fail },
+  { cls: 'gap',    label: 'GAP',     count: (s) => s.gap },
+  { cls: 'na',     label: 'N/A',     count: (s) => s.notApplicable },
+  { cls: 'notrun', label: 'NOT RUN', count: (s) => s.notRun },
+]
+
+export default function PawgPanel({ bytes }) {
+  const t = useT()
+  const [status, setStatus] = useState('loading')   // loading | ready | error
+  const [error, setError] = useState(null)
+  const [report, setReport] = useState(null)
+  // Set of verdict cls keys currently shown. null = show everything (default).
+  const [visible, setVisible] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setStatus('loading'); setError(null); setReport(null); setVisible(null)
+    pawgReport(bytes)
+      .then((r) => { if (!cancelled) { setReport(r); setStatus('ready') } })
+      .catch((e) => { if (!cancelled) { setError(e.message); setStatus('error') } })
+    return () => { cancelled = true }
+  }, [bytes])
+
+  const grouped = useMemo(() => {
+    if (!report) return {}
+    const g = { security: [], conformance: [], quality: [] }
+    for (const it of report.items) (g[it.section] || (g[it.section] = [])).push(it)
+    return g
+  }, [report])
+
+  if (status === 'loading') {
+    return <div className={styles.status}><span className={styles.spinner} /> {t('pawg_running') || 'Running PAWG assessment…'}</div>
+  }
+  if (status === 'error') {
+    return <div className={styles.errorBanner}><strong>{t('error_label')}</strong> {error}</div>
+  }
+
+  const s = report.summary
+  const overallFail = s.fail > 0
+
+  // A category counts as "active" only if it has items; a null filter means all
+  // active categories are shown.
+  const clsOf = (it) => (VERDICT[it.verdict] || { cls: 'na' }).cls
+  const isShown = (cls) => visible === null || visible.has(cls)
+
+  const toggle = (cls) => {
+    setVisible((prev) => {
+      // Materialise the current "all active categories" set on first click.
+      const base = prev === null
+        ? new Set(FILTERS.filter((f) => f.count(s) > 0).map((f) => f.cls))
+        : new Set(prev)
+      if (base.has(cls)) base.delete(cls); else base.add(cls)
+      return base
+    })
+  }
+
+  return (
+    <div className={styles.panel}>
+      <h2 className={styles.panelTitle}>{t('pawg_title') || 'PAWG Report'}</h2>
+
+      <div className={styles.summary}>
+        <span className={`${styles.overall} ${overallFail ? styles.overallFail : styles.overallOk}`}>
+          {overallFail ? (t('pawg_overall_fail') || 'FAIL') : (t('pawg_overall_ok') || 'REPORT')}
+        </span>
+        {FILTERS.map((f) => {
+          const n = f.count(s)
+          return (
+            <Chip
+              key={f.cls}
+              cls={f.cls}
+              n={n}
+              label={f.label}
+              active={n > 0 && isShown(f.cls)}
+              onToggle={n > 0 ? () => toggle(f.cls) : undefined}
+            />
+          )
+        })}
+        <span className={styles.total}>{s.total} {t('pawg_checks') || 'checks'}</span>
+      </div>
+
+      <div className={styles.load}>
+        IccProfLib {report.iccpProfileLibVersion} · {report.sizeBytes?.toLocaleString()} {t('bytes_suffix')} · {report.load}
+      </div>
+
+      {SECTIONS.map(({ key, i18n }) => {
+        const items = (grouped[key] || []).filter((it) => isShown(clsOf(it)))
+        return items.length ? (
+          <section key={key} className={styles.section}>
+            <h3 className={styles.heading}>{t(i18n) || key}</h3>
+            <table className={styles.table}>
+              <tbody>
+                {items.map((it) => {
+                  const v = VERDICT[it.verdict] || { cls: 'na', label: it.verdict }
+                  return (
+                    <tr key={it.id}>
+                      <td className={styles.idCell}>{it.id}</td>
+                      <td className={styles.verdictCell}>
+                        <span className={`${styles.badge} ${styles[v.cls]}`}>{v.label}</span>
+                      </td>
+                      <td className={styles.titleCell}>
+                        <div className={styles.title}>{it.title}</div>
+                        {it.detail && <div className={styles.detail}>{it.detail}</div>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </section>
+        ) : null
+      })}
+
+      <p className={styles.credit}>
+        {t('pawg_credit') || 'Generated by iccPawgReport (iccDEV) · ICC Profile Assessment Working Group checklist.'}
+      </p>
+    </div>
+  )
+}
+
+function Chip({ cls, n, label, active, onToggle }) {
+  const classes = [
+    styles.chip,
+    styles[cls],
+    n ? '' : styles.chipZero,
+    onToggle ? styles.chipClickable : '',
+    active ? styles.chipActive : '',
+  ].filter(Boolean).join(' ')
+
+  if (!onToggle) {
+    return (
+      <span className={classes}>
+        <strong>{n}</strong> {label}
+      </span>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      className={classes}
+      aria-pressed={active}
+      onClick={onToggle}
+    >
+      <strong>{n}</strong> {label}
+    </button>
+  )
+}
