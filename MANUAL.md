@@ -10,6 +10,7 @@
 - **Run the Profile Assessment WG checklist** — the ICC Profile Assessment Working Group's checks (Security / Conformance / Quality), each with a verdict, filterable by category.
 - **Round-trip edit** — convert the profile to XML or JSON, edit it in the built-in code editor, convert back to ICC, and re-validate. The save button downloads the edited binary.
 - **Launch from chardata** — open a profile that's loaded in [chardata](https://chardata.colourbill.com/) directly here, with the bytes handed over in-browser via `postMessage`.
+- **Launch with a URL** — open a link that points the tool at a profile hosted on the web and, optionally, the tab to land on (e.g. `…/profiletool#url=…&tab=PAWG`).
 
 Everything runs client-side. Profile bytes never leave the browser tab.
 
@@ -29,8 +30,9 @@ Everything runs client-side. Profile bytes never leave the browser tab.
    - [JSON](#3-7-json)
 4. [Round-trip editing](#4-round-trip-editing)
 5. [Launching from chardata](#5-launching-from-chardata)
-6. [Mobile](#6-mobile)
-7. [Limits and security](#7-limits-and-security)
+6. [Launching with a URL](#6-launching-with-a-url)
+7. [Mobile](#7-mobile)
+8. [Limits and security](#8-limits-and-security)
 
 ---
 
@@ -174,7 +176,52 @@ No upload, no server round-trip. The flow is one-way — edits made here are sav
 
 ---
 
-## 6. Mobile
+## 6. Launching with a URL
+
+You can open the tool with a link that names a profile to load — and the tab to land on — using a **URL fragment** (the part after `#`):
+
+```
+https://chardata.colourbill.com/profiletool#url=<profile-url>&tab=<tab>
+```
+
+Both parameters are optional:
+
+- **`url=`** — the web address the profile is fetched from. The bytes are downloaded in your browser and then run through exactly the same path as a local file: the `acsp` header check, full `ValidateIccProfile`, the 256 MB size cap, and the best-effort fallback for unparseable profiles. Nothing is uploaded — the fetched bytes only feed the validator and are never re-sent.
+- **`tab=`** — which view to open once the profile has loaded.
+
+A complete example:
+
+```
+https://chardata.colourbill.com/profiletool#url=https://example.org/profiles/sRGB.icc&tab=PAWG
+```
+
+<div class="note">
+<strong>Why a fragment, not a query string?</strong> The part after <code>#</code> is never sent to a web server, so the address of the profile you are inspecting stays on your own machine.
+</div>
+
+### Tab names
+
+`tab=` accepts two interchangeable, case-insensitive naming schemes. The **short** codes are the preferred form:
+
+| View | Short code | Long name |
+|---|---|---|
+| Header | `HEADER` | `Header` |
+| Tags | `TAGS` | `Tags` |
+| Validation | `VAL` | `Validation` |
+| Profile Assessment WG | `PAWG` | `ProfileAssessmentWG` |
+| Raw Output | `RAW` | `RawOutput` |
+| XML | `XML` | `XML` |
+| JSON | `JSON` | `JSON` |
+
+The long names are the on-screen tab labels with the spaces removed. Both schemes are kept stable even if the visible labels are renamed, so existing links keep working. An unrecognised `tab=` value is ignored and the Header view opens.
+
+<div class="note">
+<strong>Requirements for <code>url=</code>:</strong> the profile must be served over <strong>HTTPS</strong>, and the hosting server must allow cross-origin reads (a permissive <code>Access-Control-Allow-Origin</code> / CORS header). If either is missing the browser blocks the download and the tool shows a fetch error. If the profile URL itself contains <code>&</code> or <code>#</code> (its own query string), percent-encode the whole <code>url=</code> value so those characters don't terminate the fragment early.
+</div>
+
+---
+
+## 7. Mobile
 
 On screens narrower than 700 px:
 
@@ -190,7 +237,7 @@ All features are available; the layout adapts to the smaller screen.
 
 ---
 
-## 7. Limits and security
+## 8. Limits and security
 
 profiletool makes no network requests after the initial page load. The validator, the XML converter, and the JSON converter are all WebAssembly compiled from iccDEV C++ sources and run entirely client-side.
 
@@ -200,5 +247,8 @@ profiletool makes no network requests after the initial page load. The validator
 | **32 MB** | XML and JSON converters | Both the JS guard (`MAX_XML_BYTES` / `MAX_JSON_BYTES`) and the C++ wrappers (`kMaxXmlBytes` / `kMaxJsonBytes`) enforce this; the C++ side is independently authoritative |
 | **XML entity-bomb guard** | XML converter | Any XML containing `<!DOCTYPE` or `<!ENTITY` is rejected before libxml2 sees it (defence against billion-laughs since IccLibXML enables `XML_PARSE_HUGE`) |
 | **Origin allowlist** | postMessage launch | Only same-origin and chardata's dev-host origins can send `profiletool:load` bytes |
+| **HTTPS + CORS** | `#url=` launch | A URL-launch profile must be served over HTTPS from a host that permits cross-origin reads; the fetched bytes feed only the validator and are never re-sent |
+
+The `#url=` launch (added in 1.1.5) is the one case where the tool makes an off-origin request after page load: it widens the Content-Security-Policy `connect-src` to `https:` so the named profile can be fetched. Script loading is **not** widened — only data fetches.
 
 If you need to inspect a profile that exceeds these limits, build iccDEV from source and use the native CLI tools — those have no JS-side caps.

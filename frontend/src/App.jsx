@@ -6,6 +6,7 @@ import SettingsBlade from './components/SettingsBlade.jsx'
 import { validateProfile, validateBytes, preloadValidator } from './lib/validator.js'
 import { bestEffortParse } from './lib/bestEffortParse.js'
 import { computeChangedTagIds } from './lib/tagDiff.js'
+import { resolveTabAlias } from './lib/tabs.js'
 import { useT } from './i18n.jsx'
 import styles from './App.module.css'
 
@@ -39,6 +40,8 @@ export default function App() {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState(null)
+  // Resolved from a `#…&tab=` launch fragment; seeds ProfileViewer's open tab.
+  const [initialTab, setInitialTab] = useState(null)
   const t = useT()
 
   useEffect(() => { preloadValidator() }, [])
@@ -100,6 +103,55 @@ export default function App() {
     const buffer = await file.arrayBuffer()
     return loadFromBytes(file.name, new Uint8Array(buffer))
   }, [loadFromBytes])
+
+  // Fetch a profile from a URL (the `#url=` launch fragment) and feed the bytes
+  // through the same path as a local file: validation, the 256 MB cap, and the
+  // best-effort fallback all live in loadFromBytes. The network fetch is the
+  // only extra step; the remote host must permit cross-origin reads (CORS) and
+  // be reachable under the page's CSP connect-src (https:). The bytes are never
+  // re-sent anywhere — they only flow into the validator.
+  const loadFromUrl = useCallback(async (rawUrl) => {
+    let url
+    try {
+      url = new URL(rawUrl, window.location.href)
+    } catch {
+      setError(`${t('url_invalid')} ${rawUrl}`)
+      return
+    }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      setError(`${t('url_invalid')} ${rawUrl}`)
+      return
+    }
+    setLoading(true); setError(null); setProfile(null)
+    let bytes
+    try {
+      const res = await fetch(url.href, { redirect: 'follow' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      bytes = new Uint8Array(await res.arrayBuffer())
+    } catch (e) {
+      setLoading(false)
+      setError(`${t('url_fetch_failed')} ${url.href} — ${e.message}`)
+      return
+    }
+    await loadFromBytes(filenameFromUrl(url), bytes)
+  }, [loadFromBytes, t])
+
+  // Launch via URL fragment: #url=<encoded profile URL>&tab=<alias>
+  //   • url=  — fetched and loaded like a local file (see loadFromUrl)
+  //   • tab=  — resolved to a stable tab key (see lib/tabs.js) and used as the
+  //             opening tab once the profile is shown
+  // Both are optional. The fragment (unlike a query string) is never sent to a
+  // server, so the profile URL stays on the client. Runs once on mount.
+  useEffect(() => {
+    const hash = window.location.hash.replace(/^#/, '')
+    if (!hash) return
+    const params = new URLSearchParams(hash)
+    const tabKey = resolveTabAlias(params.get('tab'))
+    if (tabKey) setInitialTab(tabKey)
+    const url = params.get('url')
+    if (url) loadFromUrl(url)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Launch protocol: when opened with ?source=chardata, signal readiness to
   // window.opener and accept {type:'profiletool:load', filename, bytes}.
@@ -273,6 +325,7 @@ export default function App() {
             <ProfileViewer
               data={profile.parsed}
               bytes={profile.currentBytes}
+              initialTab={initialTab}
               xml={profile.xml}
               xmlDirty={profile.xmlDirty}
               json={profile.json}
@@ -294,6 +347,16 @@ export default function App() {
       <SettingsBlade />
     </>
   )
+}
+
+// Derive a display filename from a profile URL: the last path segment, decoded,
+// query/fragment stripped. Falls back to a generic name.
+function filenameFromUrl(url) {
+  try {
+    const last = url.pathname.split('/').filter(Boolean).pop()
+    if (last) return decodeURIComponent(last)
+  } catch (_) { /* fall through */ }
+  return 'profile.icc'
 }
 
 function bytesEqual(a, b) {

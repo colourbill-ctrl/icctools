@@ -3,6 +3,7 @@ import ValidationPanel from './ValidationPanel.jsx'
 import HeaderTable from './HeaderTable.jsx'
 import TagTable from './TagTable.jsx'
 import { useT } from '../i18n.jsx'
+import { TAB_DEFS as TABS } from '../lib/tabs.js'
 import styles from './ProfileViewer.module.css'
 
 // XmlPanel and JsonPanel each pull in CodeMirror + a language bundle. Keep
@@ -12,20 +13,12 @@ const JsonPanel      = lazy(() => import('./JsonPanel.jsx'))
 // PAWG assessment report; its WASM module loads on tab open.
 const PawgPanel      = lazy(() => import('./PawgPanel.jsx'))
 
-// Tab keys are stable internal identifiers; labels come from i18n.
-const TABS = [
-  { key: 'Header',     i18n: 'tab_header' },
-  { key: 'Tags',       i18n: 'tab_tags' },
-  { key: 'Validation', i18n: 'tab_validation' },
-  { key: 'PAWG',       i18n: 'tab_pawg' },
-  { key: 'Raw Output', i18n: 'tab_raw' },
-  { key: 'XML',        i18n: 'tab_xml' },
-  { key: 'JSON',       i18n: 'tab_json' },
-]
+// Tab identity + URL-fragment aliases live in lib/tabs.js (TAB_DEFS).
 
 export default function ProfileViewer({
   data,
   bytes,
+  initialTab,
   xml,
   xmlDirty,
   json,
@@ -35,13 +28,17 @@ export default function ProfileViewer({
   onJsonChanged,
   onIccProduced,
 }) {
-  const [activeTab, setActiveTab] = useState('Header')
+  // A `#…&tab=` launch fragment (resolved by App) seeds the opening tab; if it
+  // names a hidden/unknown tab the `active` fallback below lands on Header.
+  const [activeTab, setActiveTab] = useState(initialTab || 'Header')
   const t = useT()
 
   // A best-effort/partial profile (the validator couldn't fully parse it) is
   // read-only and can't be round-tripped, so hide the XML/JSON converter tabs
   // and fall back to a visible tab if the active one is now hidden.
-  const tabs = data.partial ? TABS.filter(tab => tab.key !== 'XML' && tab.key !== 'JSON') : TABS
+  const tabs = data.partial
+    ? TABS.filter(tab => tab.key !== 'XML' && tab.key !== 'JSON')
+    : TABS
   const active = tabs.some(tab => tab.key === activeTab) ? activeTab : 'Header'
 
   return (
