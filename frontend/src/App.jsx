@@ -118,7 +118,10 @@ export default function App() {
       setError(`${t('url_invalid')} ${rawUrl}`)
       return
     }
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    // Only https:, or any same-origin scheme (covers http://localhost in dev).
+    // Cross-origin http: is blocked by the CSP connect-src (`https:`) anyway, so
+    // reject it here for a clean message instead of an opaque CSP console error.
+    if (url.protocol !== 'https:' && url.origin !== window.location.origin) {
       setError(`${t('url_invalid')} ${rawUrl}`)
       return
     }
@@ -127,7 +130,15 @@ export default function App() {
     try {
       const res = await fetch(url.href, { redirect: 'follow' })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      bytes = new Uint8Array(await res.arrayBuffer())
+      // A crafted #url= link auto-fetches on load, so a multi-GB (or
+      // length-lying chunked) body could OOM the tab before loadFromBytes runs
+      // its cap. Reject on a declared over-cap length, then stream with a
+      // running cap that aborts the download the moment it overflows.
+      const declared = Number(res.headers.get('content-length'))
+      if (Number.isFinite(declared) && declared > MAX_ICC_BYTES) {
+        throw new Error(`response declares ${(declared / (1024*1024)).toFixed(1)} MB; limit is ${MAX_ICC_BYTES / (1024*1024)} MB`)
+      }
+      bytes = await readCapped(res, MAX_ICC_BYTES)
     } catch (e) {
       setLoading(false)
       setError(`${t('url_fetch_failed')} ${url.href} — ${e.message}`)
@@ -347,6 +358,35 @@ export default function App() {
       <SettingsBlade />
     </>
   )
+}
+
+// Stream a fetch response into a Uint8Array, aborting the download as soon as
+// it exceeds `cap` bytes. This bounds memory for the #url= launch even when the
+// server omits/under-reports Content-Length (chunked transfer). Falls back to a
+// buffered read (still cap-checked) when the platform lacks a streaming body.
+async function readCapped(res, cap) {
+  if (!res.body || typeof res.body.getReader !== 'function') {
+    const buf = new Uint8Array(await res.arrayBuffer())
+    if (buf.length > cap) throw new Error(`response exceeds ${cap / (1024*1024)} MB limit`)
+    return buf
+  }
+  const reader = res.body.getReader()
+  const chunks = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > cap) {
+      try { await reader.cancel() } catch (_) { /* best effort */ }
+      throw new Error(`response exceeds ${cap / (1024*1024)} MB limit`)
+    }
+    chunks.push(value)
+  }
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) { out.set(c, offset); offset += c.byteLength }
+  return out
 }
 
 // Derive a display filename from a profile URL: the last path segment, decoded,

@@ -287,11 +287,23 @@ static std::string validateBytes(const std::uint8_t* data, std::size_t len) {
 // is converted to a JSON {"error": ...} response so the browser surfaces a
 // readable message instead of an opaque CppException.
 
+// Independent size cap at the WASM boundary, mirroring MAX_ICC_BYTES in
+// frontend/src/App.jsx. The JS loader caps the load path, but validateProfile /
+// describeTag are also reachable from other call sites (validator.js, the
+// round-trip re-validate), so the wrapper enforces its own ceiling rather than
+// trusting every JS caller. Matches the JS value so it never rejects a profile
+// the loader would accept.
+static constexpr std::size_t kMaxIccBytes = 256ULL * 1024 * 1024;
+
 static std::string validateProfile(const std::string& bytes) {
   // Taking `bytes` as std::string lets embind copy the Uint8Array into the
   // wasm heap in a single memcpy. The previous convertJSArrayToNumberVector
   // path made one boundary crossing per byte, which dominated runtime on
   // any non-trivial profile.
+  if (bytes.size() > kMaxIccBytes) {
+    return json{{"error", "Profile exceeds " +
+        std::to_string(kMaxIccBytes / (1024 * 1024)) + " MB limit"}}.dump();
+  }
   try {
     return validateBytes(
         reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
@@ -345,6 +357,10 @@ static std::string describeTagBytes(const std::uint8_t* data, std::size_t len,
 
 static std::string describeTag(const std::string& bytes, std::string tagSig) {
   // Same std::string-as-binary-blob trick as validateProfile above.
+  if (bytes.size() > kMaxIccBytes) {
+    return json{{"error", "Profile exceeds " +
+        std::to_string(kMaxIccBytes / (1024 * 1024)) + " MB limit"}}.dump();
+  }
   try {
     return describeTagBytes(
         reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(), tagSig);

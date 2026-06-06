@@ -140,8 +140,18 @@ emscripten::val makeUint8Array(const std::uint8_t* data, std::size_t size) {
 
 } // namespace
 
+// Independent ICC-bytes cap, mirroring MAX_ICC_BYTES in frontend/src/App.jsx.
+// kMaxJsonBytes above guards the JSON-input direction; this guards the
+// ICC-input direction so neither entry point trusts the JS caller alone.
+static constexpr std::size_t kMaxIccBytes = 256ULL * 1024 * 1024;
+
 static std::string iccToJson(const std::string& bytes, int indent, bool sort) {
   ensureFactoriesPushed();
+
+  if (bytes.size() > kMaxIccBytes) {
+    throw std::runtime_error(
+        "Profile exceeds " + std::to_string(kMaxIccBytes / (1024 * 1024)) + " MB limit");
+  }
 
   // Read path: CIccMemIO::Attach on the inbound buffer — no MEMFS hop, no
   // per-byte embind marshalling (embind copies the Uint8Array into `bytes`

@@ -33,14 +33,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        # Actions are pinned to commit SHAs (not mutable tags): this job holds
+        # the deploy key, so a hijacked upstream tag must not be able to run
+        # here. The trailing comment tracks which release each SHA corresponds
+        # to; bump both together when updating.
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           # Full history so `git describe --tags --abbrev=0` in
           # vite.config.js can resolve the version label.
           fetch-depth: 0
 
       - name: Set up Node 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -54,14 +58,24 @@ jobs:
           test -f dist/index.html
 
       - name: Load deploy key
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@dc588b651fe13675774614f8e6a936a468676387  # v0.9.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Trust Lightsail host
+        # Prefer a pinned host key from the SSH_KNOWN_HOSTS secret (set it to the
+        # output of `ssh-keyscan <host>` once, verified out-of-band). Falls back
+        # to per-run keyscan (trust-on-first-use) only if that secret is unset,
+        # so deploys keep working until the secret is added. Add the secret to
+        # close the TOFU/MITM window on the rsync target.
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+          if [ -n "${{ secrets.SSH_KNOWN_HOSTS }}" ]; then
+            printf '%s\n' "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+          else
+            echo "::warning::SSH_KNOWN_HOSTS secret not set — falling back to ssh-keyscan (TOFU). Set it to pin the host key."
+            ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+          fi
 
       - name: Rsync dist to Lightsail
         run: |

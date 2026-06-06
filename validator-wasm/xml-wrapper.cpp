@@ -57,6 +57,10 @@
 // Keep in sync with MAX_XML_BYTES in xmlConverter.js.
 static constexpr std::size_t kMaxXmlBytes = 32ULL * 1024 * 1024;
 
+// Independent ICC-bytes cap for the ICC→XML direction, mirroring MAX_ICC_BYTES
+// in frontend/src/App.jsx so the WASM boundary doesn't trust the JS caller.
+static constexpr std::size_t kMaxIccBytes = 256ULL * 1024 * 1024;
+
 namespace {
 
 // IccLibXML calls libxml2 with XML_PARSE_HUGE | XML_PARSE_NONET upstream
@@ -69,6 +73,15 @@ namespace {
 // (and XXE — XML_PARSE_NONET blocks network fetches, but entity recursion
 // alone is the heap-exhaustion concern).
 bool containsDoctypeOrEntity(const std::string& xml) {
+  // A NUL byte means the input isn't UTF-8 — UTF-16/UTF-32 encode ASCII XML
+  // with embedded NULs. The substring scan below is a narrow-byte (UTF-8)
+  // search, so a UTF-16-encoded "<!DOCTYPE" would slip past it while libxml2
+  // auto-detects the encoding (via BOM/heuristics) and processes the DTD under
+  // XML_PARSE_HUGE. embind currently marshals the editor string to UTF-8 so
+  // this isn't reachable today, but iccDEV only ever emits NUL-free UTF-8, so
+  // refusing any NUL is spec-correct (XML 1.0 forbids U+0000 outright) and
+  // closes the bypass for any future bytes-based caller.
+  if (xml.find('\0') != std::string::npos) return true;
   return xml.find("<!DOCTYPE") != std::string::npos
       || xml.find("<!ENTITY")  != std::string::npos;
 }
@@ -140,6 +153,13 @@ emscripten::val makeUint8Array(const std::uint8_t* data, std::size_t size) {
 
 static std::string iccToXmlImpl(const std::string& bytes) {
   ensureFactoriesPushed();
+
+  // Independent ICC-bytes cap (mirrors MAX_ICC_BYTES in App.jsx). kMaxXmlBytes
+  // guards the XML-input direction; this guards the ICC-input direction.
+  if (bytes.size() > kMaxIccBytes) {
+    throw std::runtime_error(
+        "Profile exceeds " + std::to_string(kMaxIccBytes / (1024 * 1024)) + " MB limit");
+  }
 
   // Read path: CIccMemIO::Attach on the inbound buffer — no MEMFS hop, no
   // per-byte embind marshalling (embind copies the Uint8Array into `bytes`

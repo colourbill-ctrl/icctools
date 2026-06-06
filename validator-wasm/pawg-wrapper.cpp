@@ -29,6 +29,11 @@ const char* kWorkDir = "/work";
 const char* kInputIcc = "/work/profile.icc";
 const char* kOutJson  = "/work/pawg.json";
 
+// Independent ICC-bytes cap at the WASM boundary, mirroring MAX_ICC_BYTES in
+// frontend/src/App.jsx — pawgReport stages the bytes into MEMFS, so it
+// shouldn't trust the JS caller to have bounded them.
+constexpr std::size_t kMaxIccBytes = 256ULL * 1024 * 1024;
+
 bool writeFile(const char* path, const char* data, std::size_t len) {
   FILE* f = fopen(path, "wb");
   if (!f) return false;
@@ -54,6 +59,9 @@ std::string readFile(const char* path) {
 // On any failure returns a JSON object with an "error" field so the caller
 // always gets parseable JSON.
 static std::string pawgReport(const std::string& bytes) {
+  if (bytes.size() > kMaxIccBytes)
+    return std::string("{\"error\":\"Profile exceeds size limit\"}");
+
   mkdir(kWorkDir, 0777);
 
   if (!writeFile(kInputIcc, bytes.data(), bytes.size()))
