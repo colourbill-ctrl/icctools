@@ -1,0 +1,12 @@
+.subHead {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted, #889);
+  margin: 8px 0 4px;
+}
+.subHead:first-child { margin-top: 2px; }
+
+.loading { color: var(--muted, #889); font-size: 12px; padding: 6px 0; }
+.itemError { color: #b3401f; font-size: 12px; padding: 6px 0; }

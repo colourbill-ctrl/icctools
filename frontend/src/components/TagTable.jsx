@@ -1,7 +1,13 @@
 import { Fragment, useEffect, useState } from 'react'
 import { describeTag } from '../lib/validator.js'
+import { enumerateVisualizations } from '../lib/vizPlot.js'
 import { useT } from '../i18n.jsx'
+import TagVisuals from './TagVisuals.jsx'
 import styles from './TagTable.module.css'
+
+// IccVizModel Kind enum values used here (ChromaticityXY / ClutImage).
+const KIND_CHROMA = 2
+const KIND_CLUT = 5
 
 // Inline-expanding tag table. One row open at a time (accordion). Mirrors
 // chardata's ICC viewer: click anywhere on a row to expand, the caret
@@ -12,6 +18,7 @@ import styles from './TagTable.module.css'
 export default function TagTable({ tags, bytes, changedTagIds, describable = true }) {
   const [openId, setOpenId]       = useState(null)
   const [descCache, setDescCache] = useState({})  // { [tagId]: { text, error, loading } }
+  const [viz, setViz]             = useState(null) // { byTag: Map, chroma, gamut } | null
   const t = useT()
 
   // Round-trip edits replace the profile bytes — invalidate the cache and
@@ -19,7 +26,32 @@ export default function TagTable({ tags, bytes, changedTagIds, describable = tru
   useEffect(() => {
     setDescCache({})
     setOpenId(null)
+    setViz(null)
   }, [bytes])
+
+  // Enumerate the profile's visualizations the first time a tag is expanded
+  // (deferred so the ~800 KB iccplot WASM isn't fetched for users who only skim
+  // the tag list). Cached per profile; best-effort — on any failure the tags
+  // simply fall back to the plain Describe() dump.
+  useEffect(() => {
+    if (!describable || !bytes || !openId || viz) return
+    let cancelled = false
+    enumerateVisualizations(bytes)
+      .then((descs) => {
+        if (cancelled) return
+        const byTag = new Map()
+        for (const d of descs) {
+          if (!d.tagSig) continue
+          if (!byTag.has(d.tagSig)) byTag.set(d.tagSig, [])
+          byTag.get(d.tagSig).push(d)
+        }
+        const chroma = descs.find((d) => d.kind === KIND_CHROMA) || null
+        const gamut = descs.find((d) => d.tagSig === 'gamt' && d.kind === KIND_CLUT) || null
+        setViz({ byTag, chroma, gamut })
+      })
+      .catch(() => { if (!cancelled) setViz(null) })
+    return () => { cancelled = true }
+  }, [bytes, describable, openId, viz])
 
   // Fetch the verbosity-100 dump the first time a tag is expanded. Cancel
   // gracefully if the user re-clicks before the WASM call resolves.
@@ -119,19 +151,28 @@ export default function TagTable({ tags, bytes, changedTagIds, describable = tru
                   <span><span className={styles.detailKey}>{t('tag_size')}</span> {tag.size} {t('bytes_suffix')}</span>
                 </div>
                 {describable ? (
-                  <>
-                    <pre className={styles.detailBody}>{shown}</pre>
-                    {cached?.loading && (
-                      <div className={styles.detailLoading} aria-live="polite">
-                        {t('loading_full_description')}
-                      </div>
-                    )}
-                    {cached?.error && (
-                      <div className={styles.detailError} role="alert">
-                        {t('failed_load_description')} {cached.error}
-                      </div>
-                    )}
-                  </>
+                  <TagVisuals
+                    tag={tag}
+                    bytes={bytes}
+                    descriptors={viz?.byTag.get(tag.id) || []}
+                    chromaDesc={viz?.chroma || null}
+                    gamutDesc={tag.id !== 'gamt' ? (viz?.gamut || null) : null}
+                    dataNode={
+                      <>
+                        <pre className={styles.detailBody}>{shown}</pre>
+                        {cached?.loading && (
+                          <div className={styles.detailLoading} aria-live="polite">
+                            {t('loading_full_description')}
+                          </div>
+                        )}
+                        {cached?.error && (
+                          <div className={styles.detailError} role="alert">
+                            {t('failed_load_description')} {cached.error}
+                          </div>
+                        )}
+                      </>
+                    }
+                  />
                 ) : (
                   <pre className={styles.detailBody}>{t('tag_contents_unavailable')}</pre>
                 )}

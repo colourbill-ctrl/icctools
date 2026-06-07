@@ -1,5 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
-import ValidationPanel from './ValidationPanel.jsx'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import HeaderTable from './HeaderTable.jsx'
 import TagTable from './TagTable.jsx'
 import { useT } from '../i18n.jsx'
@@ -10,7 +9,8 @@ import styles from './ProfileViewer.module.css'
 // both out of the main bundle — only fetched when the user opens the tab.
 const XmlPanel       = lazy(() => import('./XmlPanel.jsx'))
 const JsonPanel      = lazy(() => import('./JsonPanel.jsx'))
-// PAWG assessment report; its WASM module loads on tab open.
+// The Validation tab renders the Profile Assessment WG report; its WASM module
+// loads on tab open. (Tab key is still 'PAWG' — see lib/tabs.js.)
 const PawgPanel      = lazy(() => import('./PawgPanel.jsx'))
 
 // Tab identity + URL-fragment aliases live in lib/tabs.js (TAB_DEFS).
@@ -33,11 +33,33 @@ export default function ProfileViewer({
   const [activeTab, setActiveTab] = useState(initialTab || 'Header')
   const t = useT()
 
+  // The upper-right pill reflects the Validation (Profile Assessment WG) result.
+  // We run the report up front so the pill is present without opening the tab;
+  // PawgPanel re-runs it on open (the WASM parse cache makes that cheap).
+  // null = not yet known / not run; otherwise 'pass' | 'warn' | 'fail'.
+  const [pawgState, setPawgState] = useState(null)
+
+  useEffect(() => {
+    setPawgState(null)
+    // A partial profile can't be assessed (the Validation tab is hidden too).
+    if (data.partial) return
+    let cancelled = false
+    import('../lib/pawg.js')
+      .then(({ pawgReport }) => pawgReport(bytes))
+      .then((r) => {
+        if (cancelled) return
+        const s = r.summary
+        setPawgState(s.fail > 0 ? 'fail' : s.warn > 0 ? 'warn' : 'pass')
+      })
+      .catch(() => { if (!cancelled) setPawgState(null) })
+    return () => { cancelled = true }
+  }, [bytes, data.partial])
+
   // A best-effort/partial profile (the validator couldn't fully parse it) is
   // read-only and can't be round-tripped, so hide the XML/JSON converter tabs
   // and fall back to a visible tab if the active one is now hidden.
   const tabs = data.partial
-    ? TABS.filter(tab => tab.key !== 'XML' && tab.key !== 'JSON')
+    ? TABS.filter(tab => tab.key !== 'XML' && tab.key !== 'JSON' && tab.key !== 'PAWG')
     : TABS
   const active = tabs.some(tab => tab.key === activeTab) ? activeTab : 'Header'
 
@@ -53,7 +75,7 @@ export default function ProfileViewer({
             <> · IccProfLib {data.libraryVersion}</>
           )}
         </span>
-        <ValidationBadge level={data.validation.level} t={t} />
+        <ValidationBadge state={pawgState} t={t} />
       </div>
 
       {data.partial && (
@@ -84,13 +106,11 @@ export default function ProfileViewer({
       <div className={styles.panel}>
         {active === 'Header'     && <HeaderTable header={data.header} profileId={data.profileId} />}
         {active === 'Tags'       && <TagTable tags={data.tags} bytes={bytes} changedTagIds={changedTagIds} describable={!data.partial} />}
-        {active === 'Validation' && <ValidationPanel validation={data.validation} data={data} bytes={bytes} />}
         {active === 'PAWG'       && (
           <Suspense fallback={<div className={styles.loading}>{t('loading_pawg') || 'Loading Profile Assessment WG report…'}</div>}>
             <PawgPanel bytes={bytes} />
           </Suspense>
         )}
-        {active === 'Raw Output' && <RawOutput data={data} />}
         {active === 'XML'        && (
           <Suspense fallback={<div className={styles.loading}>{t('loading_xml_editor')}</div>}>
             <XmlPanel
@@ -118,15 +138,21 @@ export default function ProfileViewer({
   )
 }
 
-function ValidationBadge({ level, t }) {
-  const labelKey = { valid: 'badge_valid', warning: 'badge_warning', error: 'badge_error', unknown: 'badge_unknown' }[level]
+// Pill driven by the Validation (Profile Assessment WG) result. `state` is the
+// overall verdict derived from the report summary: any FAIL → fail, else any
+// WARN → warn, else pass. Hidden until the report has run (or for profiles that
+// can't be assessed).
+function ValidationBadge({ state, t }) {
+  if (!state) return null
+  const MAP = {
+    pass: { cls: 'valid_valid',   key: 'badge_pass' },
+    warn: { cls: 'valid_warning', key: 'badge_warning' },
+    fail: { cls: 'valid_error',   key: 'badge_fail' },
+  }
+  const m = MAP[state]
   return (
-    <span className={`${styles.validBadge} ${styles[`valid_${level}`]}`}>
-      {labelKey ? t(labelKey) : level}
+    <span className={`${styles.validBadge} ${styles[m.cls]}`}>
+      {t(m.key)}
     </span>
   )
-}
-
-function RawOutput({ data }) {
-  return <pre className={styles.raw}>{JSON.stringify(data, null, 2)}</pre>
 }

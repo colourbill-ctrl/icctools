@@ -133,7 +133,7 @@
 }
 
 .credit {
-  margin-top: 1rem;
+  margin: -0.4rem 0 0.75rem;
   font-size: 0.8rem;
   font-style: italic;
   color: var(--text-muted, #666);

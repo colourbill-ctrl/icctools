@@ -34,6 +34,17 @@
    heading and matches chardata's preference for bright, punchy headings. */
 :global(body.dark) .title { color: #ffffff; }
 
+/* Tagline under the page heading. `flex-basis: 100%` forces it onto its own
+   line beneath the title (the header is a baseline-aligned flex row). */
+.subtitle {
+  flex-basis: 100%;
+  margin: 2px 0 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.subtitle a { color: var(--accent); }
+
 .banner {
   padding: 6px 28px 18px 28px;
   font-size: 13px;

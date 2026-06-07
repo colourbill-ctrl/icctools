@@ -291,6 +291,11 @@ export default function App() {
       <div className={styles.layout}>
         <header className={styles.header}>
           <h1 className={styles.title}>{t('app_title')}</h1>
+          <p className={styles.subtitle}>
+            {t('subtitle_pre')}{' '}
+            <a href="https://github.com/InternationalColorConsortium/iccDEV" target="_blank" rel="noreferrer">iccDEV</a>
+            {' '}{t('subtitle_post')}
+          </p>
         </header>
 
         <div className={styles.banner}>

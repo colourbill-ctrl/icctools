@@ -1,0 +1,13 @@
+.rasterWrap { display: inline-block; }
+.raster {
+  image-rendering: pixelated;
+  width: 256px;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border, #e2e6ee);
+  background:
+    repeating-conic-gradient(#f3f4f7 0% 25%, #fff 0% 50%) 50% / 16px 16px;
+}
+.rasterMeta { font-size: 11px; color: var(--muted, #889); margin-top: 4px; }
+
+:global(body.dark) .raster { border-color: #2c3442; }

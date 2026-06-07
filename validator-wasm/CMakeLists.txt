@@ -248,6 +248,59 @@ if(BUILD_ICCJSON)
 endif()
 
 
+# ── iccplot (data-first visualization model, lazy-loaded) ──────────────────
+# Wraps iccDEV's IccVizModel (Tools/CmdLine/IccProfilePlot/IccVizModel.cpp) — a
+# standalone re-implementation of the iccProfileVisualize plots that returns DATA
+# (2-D point series + axis hints for graphs) and ICC-normalized samples (for the
+# CLUT raster) instead of a PDF/TIFF report. IccVizModel now lives in iccDEV
+# (this target compiles it straight from there); plot-wrapper.cpp is the local
+# embind binding. IccVizModel depends only on IccProfLib + spectralLocus.hpp. No
+# MEMFS (graphs cross as JSON, rasters as a Uint8Array), so no FORCE_FILESYSTEM.
+# iccProfileVisualize.cpp is NOT compiled here — fully separate from the legacy
+# iccviz report module. Fetched only when the Profile Plot tab opens.
+option(BUILD_ICCPLOT "Build the lazy-loaded data-first visualization module" ON)
+
+if(BUILD_ICCPLOT)
+  # IccVizModel now lives in its own iccDEV dir (IccVizModel.cpp/.hpp +
+  # IccVizMath.hpp + spectralLocus.hpp are all self-contained there).
+  set(ICCPLOT_DIR "${ICCDEV_ROOT}/Tools/CmdLine/IccVizModel")
+  if(NOT EXISTS "${ICCPLOT_DIR}/IccVizModel.cpp")
+    message(FATAL_ERROR "IccVizModel not found at ${ICCPLOT_DIR}")
+  endif()
+
+  add_executable(iccplot plot-wrapper.cpp
+    "${ICCPLOT_DIR}/IccVizModel.cpp" ${ICCPROFLIB_SOURCES})
+
+  target_include_directories(iccplot PRIVATE
+    "${ICCPROFLIB_DIR}"
+    "${ICCPLOT_DIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    "${NLOHMANN_JSON_INCLUDE_DIR}")
+
+  target_compile_options(iccplot PRIVATE
+    -O3
+    -fexceptions
+    -Wno-deprecated-declarations)
+
+  target_link_options(iccplot PRIVATE
+    -O3
+    -fexceptions
+    -lembind
+    -sMODULARIZE=1
+    -sEXPORT_ES6=1
+    -sEXPORT_NAME=createIccPlotModule
+    -sENVIRONMENT=web,worker,node
+    -sALLOW_MEMORY_GROWTH=1
+    -sINITIAL_MEMORY=32MB
+    -sMAXIMUM_MEMORY=512MB
+    -sSTACK_SIZE=1MB
+    -sDYNAMIC_EXECUTION=0
+    -sEXPORTED_RUNTIME_METHODS=getExceptionMessage,decrementExceptionRefcount)
+
+  set_target_properties(iccplot PROPERTIES SUFFIX ".mjs")
+endif()
+
+
 # ── iccpawg (PAWG assessment report, lazy-loaded) ───────────────────────────
 # Wraps the iccPawgReport tool (Tools/CmdLine/IccPawgReport), which emits the
 # ICC Profile Assessment Working Group checklist. DumpPawgReport() is a normal
