@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { describeTag } from '../lib/validator.js'
 import { enumerateVisualizations } from '../lib/vizPlot.js'
 import { useT } from '../i18n.jsx'
+import { useNumberBase } from '../numberBase.jsx'
 import TagVisuals from './TagVisuals.jsx'
 import styles from './TagTable.module.css'
 
@@ -20,6 +21,7 @@ export default function TagTable({ tags, bytes, changedTagIds, describable = tru
   const [descCache, setDescCache] = useState({})  // { [tagId]: { text, error, loading } }
   const [viz, setViz]             = useState(null) // { byTag: Map, chroma, gamut } | null
   const t = useT()
+  const { fmt } = useNumberBase()
 
   // Round-trip edits replace the profile bytes — invalidate the cache and
   // collapse any open row so a stale Describe() text never lingers.
@@ -127,28 +129,28 @@ export default function TagTable({ tags, bytes, changedTagIds, describable = tru
                 <code>{tag.id}</code>
               </span>
               <span className={`${styles.num} ${styles.mono} ${styles.colOffset}`}>
-                {tag.offset}
+                {fmt(tag.offset)}
               </span>
               <span className={`${styles.num} ${styles.mono} ${styles.colSize}`}>
-                {tag.size}
+                {fmt(tag.size)}
               </span>
               <span className={`${styles.num} ${styles.mono} ${styles.colPad} ${padClass(tag.pad)}`}>
-                {tag.pad}
+                {fmt(tag.pad)}
               </span>
               {/* Mobile-only summary line — desktop hides it via CSS. */}
               <span className={styles.meta} aria-hidden>
                 <code className={styles.idInline}>{tag.id}</code>
-                {' · '}{tag.size?.toLocaleString?.() ?? tag.size}B
-                {' · off '}{tag.offset?.toLocaleString?.() ?? tag.offset}
-                {' · pad '}<span className={padMetaClass(tag.pad)}>{tag.pad}</span>
+                {' · '}{fmt(tag.size)}B
+                {' · off '}{fmt(tag.offset)}
+                {' · pad '}<span className={padMetaClass(tag.pad)}>{fmt(tag.pad)}</span>
               </span>
             </div>
             {isOpen && (
               <div className={styles.detail}>
                 <div className={styles.detailMeta}>
                   <span><span className={styles.detailKey}>{t('tag_type')}</span> {tag.isArrayType ? t('tag_array_of', { type: tag.type }) : (tag.type || '—')}</span>
-                  <span><span className={styles.detailKey}>{t('tag_offset')}</span> {tag.offset}</span>
-                  <span><span className={styles.detailKey}>{t('tag_size')}</span> {tag.size} {t('bytes_suffix')}</span>
+                  <span><span className={styles.detailKey}>{t('tag_offset')}</span> {fmt(tag.offset)}</span>
+                  <span><span className={styles.detailKey}>{t('tag_size')}</span> {fmt(tag.size)} {t('bytes_suffix')}</span>
                 </div>
                 {describable ? (
                   <TagVisuals

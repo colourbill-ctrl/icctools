@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLang, LANG_OPTIONS, systemLangNative } from '../i18n.jsx'
+import { useNumberBase } from '../numberBase.jsx'
 import styles from './SettingsBlade.module.css'
 
 // Help opens the bundled help.html (generated from MANUAL.md by
@@ -35,6 +36,7 @@ function applyTheme(theme) {
 
 export default function SettingsBlade() {
   const { lang, setLang, t } = useLang()
+  const { base, setBase }    = useNumberBase()
   const [theme, setTheme]       = useState(readTheme)
   const [collapsed, setCollapsed] = useState(() =>
     isMobile() || localStorage.getItem('profiletool.bladeCollapsed') === '1'
@@ -138,6 +140,18 @@ export default function SettingsBlade() {
               <option value="system">{t('system')}</option>
               <option value="light">{t('light')}</option>
               <option value="dark">{t('dark')}</option>
+            </select>
+          </div>
+
+          <div className={styles.section}>
+            <div className={styles.label}>{t('number_format')}</div>
+            <select
+              className={styles.select}
+              value={base}
+              onChange={(e) => setBase(e.target.value)}
+            >
+              <option value="hex">{t('hex')}</option>
+              <option value="dec">{t('decimal')}</option>
             </select>
           </div>
 

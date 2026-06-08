@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 import { LangProvider } from './i18n.jsx'
+import { NumberBaseProvider } from './numberBase.jsx'
 import { initAnalytics } from './lib/analytics.js'
 
 initAnalytics()
@@ -10,7 +11,9 @@ initAnalytics()
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <LangProvider>
-      <App />
+      <NumberBaseProvider>
+        <App />
+      </NumberBaseProvider>
     </LangProvider>
   </StrictMode>
 )
