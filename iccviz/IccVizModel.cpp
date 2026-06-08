@@ -623,9 +623,14 @@ std::vector<Descriptor> Enumerate(CIccProfile* pIcc) {
   // probe a fixed, canonically-ordered signature list instead. This also gives
   // deterministic ordering, close to the profile's tag-table order.
 
-  // Chromaticity first (only when RGB colorants are present).
-  if (pIcc->FindTag(icSigRedColorantTag) && pIcc->FindTag(icSigGreenColorantTag) &&
-      pIcc->FindTag(icSigBlueColorantTag)) {
+  // Chromaticity first. Enumerated whenever the profile carries a media white
+  // point OR the full RGB colorant set: buildChromaticityGraph plots the white
+  // point on its own and only adds the primaries/gamut polygon when all three
+  // colorants exist, so output/CMYK profiles (white point but no colorants)
+  // still get a meaningful white-point-on-the-locus chart for wtpt.
+  if (pIcc->FindTag(icSigMediaWhitePointTag) ||
+      (pIcc->FindTag(icSigRedColorantTag) && pIcc->FindTag(icSigGreenColorantTag) &&
+       pIcc->FindTag(icSigBlueColorantTag))) {
     Descriptor d;
     d.kind = Kind::ChromaticityXY; d.output = Output::Graph;
     d.id = "chroma:xy"; d.title = "Chromaticity xy";
