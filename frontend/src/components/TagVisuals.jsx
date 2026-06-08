@@ -172,7 +172,8 @@ function CombinedCurves({ bytes, curves, spaceSig, labels }) {
 
   const merged = mergeCurveGraphs(state.data, spaceSig, labels)
   if (!merged) return null
-  return <GraphSvg graph={merged} legend />
+  const warnings = state.data.flatMap(({ g }) => g.warnings || [])
+  return <><VizWarnings items={warnings} /><GraphSvg graph={merged} legend /></>
 }
 
 function mergeCurveGraphs(items, spaceSig, labels) {
@@ -197,21 +198,41 @@ function mergeCurveGraphs(items, spaceSig, labels) {
   }
 }
 
+// Non-fatal diagnostics raised while a graph/raster still rendered (e.g. a CLUT
+// tile-count overflow). The engine carries these as data; we show them inline so
+// they aren't silently lost — the very thing the diagnostics restore was about.
+function VizWarnings({ items }) {
+  if (!items || !items.length) return null
+  return (
+    <div className={styles.itemWarning}>
+      {items.map((w, i) => <div key={i}>⚠ {w}</div>)}
+    </div>
+  )
+}
+
 // ── single graph / raster loaders ────────────────────────────────────────────
 function GraphView({ bytes, id, highlight }) {
   const t = useT()
   const state = useAsync(() => renderGraph(bytes, id), [bytes, id])
   if (state.loading) return <div className={styles.loading}>{t('viz_loading') || 'Loading…'}</div>
   if (state.error) return <div className={styles.itemError}>{state.error}</div>
-  return <GraphSvg graph={state.data} highlight={highlight} />
+  return <><VizWarnings items={state.data.warnings} /><GraphSvg graph={state.data} highlight={highlight} /></>
 }
 
 function RasterView({ bytes, id, gamut = false }) {
   const t = useT()
-  const state = useAsync(() => renderRaster(bytes, id).then((r) => decodeRaster(r, { gamut })), [bytes, id, gamut])
+  const state = useAsync(
+    () => renderRaster(bytes, id).then((r) => ({ raster: decodeRaster(r, { gamut }), warnings: r.warnings })),
+    [bytes, id, gamut],
+  )
   if (state.loading) return <div className={styles.loading}>{t('viz_loading') || 'Loading…'}</div>
   if (state.error) return <div className={styles.itemError}>{state.error}</div>
-  return <RasterCanvas raster={state.data} caption={gamut ? <GamutLegend t={t} /> : undefined} />
+  return (
+    <>
+      <VizWarnings items={state.data.warnings} />
+      <RasterCanvas raster={state.data.raster} caption={gamut ? <GamutLegend t={t} /> : undefined} />
+    </>
+  )
 }
 
 // Swatch colours mirror decodeGamut() in lib/rasterDecode.js: in-gamut neutral

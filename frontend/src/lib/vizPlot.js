@@ -89,5 +89,6 @@ export async function renderRaster(bytes, id) {
     width: r.width, height: r.height, channels: r.channels,
     bitsPerChannel: r.bitsPerChannel, photometric: r.photometric,
     normalizedICC: r.normalizedICC, samples: Uint8Array.from(r.samples),
+    warnings: r.warnings ? Array.from(r.warnings) : [],   // non-fatal diagnostics
   }
 }

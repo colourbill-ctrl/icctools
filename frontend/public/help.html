@@ -59,13 +59,12 @@
 <p><strong>ICC Profile Tool</strong> (profiletool) is a browser-based tool for inspecting, validating, and round-trip editing <strong>ICC.1</strong> colour profiles. It runs entirely in your browser — no upload, no install — using a WebAssembly build of <a href="https://github.com/InternationalColorConsortium/iccDEV">iccDEV</a>, the ICC's official demo implementation of IccProfLib.</p>
 <p><strong>What you can do:</strong></p>
 <ul>
-<li><strong>Validate</strong> an ICC profile against the ICC.1 specification — see the severity (valid / warning / error) and every diagnostic message produced by IccProfLib.</li>
 <li><strong>Browse the header</strong> — every field of the 128-byte profile header, decoded into human-readable strings.</li>
-<li><strong>Browse the tag directory</strong> — every tag with its signature, type, byte offset, size, and pad bytes. Click any tag to open a full type-specific description (the same output as the iccDEV <code>wxProfileDump</code> "Describe" view).</li>
-<li><strong>Run the Profile Assessment WG checklist</strong> — the ICC Profile Assessment Working Group's checks (Security / Conformance / Quality), each with a verdict, filterable by category.</li>
+<li><strong>Browse the tag directory</strong> — every tag with its signature, type, byte offset, size, and pad bytes. Click any tag to expand a full type-specific description (the same output as the iccDEV <code>wxProfileDump</code> "Describe" view), and — for tags that carry one — an inline <strong>visualization</strong>: tone-response curves, chromaticity charts, CLUT and gamut images, named-colour scatters, plus a single-point <strong>transform evaluator</strong>.</li>
+<li><strong>Validate</strong> — run the ICC Profile Assessment Working Group checklist (Security / Conformance / Quality), each check with a verdict, filterable by category.</li>
 <li><strong>Round-trip edit</strong> — convert the profile to XML or JSON, edit it in the built-in code editor, convert back to ICC, and re-validate. The save button downloads the edited binary.</li>
 <li><strong>Launch from chardata</strong> — open a profile that's loaded in <a href="https://chardata.colourbill.com/">chardata</a> directly here, with the bytes handed over in-browser via <code>postMessage</code>.</li>
-<li><strong>Launch with a URL</strong> — open a link that points the tool at a profile hosted on the web and, optionally, the tab to land on (e.g. <code>…/profiletool#url=…&tab=PAWG</code>).</li>
+<li><strong>Launch with a URL</strong> — open a link that points the tool at a profile hosted on the web and, optionally, the tab to land on (e.g. <code>…/profiletool#url=…&tab=VAL</code>).</li>
 </ul>
 <p>Everything runs client-side. Profile bytes never leave the browser tab.</p>
 
@@ -203,7 +202,7 @@ text.mono  { font-family:ui-monospace,Menlo,Consolas,monospace; }
 <p>Supported languages: English, Français, Deutsch, Italiano, Español, Português (PT), Português (BR), Svenska, 中文（简体）, 中文（繁體）, 日本語, 한국어. The chardata Settings panel offers the same set, so toggling Language in one app gives a consistent reading experience in the other.</p>
 <hr>
 <h2 id="3-profile-views">3. Profile views</h2>
-<p>Once a profile is loaded the viewer shows a title bar (filename · size · IccProfLib version · validity badge) and a tab strip. The badge colour summarises validation: green = valid, amber = warning, red = error.</p>
+<p>Once a profile is loaded the viewer shows a title bar (filename · size · IccProfLib version · validity badge) and a tab strip. The badge summarises the <strong>Validation</strong> report: green <strong>Pass</strong> when no check fails or warns, amber <strong>Warning</strong> when at least one check warns, red <strong>Fail</strong> when any check fails.</p>
 <h3 id="3-1-header">3.1 Header</h3>
 <p>A two-column table of every field in the ICC profile's 128-byte binary header. Values are decoded into human-readable strings (signatures expanded, dates formatted, fixed-point values converted) using IccProfLib's <code>CIccInfo</code>. The <strong>profile ID</strong> (MD5 hash from the header) is shown in a highlighted strip at the top.</p>
 <h3 id="3-2-tags">3.2 Tags</h3>
@@ -219,18 +218,27 @@ text.mono  { font-family:ui-monospace,Menlo,Consolas,monospace; }
 <tr><td><code>Pad</code></td><td>Padding bytes between this tag and the next</td></tr>
 </tbody></table>
 <p>Tags are sorted by offset. The <strong>Pad</strong> column is colour-coded — <code>Pad < 0</code> (overlapping tags, non-compliant) is shown in red; <code>Pad > 3</code> (above-spec padding) is shown in amber.</p>
-<p><strong>Click any row</strong> to open a modal showing the full type-specific description for that tag — equivalent to running IccProfLib's <code>CIccTag::Describe(verbosity = 100)</code>. For tags that contain large CLUTs or curves (e.g. <code>A2B0</code>, <code>B2A0</code>), this includes every grid cell or curve point.</p>
-<h3 id="3-3-validation">3.3 Validation</h3>
-<p>The status card at the top summarises the overall result:</p>
+<p><strong>Click any row</strong> to expand it in place (an accordion — one tag open at a time). The expanded detail always ends with the full type-specific description — equivalent to running IccProfLib's <code>CIccTag::Describe(verbosity = 100)</code>. For tags that contain large CLUTs or curves (e.g. <code>A2B0</code>, <code>B2A0</code>), this includes every grid cell or curve point.</p>
+<p>Above that description, tags that carry visualizable data show one or more <strong>inline visualizations</strong>, each in a collapsible section:</p>
+<table><thead>
+<tr><th>Tag type</th><th>Visualizations</th></tr></thead><tbody>
+<tr><td>Tone curves (<code>rTRC</code>/<code>gTRC</code>/<code>bTRC</code>/<code>kTRC</code>)</td><td>The tone-response curve plotted against the identity line; the curve table is collapsed below it.</td></tr>
+<tr><td>RGB colorants (<code>rXYZ</code>/<code>gXYZ</code>/<code>bXYZ</code>) and white point (<code>wtpt</code>)</td><td>A CIE 1931 chromaticity chart with the relevant primary (or the white point) highlighted; the colorant/white-point data is shown beneath.</td></tr>
+<tr><td>LUT transforms (<code>A2B0–3</code>, <code>B2A0–3</code>, <code>gamt</code>, <code>pre0–2</code>)</td><td>Input-side and output-side tone curves (overlaid, colour-coded per colorant, with a legend to toggle traces); the CLUT lattice as an image; the <strong>gamut image</strong> (for the profile's <code>gamutTag</code>, colour-coded — neutral = in gamut, red = out of gamut); the <strong>evaluator</strong> (below); and the raw data table, collapsed.</td></tr>
+<tr><td>Named / colorant tables (<code>ncl2</code>/<code>nmcl</code>/<code>clrt</code>/<code>clot</code>)</td><td>A scatter of the colours on the CIELAB a*b* (and CIE xy) charts; the tables are collapsed below.</td></tr>
+</tbody></table>
+<div class="note">
+<strong>Malformed data is never hidden.</strong> If a curve or other visualizable element fails IccProfLib's validation — for example a tone curve with a degenerate gamma of 0 — the section still renders what it can and shows a ⚠ warning with the exact reason from the library, rather than silently omitting the graph.
+</div>
+<h4>The transform evaluator</h4>
+<p>For LUT transforms (<code>A2B<em></code> / <code>B2A</em></code> / preview tags) the <strong>Evaluate</strong> section applies that specific tag's transform to a single colour you supply, using IccProfLib directly — no external colour engine. The direction follows the tag (<code>A2B<em></code> maps device → PCS; <code>B2A</em></code> maps PCS → device), and the rendering intent is implied by the tag (<code>…0</code> perceptual, <code>…1</code> relative colorimetric, <code>…2</code> saturation).</p>
 <ul>
-<li><strong>Valid</strong> — <code>ValidateIccProfile</code> returned <code>icValidateOK</code></li>
-<li><strong>Warning</strong> — at least one warning, no errors</li>
-<li><strong>Error</strong> — at least one error (including critical errors)</li>
-<li><strong>Unknown</strong> — IccProfLib couldn't classify the result</li>
+<li>Enter input either as <strong>floating-point</strong> values (device channels, or PCS in human Lab/XYZ units) or, when the tag has a CLUT, by <strong>grid-point</strong> index (a node position on the lattice).</li>
+<li>The output is shown in <strong>both</strong> the internal normalized 0–1 encoding and human units (Lab/XYZ for a PCS result).</li>
 </ul>
-<p>Below the card, every message returned by IccProfLib is listed as a bullet. The text is verbatim from IccProfLib so you can match it against the iccDEV source.</p>
-<h3 id="3-4-profile-assessment-wg">3.4 Profile Assessment WG</h3>
-<p>Runs the <strong>ICC Profile Assessment Working Group</strong> checklist against the loaded profile and shows it as a report. The checks come from the iccDEV <code>iccPawgReport</code> tool, compiled to a separate WebAssembly module that's fetched only when you first open this tab.</p>
+<p>The gamut tag (<code>gamt</code>) has no evaluator — it is a one-channel in/out-of-gamut map rather than an invertible transform; its gamut image is shown instead.</p>
+<h3 id="3-3-validation">3.3 Validation</h3>
+<p>Runs the <strong>ICC Profile Assessment Working Group</strong> checklist against the loaded profile and shows it as a report. The checks come from the iccDEV <code>iccPawgReport</code> tool, compiled to a separate WebAssembly module that's fetched only when you first open this tab. (The same report drives the validity badge in the title bar, and is reachable from a URL launch as either <code>VAL</code> or the legacy <code>PAWG</code>.)</p>
 <p>Each check is grouped under <strong>Security</strong>, <strong>Conformance</strong>, or <strong>Quality</strong>, and carries one verdict:</p>
 <table><thead>
 <tr><th>Verdict</th><th>Meaning</th></tr></thead><tbody>
@@ -242,12 +250,10 @@ text.mono  { font-family:ui-monospace,Menlo,Consolas,monospace; }
 <tr><td><strong>Not Run</strong></td><td>The check was skipped</td></tr>
 </tbody></table>
 <p>The summary row at the top tallies each verdict as a coloured pill. <strong>Click a pill to filter</strong> the report below — a blue halo marks the categories currently shown, and pills with zero items are inactive. For example, switch off <strong>Pass</strong> and <strong>N/A</strong> to focus on just the Warns and Fails.</p>
-<h3 id="3-5-raw-output">3.5 Raw Output</h3>
-<p>The complete JSON object produced by the validator wrapper — header, tags, validation, profile ID, sizes, library version. Useful when copy-pasting into a bug report or diffing two profiles textually.</p>
-<h3 id="3-6-xml">3.6 XML</h3>
+<h3 id="3-4-xml">3.4 XML</h3>
 <p>Converts the profile to XML (via IccLibXML, the same writer the iccDEV <code>iccToXml</code> CLI uses) and shows it in a CodeMirror editor with syntax highlighting. Edit the XML and click <strong>Convert to ICC</strong> to round-trip back to binary; the viewer re-validates and the <strong>Save ICC profile</strong> button downloads the result.</p>
 <p>A <strong>dirty</strong> indicator shows when the editor text differs from the last converter output, so you can tell at a glance whether your edits have been applied. If conversion fails, IccLibXML's parse error is shown above the editor with the offending line / column.</p>
-<h3 id="3-7-json">3.7 JSON</h3>
+<h3 id="3-5-json">3.5 JSON</h3>
 <p>Same idea as the XML tab but using a JSON representation of the profile produced by the validator wrapper (<code>json-wrapper.cpp</code>). Edit, click <strong>Convert to ICC</strong>, save. The JSON form is more compact and easier to script against; the XML form is more familiar if you've used the iccDEV CLI tools.</p>
 <hr>
 <h2 id="4-round-trip-editing">4. Round-trip editing</h2>
@@ -301,7 +307,7 @@ https://chardata.colourbill.com/profiletool#url=<profile-url>&tab=<tab>
 <p>
 ```
  
-https://chardata.colourbill.com/profiletool#url=https://example.org/profiles/sRGB.icc&tab=PAWG
+https://chardata.colourbill.com/profiletool#url=https://example.org/profiles/sRGB.icc&tab=VAL
  
 ```
 </p>
@@ -315,12 +321,10 @@ https://chardata.colourbill.com/profiletool#url=https://example.org/profiles/sRG
 <tr><td>Header</td><td><code>HEADER</code></td><td><code>Header</code></td></tr>
 <tr><td>Tags</td><td><code>TAGS</code></td><td><code>Tags</code></td></tr>
 <tr><td>Validation</td><td><code>VAL</code></td><td><code>Validation</code></td></tr>
-<tr><td>Profile Assessment WG</td><td><code>PAWG</code></td><td><code>ProfileAssessmentWG</code></td></tr>
-<tr><td>Raw Output</td><td><code>RAW</code></td><td><code>RawOutput</code></td></tr>
 <tr><td>XML</td><td><code>XML</code></td><td><code>XML</code></td></tr>
 <tr><td>JSON</td><td><code>JSON</code></td><td><code>JSON</code></td></tr>
 </tbody></table>
-<p>The long names are the on-screen tab labels with the spaces removed. Both schemes are kept stable even if the visible labels are renamed, so existing links keep working. An unrecognised <code>tab=</code> value is ignored and the Header view opens.</p>
+<p>The long names are the on-screen tab labels with the spaces removed. Both schemes are kept stable even if the visible labels are renamed, so existing links keep working. The Validation tab also answers to the legacy code <code>PAWG</code> (it was formerly labelled "Profile Assessment WG"). An unrecognised <code>tab=</code> value is ignored and the Header view opens.</p>
 <div class="note">
 <strong>Requirements for <code>url=</code>:</strong> the profile must be served over <strong>HTTPS</strong>, and the hosting server must allow cross-origin reads (a permissive <code>Access-Control-Allow-Origin</code> / CORS header). If either is missing the browser blocks the download and the tool shows a fetch error. If the profile URL itself contains <code>&</code> or <code>#</code> (its own query string), percent-encode the whole <code>url=</code> value so those characters don't terminate the fragment early.
 </div>

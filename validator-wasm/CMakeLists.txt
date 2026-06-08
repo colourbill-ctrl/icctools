@@ -249,21 +249,24 @@ endif()
 
 
 # ── iccplot (data-first visualization model, lazy-loaded) ──────────────────
-# Wraps iccDEV's IccVizModel (Tools/CmdLine/IccProfilePlot/IccVizModel.cpp) — a
+# Wraps the IccVizModel engine (profiletool/iccviz/IccVizModel.cpp) — a
 # standalone re-implementation of the iccProfileVisualize plots that returns DATA
 # (2-D point series + axis hints for graphs) and ICC-normalized samples (for the
-# CLUT raster) instead of a PDF/TIFF report. IccVizModel now lives in iccDEV
-# (this target compiles it straight from there); plot-wrapper.cpp is the local
-# embind binding. IccVizModel depends only on IccProfLib + spectralLocus.hpp. No
-# MEMFS (graphs cross as JSON, rasters as a Uint8Array), so no FORCE_FILESYSTEM.
-# iccProfileVisualize.cpp is NOT compiled here — fully separate from the legacy
-# iccviz report module. Fetched only when the Profile Plot tab opens.
+# CLUT raster) instead of a PDF/TIFF report. The engine lives HERE in profiletool
+# (parallel to iccDEV, which is left untouched — we code around it, never modify
+# it); plot-wrapper.cpp is the local embind binding. IccVizModel depends only on
+# iccDEV's IccProfLib *library* (compiled in-place via ICCPROFLIB_SOURCES) +
+# its own self-contained IccVizMath.hpp / spectralLocus.hpp. No MEMFS (graphs
+# cross as JSON, rasters as a Uint8Array), so no FORCE_FILESYSTEM. Fetched only
+# when the Profile Plot tab opens. Kept separable so it can be offered back to
+# iccDEV's Tools structure later as a discrete PR.
 option(BUILD_ICCPLOT "Build the lazy-loaded data-first visualization module" ON)
 
 if(BUILD_ICCPLOT)
-  # IccVizModel now lives in its own iccDEV dir (IccVizModel.cpp/.hpp +
-  # IccVizMath.hpp + spectralLocus.hpp are all self-contained there).
-  set(ICCPLOT_DIR "${ICCDEV_ROOT}/Tools/CmdLine/IccVizModel")
+  # The IccVizModel engine lives parallel, inside profiletool — NOT in the iccDEV
+  # tree (IccVizModel.cpp/.hpp + IccVizMath.hpp + spectralLocus.hpp are all
+  # self-contained in profiletool/iccviz/). Only IccProfLib comes from iccDEV.
+  set(ICCPLOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../iccviz")
   if(NOT EXISTS "${ICCPLOT_DIR}/IccVizModel.cpp")
     message(FATAL_ERROR "IccVizModel not found at ${ICCPLOT_DIR}")
   endif()

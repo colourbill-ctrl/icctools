@@ -36,6 +36,12 @@ namespace {
 
 constexpr std::size_t kMaxIccBytes = 256ULL * 1024 * 1024;
 
+// Library/browser usage: suppress IccVizModel's default stderr echo of
+// diagnostics (they'd land in the JS console). The structured `diagnostics` on
+// each result still flow through to the UI. Runs once at module load — the
+// natural "setup step" before any profile is supplied.
+const bool g_iccvizSilenced = (iccviz::SetSilent(true), true);
+
 // ── single-slot parse cache ──────────────────────────────────────────────────
 std::uint64_t fnv1a64(const std::string& s) {
   std::uint64_t h = 1469598103934665603ULL;
@@ -186,6 +192,17 @@ emscripten::val makeUint8Array(const std::uint8_t* data, std::size_t size) {
   return u8;
 }
 
+// Non-fatal warnings (tile-count overflow, an out-of-range sqrt, …) raised while
+// a render still succeeded — IccVizModel carries them as DATA; we forward the
+// Warning-severity ones so the UI can show them alongside the plot. (Fatal
+// reasons already travel through `error`.)
+json warningsToJson(const std::vector<iccviz::Diagnostic>& diags) {
+  json arr = json::array();
+  for (const auto& d : diags)
+    if (d.severity == iccviz::Severity::Warning) arr.push_back(d.message);
+  return arr;
+}
+
 // ── exported functions ───────────────────────────────────────────────────────
 std::string enumerateProfile(const std::string& bytes) {
   if (bytes.size() > kMaxIccBytes)
@@ -212,7 +229,10 @@ std::string renderGraph(const std::string& bytes, const std::string& id) {
   if (!pIcc) return json{{"error", "Failed to parse ICC profile"}}.dump();
   auto res = iccviz::RenderGraph(pIcc, id);
   if (!res.ok) return json{{"error", res.error}}.dump();
-  return graphToJson(res.graph).dump();
+  json jg = graphToJson(res.graph);
+  json w = warningsToJson(res.diagnostics);
+  if (!w.empty()) jg["warnings"] = std::move(w);
+  return jg.dump();
 }
 
 emscripten::val renderRaster(const std::string& bytes, const std::string& id) {
@@ -230,6 +250,13 @@ emscripten::val renderRaster(const std::string& bytes, const std::string& id) {
   obj.set("photometric", r.photometric);
   obj.set("normalizedICC", r.normalizedICC);
   obj.set("samples", makeUint8Array(r.samples.data(), r.samples.size()));
+  // additive: non-fatal warnings raised during a successful flatten.
+  json w = warningsToJson(res.diagnostics);
+  if (!w.empty()) {
+    emscripten::val warns = emscripten::val::array();
+    for (const auto& m : w) warns.call<void>("push", emscripten::val(m.get<std::string>()));
+    obj.set("warnings", warns);
+  }
   return obj;
 }
 

@@ -10,3 +10,4 @@
 
 .loading { color: var(--muted, #889); font-size: 12px; padding: 6px 0; }
 .itemError { color: #b3401f; font-size: 12px; padding: 6px 0; }
+.itemWarning { color: #8a6d00; background: #fff8e1; border: 1px solid #f0e0a0; border-radius: 4px; font-size: 12px; padding: 4px 8px; margin: 4px 0; white-space: pre-line; }
