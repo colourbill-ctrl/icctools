@@ -125,6 +125,16 @@ export default function App() {
       setError(`${t('url_invalid')} ${rawUrl}`)
       return
     }
+    // A crafted `#url=` link fetches on page load with no interaction, turning a
+    // shared link into a "make the victim's browser GET this URL" primitive.
+    // CORS still blocks reading a cross-origin body and fetch sends no
+    // cross-origin cookies, so this isn't credentialed SSRF — but gate any
+    // off-origin fetch behind an explicit confirmation so a hostile link can't
+    // silently reach out. Same-origin loads (and the chardata handoff) proceed.
+    if (url.origin !== window.location.origin &&
+        !window.confirm(`${t('url_confirm')}\n\n${url.origin}`)) {
+      return
+    }
     setLoading(true); setError(null); setProfile(null)
     let bytes
     try {

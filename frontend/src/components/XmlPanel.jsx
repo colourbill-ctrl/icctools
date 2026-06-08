@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { xml as xmlLang } from '@codemirror/lang-xml'
 import TextEditor from './TextEditor.jsx'
 import { iccToXml, xmlToIcc } from '../lib/xmlConverter.js'
+import { renderRichText } from '../lib/richText.jsx'
 import { useT } from '../i18n.jsx'
 import styles from './ConverterPanel.module.css'
 
@@ -94,10 +95,9 @@ export default function XmlPanel({
       )}
 
       {xml === null ? (
-        <div
-          className={styles.placeholder}
-          dangerouslySetInnerHTML={{ __html: t('xml_placeholder') }}
-        />
+        <div className={styles.placeholder}>
+          {renderRichText(t('xml_placeholder'))}
+        </div>
       ) : (
         <TextEditor
           value={xml}

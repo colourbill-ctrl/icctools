@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { json as jsonLang } from '@codemirror/lang-json'
 import TextEditor from './TextEditor.jsx'
 import { iccToJson, jsonToIcc } from '../lib/jsonConverter.js'
+import { renderRichText } from '../lib/richText.jsx'
 import { useT } from '../i18n.jsx'
 import styles from './ConverterPanel.module.css'
 
@@ -116,10 +117,9 @@ export default function JsonPanel({
       )}
 
       {json === null ? (
-        <div
-          className={styles.placeholder}
-          dangerouslySetInnerHTML={{ __html: t('json_placeholder') }}
-        />
+        <div className={styles.placeholder}>
+          {renderRichText(t('json_placeholder'))}
+        </div>
       ) : (
         <TextEditor
           value={json}
