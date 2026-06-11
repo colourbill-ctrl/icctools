@@ -301,7 +301,10 @@ bool collectNamedColors(CIccProfile* pIcc, CIccTag* tag, const std::string& sigD
         lab[0]=icU16toF(e->data[0]); lab[1]=icU16toF(e->data[1]); lab[2]=icU16toF(e->data[2]);
         icLabFromPcs(lab);
       }
-      out.push_back(NamedLab{std::to_string(i+1) + " " + std::string(e->name), lab[0], lab[1], lab[2]});
+      // strnlen-bound: e->name is a fixed-size profile field; a non-NUL-terminated
+      // one would over-read adjacent heap if passed to std::string(const char*).
+      out.push_back(NamedLab{std::to_string(i+1) + " " +
+          std::string(e->name, strnlen(e->name, sizeof e->name)), lab[0], lab[1], lab[2]});
     }
     title = "Colorant Table";
     return !out.empty();
@@ -330,7 +333,10 @@ bool collectNamedColors(CIccProfile* pIcc, CIccTag* tag, const std::string& sigD
         table->Lab2ToLab4(lab, lab2);
         icLabFromPcs(lab);
       }
-      out.push_back(NamedLab{prefix + std::string(e->rootName) + suffix, lab[0], lab[1], lab[2]});
+      // strnlen-bound (see Colorant Table above): rootName is a fixed-size field.
+      out.push_back(NamedLab{prefix +
+          std::string(e->rootName, strnlen(e->rootName, sizeof e->rootName)) + suffix,
+          lab[0], lab[1], lab[2]});
     }
     title = "Named Color Table";
     return !out.empty();
@@ -473,12 +479,19 @@ bool buildClutRaster(CIccTag* tag, const std::string& sigDesc, Raster& out,
   }
 
   if (inputChannels > 3) {
+    // Accumulate in 64-bit and bail on overflow: tiles is profile-derived and an
+    // int multiply here could wrap to a small positive value that escapes the
+    // <=0 guards below and drives a too-small image buffer (heap overflow).
+    std::uint64_t tiles64 = static_cast<std::uint64_t>(tiles);
     for (int i = 3; i < inputChannels; ++i) {
       int extraGridPoints = clut->GridPoint(i);
       if (extraGridPoints <= 0)
         return skip("invalid CLUT tile count");
-      tiles *= extraGridPoints;
+      tiles64 *= static_cast<std::uint64_t>(extraGridPoints);
+      if (tiles64 > static_cast<std::uint64_t>(std::numeric_limits<int>::max()))
+        return skip("CLUT tile count overflow");
     }
+    tiles = static_cast<int>(tiles64);
   }
 
   // special case for single dimensional LUT
@@ -511,11 +524,15 @@ bool buildClutRaster(CIccTag* tag, const std::string& sigDesc, Raster& out,
   // some odd counts need a tweak to align and look more sane
   if (inputChannels > 3 && (inputChannels & 1)) {
     int oldValue = tilesWide;
-    // round down to a multiple of the grid size to better align rows
-    tilesWide -= (tilesWide % (gridPoints * tileWidth));
-    if (tilesWide == 0) {
-      // this does happen -- should I round up in some cases?
-      tilesWide = oldValue;
+    // round down to a multiple of the grid size to better align rows.
+    // Guard the divisor: gridPoints*tileWidth could overflow int to 0 and trap.
+    int alignTo = gridPoints * tileWidth;
+    if (alignTo > 0) {
+      tilesWide -= (tilesWide % alignTo);
+      if (tilesWide == 0) {
+        // this does happen -- should I round up in some cases?
+        tilesWide = oldValue;
+      }
     }
   }
 
@@ -527,16 +544,29 @@ bool buildClutRaster(CIccTag* tag, const std::string& sigDesc, Raster& out,
   if (imageWidth <= 0 || imageHeight <= 0 || bytes <= 0)
     return skip("invalid image geometry");
 
-  size_t bufferSize = static_cast<size_t>(imageWidth) * imageHeight * outputChannels * bytes;
-  // NOTE that bufferSize will usually be greater than clutSize
-  if (!bufferSize)
+  // Compute in 64-bit and enforce a hard ceiling before allocating: every
+  // factor here is profile-derived and a size_t multiply on wasm32 (32-bit
+  // size_t) could wrap to a small value, under-sizing the buffer the sample
+  // loop then writes past. 256 MB is far above any legitimate CLUT raster.
+  static const std::uint64_t kMaxRasterBytes = 256ull * 1024 * 1024;
+  std::uint64_t bufferSize64 = static_cast<std::uint64_t>(imageWidth) *
+                               static_cast<std::uint64_t>(imageHeight) *
+                               static_cast<std::uint64_t>(outputChannels) *
+                               static_cast<std::uint64_t>(bytes);
+  if (!bufferSize64)
     return skip("empty image buffer");
+  if (bufferSize64 > kMaxRasterBytes)
+    return skip("CLUT raster too large");
 
+  size_t bufferSize = static_cast<size_t>(bufferSize64);
+  // NOTE that bufferSize will usually be greater than clutSize
   out.samples.assign(bufferSize, 0);
   unsigned char* buf = out.samples.data();
   unsigned short* buf16 = reinterpret_cast<unsigned short*>(buf);
   float* buf32 = reinterpret_cast<float*>(buf);
   icFloatNumber* clutData = clut->GetData(0);
+  if (!clutData)
+    return skip("CLUT data unavailable");
 
   size_t n001 = static_cast<size_t>(tileWidth) * tileHeight * outputChannels;
   size_t n010 = static_cast<size_t>(tileWidth) * outputChannels;
