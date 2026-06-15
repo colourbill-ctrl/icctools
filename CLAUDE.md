@@ -153,7 +153,11 @@ Production instance: `https://chardata.colourbill.com/profiletool/` — nginx on
 
 Vite's `base` is `/profiletool/` for `npm run build` and `/` for `npm run dev` (see `vite.config.js`), so dev URLs stay at `http://localhost:5173/` while production assets resolve under `/profiletool/`. Each `WASM_DIR` constant in `src/lib/*.js` is computed from `import.meta.env.BASE_URL` so the WASM loader follows the same prefix.
 
-Redeploy with:
+**CI is the primary deploy path.** `.github/workflows/deploy.yml` auto-deploys on every push to `main` and on any `v*` tag: a GitHub-hosted runner runs `npm ci && npm run build` (committed WASM in `frontend/public/wasm/` ships as-is — the runner needs no Emscripten/iccDEV), then `rsync --delete frontend/dist/ → admin@$SSH_HOST:/var/www/profiletool/`. The tag trigger matters because `vite.config.js` resolves `__APP_VERSION__` from `git describe --tags --abbrev=0`, so the live footer version follows the **git tag**. Required repo secrets: `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`.
+
+> **⚠ Lightsail SSH host — the deploy-breaking gotcha.** `chardata.colourbill.com` is Cloudflare-proxied: HTTPS/443 works, but **port 22 is not exposed**, so SSH/rsync to the *hostname* fails with `connect to host … port 22: Network is unreachable`. The Lightsail **origin IP is `54.203.184.14`** (us-west-2, user `admin`). Both the `SSH_HOST` GitHub secret and the local `~/.ssh/config` `chardata` alias must use that IP, never the hostname (the deploy.yml comment's "same value chardata uses" = this IP). `SSH_KNOWN_HOSTS` pins by host, so it must hold `ssh-keyscan -H 54.203.184.14`. If the live version stops advancing after a push, check the deploy run for this error first. (Fixed 2026-06-14 after the domain moved behind Cloudflare; chardata's secret already used the IP, profiletool's had drifted to the hostname.)
+
+Manual redeploy (fallback — only works if the local `chardata` SSH alias points at the origin IP above):
 
 ```bash
 scripts/deploy.sh                   # rebuilds WASM + frontend, rsyncs to chardata:/var/www/profiletool/
@@ -161,6 +165,35 @@ NO_WASM=1 scripts/deploy.sh         # frontend-only rebuild + rsync
 ```
 
 nginx server block: the chardata.colourbill.com vhost needs a `location /profiletool/` that aliases to `/var/www/profiletool/` with `try_files $uri $uri/ /profiletool/index.html;` (SPA fallback). Drop the legacy `:5173` server block once `/profiletool/` is live.
+
+### Releasing (runbook)
+
+Patch release that rebuilds the WASM against the latest iccDEV (the common case):
+
+```bash
+# 1. Build all WASM modules against a CLEAN iccDEV master (not a feature/test branch).
+#    Wipe the build dir so it reconfigures against the clean root.
+git -C ~/code/iccdev worktree add --detach /tmp/iccdev-clean origin/master
+source ~/emsdk-install/emsdk/emsdk_env.sh
+rm -rf validator-wasm/build
+ICCDEV_ROOT=/tmp/iccdev-clean scripts/build-wasm.sh     # copies into frontend/public/wasm/ + refreshes SHA256SUMS
+git -C ~/code/iccdev worktree remove /tmp/iccdev-clean --force
+
+# 2. Bump "version" in frontend/package.json AND frontend/package-lock.json (root + packages."" only).
+
+# 3. Commit the WASM artifacts + version files (not the untracked iccdev-pr*/ scratch dirs):
+git add frontend/package.json frontend/package-lock.json frontend/public/wasm/
+git commit            # subject convention: "X.Y.Z: <summary>"; trailer Co-Authored-By: Claude ...
+
+# 4. Tag BEFORE deploy so __APP_VERSION__ resolves to the new version, then push (CI deploys):
+git tag -a vX.Y.Z -F <same message>
+git push origin main && git push origin vX.Y.Z
+
+# 5. GitHub release (these ARE the release notes — no CHANGELOG file):
+gh release create vX.Y.Z --title "vX.Y.Z — <summary>" --notes-file <notes.md>
+```
+
+Verify after the CI deploy goes green: fetch `https://chardata.colourbill.com/profiletool/`, grab the `assets/index-*.js` it references, and confirm the bundle contains the new version string; optionally diff a live `wasm/*.wasm` sha256 against the committed `SHA256SUMS`.
 
 ## Launch protocol (cross-app hand-off)
 
