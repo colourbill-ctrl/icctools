@@ -29,12 +29,67 @@
       INBOUND bytes — keep it strict. script-src is deliberately NOT widened.
     -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.google-analytics.com; connect-src 'self' blob: https:; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'" />
-    <title>ICC Profile Tool</title>
+
+    <!-- Primary SEO -->
+    <title>ICC Profile Tool — Inspect, Validate &amp; Edit ICC Profiles Online</title>
+    <meta name="description" content="Free, browser-based ICC profile viewer, inspector and editor. Open any .icc or .icm profile to read its header and every tag, see tone curves, CLUTs and gamut, evaluate transforms, and round-trip edit — all locally, no upload." />
+    <meta name="author" content="William Li" />
+    <link rel="canonical" href="https://chardata.colourbill.com/profiletool/" />
+
+    <!-- Open Graph / Twitter. TODO: add a 1200x630 public/og-image.png, then
+         add og:image + switch twitter:card to summary_large_image. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="ICC Profile Tool" />
+    <meta property="og:title" content="ICC Profile Tool — Inspect, Validate &amp; Edit ICC Profiles Online" />
+    <meta property="og:description" content="Free, browser-based ICC profile viewer, inspector and editor. Read the header and every tag, view curves, CLUTs and gamut, and round-trip edit .icc / .icm profiles — locally, no upload." />
+    <meta property="og:url" content="https://chardata.colourbill.com/profiletool/" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="ICC Profile Tool — Inspect, Validate &amp; Edit ICC Profiles Online" />
+    <meta name="twitter:description" content="Free, browser-based ICC profile viewer, inspector and editor for .icc / .icm files. Runs locally — no upload." />
+
+    <!-- Structured data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "ICC Profile Tool",
+      "alternateName": "profiletool",
+      "applicationCategory": "MultimediaApplication",
+      "operatingSystem": "Any (modern web browser)",
+      "browserRequirements": "Requires JavaScript and WebAssembly",
+      "url": "https://chardata.colourbill.com/profiletool/",
+      "softwareHelp": "https://chardata.colourbill.com/profiletool/help.html",
+      "description": "Browser-based ICC profile inspector, validator and editor. View the profile header and every tag, tone-response curves, chromaticity, CLUT and gamut visualizations, evaluate device/PCS transforms, and round-trip edit .icc and .icm profiles. Runs entirely in the browser with a WebAssembly build of the ICC's IccProfLib; profiles are never uploaded.",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "author": { "@type": "Person", "name": "William Li" },
+      "publisher": { "@type": "Organization", "name": "XYZ Lab Consulting", "url": "https://www.colourbill.com/" }
+    }
+    </script>
+
     <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-WJN2XTVMG8"></script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Pre-hydration content: visible to crawlers and on first paint. main.jsx
+           uses createRoot().render(), which replaces #root when the app mounts. -->
+      <main style="max-width:780px;margin:0 auto;padding:48px 20px;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;line-height:1.65">
+        <h1 style="font-size:1.9rem;font-weight:600;margin:0 0 .5em">ICC Profile Tool — inspect, view &amp; edit ICC profiles in your browser</h1>
+        <p>A free, browser-based <strong>ICC profile viewer, inspector and editor</strong>. Open any <code>.icc</code> or <code>.icm</code> profile to browse its 128-byte header and full tag directory, view tone-response curves, chromaticity, CLUT and gamut visualizations, evaluate device-to-PCS transforms, and round-trip edit the profile as XML or JSON. Everything runs locally with a WebAssembly build of the ICC's IccProfLib — your profiles are never uploaded.</p>
+        <p>
+          <a href="%BASE_URL%help.html">Read the manual</a> &middot;
+          <a href="https://www.colourbill.com/icc-profile-tool/">About this tool</a> &middot;
+          <a href="https://github.com/colourbill-ctrl/profiletool">Source on GitHub</a>
+        </p>
+        <p><em>Loading the app&hellip;</em> If nothing appears, make sure JavaScript is enabled.</p>
+      </main>
+    </div>
+    <noscript>
+      ICC Profile Tool needs JavaScript and WebAssembly. It inspects and edits ICC
+      colour profiles (.icc / .icm) entirely in your browser. Read the manual at
+      /profiletool/help.html.
+    </noscript>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
