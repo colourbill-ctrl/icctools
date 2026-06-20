@@ -63,6 +63,43 @@ static constexpr std::size_t kMaxIccBytes = 256ULL * 1024 * 1024;
 
 namespace {
 
+// Strict UTF-8 validator (rejects overlongs, surrogates, > U+10FFFF, truncated
+// sequences). libxml2 auto-detects the input encoding (UTF-16/32 via BOM/NUL
+// pattern, EBCDIC via its 0x4C6FA794 signature, …) and then transcodes before
+// it ever sees the narrow-byte guard below — so a <!DOCTYPE could ride in under
+// a non-UTF-8 encoding. iccDEV emits UTF-8 only, so requiring valid UTF-8 has
+// zero legitimate false positives and forces the input into the byte form the
+// substring scan reliably covers. UTF-16/32 are *also* caught by the NUL check
+// (ASCII-range content has embedded NULs, which are valid UTF-8 bytes), but this
+// additionally closes EBCDIC, whose signature bytes (e.g. 0xA7) are lone UTF-8
+// continuation bytes and so fail here. Today embind marshals the editor string
+// to UTF-8 already, so this never trips on the current path; it hardens any
+// future bytes-based caller.
+bool isValidUtf8(const std::string& s) {
+  std::size_t i = 0, n = s.size();
+  while (i < n) {
+    unsigned char c = static_cast<unsigned char>(s[i]);
+    std::size_t extra;
+    unsigned int minCp, cp;
+    if (c < 0x80)               { ++i; continue; }
+    else if ((c & 0xE0) == 0xC0){ extra = 1; minCp = 0x80;    cp = c & 0x1F; }
+    else if ((c & 0xF0) == 0xE0){ extra = 2; minCp = 0x800;   cp = c & 0x0F; }
+    else if ((c & 0xF8) == 0xF0){ extra = 3; minCp = 0x10000; cp = c & 0x07; }
+    else return false;  // lone continuation byte (0x80–0xBF) or invalid lead
+    if (i + extra >= n) return false;  // truncated multi-byte sequence
+    for (std::size_t k = 1; k <= extra; ++k) {
+      unsigned char cc = static_cast<unsigned char>(s[i + k]);
+      if ((cc & 0xC0) != 0x80) return false;  // expected continuation byte
+      cp = (cp << 6) | (cc & 0x3F);
+    }
+    if (cp < minCp) return false;                    // overlong encoding
+    if (cp > 0x10FFFF) return false;                 // out of Unicode range
+    if (cp >= 0xD800 && cp <= 0xDFFF) return false;  // UTF-16 surrogate
+    i += extra + 1;
+  }
+  return true;
+}
+
 // IccLibXML calls libxml2 with XML_PARSE_HUGE | XML_PARSE_NONET upstream
 // (IccProfileXml.cpp:878). XML_PARSE_HUGE disables libxml2's
 // entity-expansion / nesting-depth / name-length caps, so a small crafted
@@ -192,6 +229,12 @@ static emscripten::val xmlToIccImpl(const std::string& xml) {
   if (xml.size() > kMaxXmlBytes) {
     throw std::runtime_error(
         "XML exceeds " + std::to_string(kMaxXmlBytes / (1024 * 1024)) + " MB limit");
+  }
+
+  // Reject non-UTF-8 input first — closes the encoding-detection bypass (EBCDIC
+  // etc.) that the narrow-byte entity guard below can't see. See isValidUtf8().
+  if (!isValidUtf8(xml)) {
+    throw std::runtime_error("XML must be UTF-8 encoded");
   }
 
   // Entity-bomb guard — see containsDoctypeOrEntity().

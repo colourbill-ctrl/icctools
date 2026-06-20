@@ -37,10 +37,26 @@ async function loadModule() {
   return modulePromise
 }
 
+// Same embind exception unwrap as xmlConverter.js / jsonConverter.js. The C++
+// wrappers now return {"error": …} for handled failures, but an embind throw can
+// still escape (e.g. OOM marshalling the return value); getExceptionMessage
+// turns the opaque CppException into a readable .what() string.
+function toError(mod, e) {
+  if (mod && mod.getExceptionMessage) {
+    try {
+      const msg = mod.getExceptionMessage(e)
+      return new Error(Array.isArray(msg) ? (msg[1] || msg[0]) : String(msg))
+    } catch { /* fall through */ }
+  }
+  return e instanceof Error ? e : new Error(String(e))
+}
+
 /** List every available visualization, in the same order iccProfileVisualize emits. */
 export async function enumerateVisualizations(bytes) {
   const mod = await loadModule()
-  const arr = JSON.parse(mod.enumerate(bytes))
+  let out
+  try { out = mod.enumerate(bytes) } catch (e) { throw toError(mod, e) }
+  const arr = JSON.parse(out)
   if (arr && arr.error) throw new Error(arr.error)
   return arr
 }
@@ -48,7 +64,9 @@ export async function enumerateVisualizations(bytes) {
 /** Render one graph by id → {title, description, xAxis, yAxis, series[]}. */
 export async function renderGraph(bytes, id) {
   const mod = await loadModule()
-  const g = JSON.parse(mod.renderGraph(bytes, id))
+  let out
+  try { out = mod.renderGraph(bytes, id) } catch (e) { throw toError(mod, e) }
+  const g = JSON.parse(out)
   if (g.error) throw new Error(g.error)
   return g
 }

@@ -12,6 +12,26 @@
 
 STAGED=$(git diff --cached --name-only)
 
+# Lock in the no-HTML-injection-sink invariant (security review F4): profiletool
+# renders untrusted profile-derived strings exclusively through React/SVG JSX
+# (auto-escaped), CodeMirror text nodes, and lib/richText.jsx. The CSP permits
+# off-origin fetch (connect-src https:), so any innerHTML sink would turn a DOM
+# bug into an exfiltration primitive. Reject any staged frontend/src code that
+# reintroduces one. (richText.jsx mentions these tokens in comments — exempt it.)
+SINK_HITS=$(echo "$STAGED" | grep -E '^frontend/src/.*\.(jsx?|tsx?)$' \
+    | grep -v '^frontend/src/lib/richText\.jsx$' \
+    | while read -r f; do
+        [ -f "$f" ] && grep -EnH 'dangerouslySetInnerHTML|\.innerHTML|\.outerHTML|insertAdjacentHTML|document\.write' "$f"
+      done)
+if [ -n "$SINK_HITS" ]; then
+    echo ""
+    echo "ERROR: HTML-injection sink introduced in frontend/src — security invariant (F4)."
+    echo "Render via JSX / CodeMirror / lib/richText.jsx instead of an innerHTML sink."
+    echo "$SINK_HITS"
+    echo "Commit aborted."
+    exit 1
+fi
+
 HELP_SOURCE_CHANGED=false
 if echo "$STAGED" | grep -qE '^(MANUAL\.md|scripts/generate-help\.js)$'; then
     HELP_SOURCE_CHANGED=true

@@ -28,6 +28,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <exception>
 #include <string>
 
 using json = nlohmann::json;
@@ -203,8 +204,11 @@ json warningsToJson(const std::vector<iccviz::Diagnostic>& diags) {
   return arr;
 }
 
-// ── exported functions ───────────────────────────────────────────────────────
-std::string enumerateProfile(const std::string& bytes) {
+// ── render implementations ───────────────────────────────────────────────────
+// These do the work; the exception-safe boundary wrappers further down (the
+// names embind actually binds) catch any unexpected throw and turn it into an
+// {"error": …} response.
+std::string enumerateProfileImpl(const std::string& bytes) {
   if (bytes.size() > kMaxIccBytes)
     return json{{"error", "Profile exceeds size limit"}}.dump();
   CIccProfile* pIcc = parseCached(bytes);
@@ -222,7 +226,7 @@ std::string enumerateProfile(const std::string& bytes) {
   return arr.dump();
 }
 
-std::string renderGraph(const std::string& bytes, const std::string& id) {
+std::string renderGraphImpl(const std::string& bytes, const std::string& id) {
   if (bytes.size() > kMaxIccBytes)
     return json{{"error", "Profile exceeds size limit"}}.dump();
   CIccProfile* pIcc = parseCached(bytes);
@@ -235,7 +239,7 @@ std::string renderGraph(const std::string& bytes, const std::string& id) {
   return jg.dump();
 }
 
-emscripten::val renderRaster(const std::string& bytes, const std::string& id) {
+emscripten::val renderRasterImpl(const std::string& bytes, const std::string& id) {
   emscripten::val obj = emscripten::val::object();
   if (bytes.size() > kMaxIccBytes) { obj.set("error", "Profile exceeds size limit"); return obj; }
   CIccProfile* pIcc = parseCached(bytes);
@@ -264,7 +268,7 @@ emscripten::val renderRaster(const std::string& bytes, const std::string& id) {
 
 // Describe a LUT tag's transform so the UI can lay out the right inputs:
 // source/destination spaces, channel counts + labels, and CLUT grid dims.
-std::string tagEvalInfo(const std::string& bytes, const std::string& tagSigStr) {
+std::string tagEvalInfoImpl(const std::string& bytes, const std::string& tagSigStr) {
   if (bytes.size() > kMaxIccBytes)
     return json{{"error", "Profile exceeds size limit"}}.dump();
   CIccProfile* pIcc = parseCached(bytes);
@@ -319,8 +323,8 @@ std::string tagEvalInfo(const std::string& bytes, const std::string& tagSigStr) 
 // as already in the internal normalized encoding (used by grid-point input, where
 // each value is a CLUT node position idx/(n-1)). Returns the destination point in
 // both normalized and human units.
-std::string evaluateTag(const std::string& bytes, const std::string& tagSigStr,
-                        const std::string& inputJson, bool inputIsNormalized) {
+std::string evaluateTagImpl(const std::string& bytes, const std::string& tagSigStr,
+                            const std::string& inputJson, bool inputIsNormalized) {
   if (bytes.size() > kMaxIccBytes)
     return json{{"error", "Profile exceeds size limit"}}.dump();
   CIccProfile* pIcc = parseCached(bytes);
@@ -349,7 +353,15 @@ std::string evaluateTag(const std::string& bytes, const std::string& tagSigStr,
   }
 
   std::vector<icFloatNumber> src(srcCh), dst(dstCh, 0.0f);
-  for (int i = 0; i < srcCh; ++i) src[i] = in[i].get<icFloatNumber>();
+  for (int i = 0; i < srcCh; ++i) {
+    // Guard every element: in[i].get<icFloatNumber>() on a non-number (a null
+    // from a stringified NaN/Infinity, or a wrong-typed value from any caller)
+    // throws nlohmann::type_error. Reject with a readable message instead of
+    // relying on the outer wrapper to catch it. (Same hazard json-wrapper.cpp
+    // documents for ParseJson's raw .get<T>() calls.)
+    if (!in[i].is_number()) { delete x; return json{{"error", "Input values must be numbers"}}.dump(); }
+    src[i] = in[i].get<icFloatNumber>();
+  }
   // Human → internal PCS encoding when the source side is the PCS (skipped when
   // the caller already supplies normalized values, e.g. grid-point input).
   if (!inputIsNormalized) {
@@ -375,6 +387,50 @@ std::string evaluateTag(const std::string& bytes, const std::string& tagSigStr,
   return json{{"outNorm", std::move(outNorm)}, {"outHuman", std::move(outHuman)},
               {"dstSpace", CIccInfo().GetColorSpaceSigName(dstSp)},
               {"dstIsPcs", isPcsSpace(dstSp)}}.dump();
+}
+
+// ── exception-safe boundary wrappers ─────────────────────────────────────────
+// The names embind binds. Every entry point converts an unexpected C++ throw
+// (std::bad_alloc on a crafted huge LUT, an nlohmann type_error, an IccProfLib
+// internal, …) into a readable {"error": …} response, so no profile can leave
+// the module raising an opaque embind exception at the JS boundary. Mirrors the
+// convention in wrapper.cpp / json-wrapper.cpp / xml-wrapper.cpp.
+std::string enumerateProfile(const std::string& bytes) {
+  try { return enumerateProfileImpl(bytes); }
+  catch (const std::exception& e) { return json{{"error", std::string("enumerate threw: ") + e.what()}}.dump(); }
+  catch (...) { return json{{"error", "enumerate threw an unknown exception"}}.dump(); }
+}
+
+std::string renderGraph(const std::string& bytes, const std::string& id) {
+  try { return renderGraphImpl(bytes, id); }
+  catch (const std::exception& e) { return json{{"error", std::string("renderGraph threw: ") + e.what()}}.dump(); }
+  catch (...) { return json{{"error", "renderGraph threw an unknown exception"}}.dump(); }
+}
+
+emscripten::val renderRaster(const std::string& bytes, const std::string& id) {
+  try { return renderRasterImpl(bytes, id); }
+  catch (const std::exception& e) {
+    emscripten::val obj = emscripten::val::object();
+    obj.set("error", std::string("renderRaster threw: ") + e.what());
+    return obj;
+  } catch (...) {
+    emscripten::val obj = emscripten::val::object();
+    obj.set("error", "renderRaster threw an unknown exception");
+    return obj;
+  }
+}
+
+std::string tagEvalInfo(const std::string& bytes, const std::string& tagSigStr) {
+  try { return tagEvalInfoImpl(bytes, tagSigStr); }
+  catch (const std::exception& e) { return json{{"error", std::string("tagEvalInfo threw: ") + e.what()}}.dump(); }
+  catch (...) { return json{{"error", "tagEvalInfo threw an unknown exception"}}.dump(); }
+}
+
+std::string evaluateTag(const std::string& bytes, const std::string& tagSigStr,
+                        const std::string& inputJson, bool inputIsNormalized) {
+  try { return evaluateTagImpl(bytes, tagSigStr, inputJson, inputIsNormalized); }
+  catch (const std::exception& e) { return json{{"error", std::string("evaluateTag threw: ") + e.what()}}.dump(); }
+  catch (...) { return json{{"error", "evaluateTag threw an unknown exception"}}.dump(); }
 }
 
 } // namespace

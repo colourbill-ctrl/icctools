@@ -145,7 +145,7 @@ emscripten::val makeUint8Array(const std::uint8_t* data, std::size_t size) {
 // ICC-input direction so neither entry point trusts the JS caller alone.
 static constexpr std::size_t kMaxIccBytes = 256ULL * 1024 * 1024;
 
-static std::string iccToJson(const std::string& bytes, int indent, bool sort) {
+static std::string iccToJsonImpl(const std::string& bytes, int indent, bool sort) {
   ensureFactoriesPushed();
 
   if (bytes.size() > kMaxIccBytes) {
@@ -185,7 +185,7 @@ static std::string iccToJson(const std::string& bytes, int indent, bool sort) {
   return jsonStr;
 }
 
-static emscripten::val jsonToIcc(const std::string& json) {
+static emscripten::val jsonToIccImpl(const std::string& json) {
   ensureFactoriesPushed();
 
   // Size gate before nlohmann does anything expensive.
@@ -252,6 +252,32 @@ static emscripten::val jsonToIcc(const std::string& json) {
     throw std::runtime_error("failed to read back saved profile");
   }
   return makeUint8Array(bytes.data(), bytes.size());
+}
+
+// ── exception-safe boundary wrappers ─────────────────────────────────────────
+// Convert any unexpected throw (std::bad_alloc serialising a crafted profile, an
+// IccLibJSON/nlohmann internal, …) into a std::runtime_error so embind surfaces
+// a readable .what() instead of an opaque CppException pointer. The *Impl bodies
+// already throw std::runtime_error for their handled failures — re-throw those
+// as-is. Mirrors xml-wrapper.cpp's iccToXml / xmlToIcc.
+static std::string iccToJson(const std::string& bytes, int indent, bool sort) {
+  try { return iccToJsonImpl(bytes, indent, sort); }
+  catch (const std::runtime_error&) { throw; }
+  catch (const std::exception& e) {
+    throw std::runtime_error(std::string("iccToJson threw: ") + e.what());
+  } catch (...) {
+    throw std::runtime_error("iccToJson threw an unknown exception");
+  }
+}
+
+static emscripten::val jsonToIcc(const std::string& json) {
+  try { return jsonToIccImpl(json); }
+  catch (const std::runtime_error&) { throw; }
+  catch (const std::exception& e) {
+    throw std::runtime_error(std::string("jsonToIcc threw: ") + e.what());
+  } catch (...) {
+    throw std::runtime_error("jsonToIcc threw an unknown exception");
+  }
 }
 
 EMSCRIPTEN_BINDINGS(profiletool_json) {
