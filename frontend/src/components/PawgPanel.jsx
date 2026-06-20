@@ -30,6 +30,15 @@ const FILTERS = [
   { cls: 'notrun', label: 'NOT RUN', count: (s) => s.notRun },
 ]
 
+// Verdict categories hidden by default — the panel opens focused on what needs
+// attention. `N/A` means a check was correctly determined not to apply to this
+// profile (e.g. the "[iccMAX profiles only]" calculator-cost check on a v2/v4
+// profile, or quality metrics with no applicable transform); `PASS` is the
+// expected, no-action case. Both are collapsed behind their chips — the counts
+// stay visible and one click reveals the rows. Actionable / diagnostic verdicts
+// (WARN/FAIL/GAP/NOT RUN) are never hidden.
+const DEFAULT_HIDDEN = new Set(['na', 'pass'])
+
 export default function PawgPanel({ bytes }) {
   const t = useT()
   const [status, setStatus] = useState('loading')   // loading | ready | error
@@ -67,13 +76,18 @@ export default function PawgPanel({ bytes }) {
   // A category counts as "active" only if it has items; a null filter means all
   // active categories are shown.
   const clsOf = (it) => (VERDICT[it.verdict] || { cls: 'na' }).cls
-  const isShown = (cls) => visible === null || visible.has(cls)
+  // Default view (visible === null) shows every active category except the
+  // DEFAULT_HIDDEN ones; once the user clicks any chip, `visible` is the
+  // explicit set of shown categories.
+  const isShown = (cls) => visible === null ? !DEFAULT_HIDDEN.has(cls) : visible.has(cls)
 
   const toggle = (cls) => {
     setVisible((prev) => {
-      // Materialise the current "all active categories" set on first click.
+      // Materialise the currently-shown set on first click (active categories
+      // minus the default-hidden ones), so toggling N/A on doesn't also
+      // resurrect anything the default view had collapsed.
       const base = prev === null
-        ? new Set(FILTERS.filter((f) => f.count(s) > 0).map((f) => f.cls))
+        ? new Set(FILTERS.filter((f) => f.count(s) > 0 && !DEFAULT_HIDDEN.has(f.cls)).map((f) => f.cls))
         : new Set(prev)
       if (base.has(cls)) base.delete(cls); else base.add(cls)
       return base
