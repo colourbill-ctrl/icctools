@@ -13,6 +13,7 @@
 #include "IccTag.h"
 #include "IccTagBasic.h"
 #include "IccTagLut.h"
+#include "IccTagComposite.h"   // CIccTagArray / CIccTagStruct (v5 named-colour arrays)
 #include "IccUtil.h"
 
 #include "spectralLocus.hpp"   // const spectralLocus2degree (internal linkage)
@@ -142,6 +143,14 @@ std::string describeCurve(CIccCurve* curve) {
       return "LookupTable[" + std::to_string(size) + "]";
     }
   }
+  // Other curve types are formatted by Describe(), which walks the curve's data.
+  // Run the curve's own Validate() first — the same validate-before-describe gate
+  // the rest of this module uses (see curveValidate) — so the formatter is never
+  // the first thing to touch unvalidated, possibly-malformed data (CWE-476). Per
+  // this module's design we do NOT drop a bad curve: the status is advisory and
+  // we still return its description.
+  std::string report;
+  curve->Validate(":curve", report, nullptr);
   std::string desc;
   curve->Describe(desc, 100);
   return desc;
@@ -156,10 +165,18 @@ Graph buildCurveGraph(CIccCurve* curve, const std::string& title) {
   g.xAxis = Axis{"Input", 0.0f, 1.0f, false};
   g.yAxis = Axis{"Output", 0.0f, 1.0f, false};
 
+  // Number of samples used to trace the curve. Default to a smooth 1000; for a
+  // sampled LUT curve use at least its own point count so we never under-sample
+  // it, and drop to the 2 endpoints when the curve is a pure identity.
   int steps = 1000;
   if (auto* tc = dynamic_cast<CIccTagCurve*>(curve))
     steps = std::max(1000, static_cast<int>(tc->GetSize()));
   if (curve->IsIdentity()) steps = 2;
+  // Defensive floor: steps drives the divisor below, so guarantee it is at least
+  // 1 even if the logic above is ever changed to allow a smaller value (avoids a
+  // divide-by-zero on i / (float)steps). Written as <= 0 so the non-zero
+  // invariant on the denominator is explicit (steps is int).
+  if (steps <= 0) steps = 1;
 
   Series data;
   data.id = "curve"; data.name = title; data.role = Role::Primary;
@@ -279,6 +296,19 @@ bool collectNamedColors(CIccProfile* pIcc, CIccTag* tag, const std::string& sigD
   icFloatNumber illum[3];
   pIcc->getNormIlluminantXYZ(illum);
 
+  // PCS basis for the colour conversion is the profile header PCS — matching
+  // iccProfileVisualize, which reads pIcc->m_Header.pcs (not the table's own PCS)
+  // and uses it for every named-colour type. Anything that isn't XYZ/Lab can't be
+  // plotted: icSigNoColorData (spectral / iccMAX) skips silently, while any other
+  // space records a warning.
+  icColorSpaceSignature pcs = pIcc->m_Header.pcs;
+  if (pcs != icSigXYZData && pcs != icSigLabData) {
+    if (pcs != icSigNoColorData)
+      return record(Severity::Warning,
+                    "WARNING - unknown pcs for colors: " + sigStr(static_cast<icTagSignature>(pcs)));
+    return false;
+  }
+
   if (type == icSigColorantTableType) {
     auto* table = dynamic_cast<CIccTagColorantTable*>(tag);
     if (!table)
@@ -286,10 +316,8 @@ bool collectNamedColors(CIccProfile* pIcc, CIccTag* tag, const std::string& sigD
     std::string path = ":colorantTable", report;
     if (table->Validate(path, report, nullptr) > icValidateWarning)
       return record(Severity::Warning, "WARNING - colorantTable failed validation:\n" + report);
-    icColorSpaceSignature pcs = pIcc->m_Header.pcs;
-    if (pcs != icSigXYZData && pcs != icSigLabData)
-      return record(Severity::Warning,
-                    "WARNING - unknown pcs for colors: " + sigStr(static_cast<icTagSignature>(pcs)));
+    // CIccTagColorantTable carries no PCS of its own; assume the profile PCS
+    // (already validated as XYZ/Lab above).
     icUInt32Number n = table->GetSize();
     for (icUInt32Number i = 0; i < n; ++i) {
       icColorantTableEntry* e = table->GetEntry(i);
@@ -317,8 +345,7 @@ bool collectNamedColors(CIccProfile* pIcc, CIccTag* tag, const std::string& sigD
     std::string path = ":namedColor2", report;
     if (table->Validate(path, report, nullptr) > icValidateWarning)
       return record(Severity::Warning, "WARNING - namedColorTable failed validation:\n" + report);
-    icColorSpaceSignature pcs = table->GetPCS();
-    if (pcs != icSigXYZData && pcs != icSigLabData)
+    if (pcs != table->GetPCS())
       return record(Severity::Warning,
                     "WARNING - bad pcs for namedColorTable: " + sigStr(static_cast<icTagSignature>(pcs)));
     icUInt32Number n = table->GetSize();
@@ -342,7 +369,132 @@ bool collectNamedColors(CIccProfile* pIcc, CIccTag* tag, const std::string& sigD
     return !out.empty();
   }
 
-  return false;  // tagArray (v5) not yet dissected
+  if (type == icSigTagArrayType) {   // v5 named-colour / colorant-info array
+    auto* array = dynamic_cast<CIccTagArray*>(tag);
+    if (!array)
+      return record(Severity::Error, "Skipping " + sigDesc + ": unable to convert named color array");
+    icArraySignature arrayType = array->GetTagArrayType();
+    if (arrayType != icSigColorantInfoArray && arrayType != icSigNamedColorArray)
+      return record(Severity::Warning,
+                    "WARNING - unknown color array type: " +
+                    sigStr(static_cast<icTagSignature>(arrayType)) + " for tag " + sigDesc);
+    std::string path = ":" + sigDesc, report;
+    if (array->Validate(path, report, nullptr) > icValidateWarning)
+      return record(Severity::Warning, "WARNING - named color array failed validation:\n" + report);
+
+    icUInt32Number items = array->GetSize();
+    for (icUInt32Number i = 0; i < items; ++i) {
+      CIccTag* thisItem = array->GetIndex(i);
+      if (!thisItem) continue;
+
+      icStructSignature structType = thisItem->GetTagStructType();
+      if (structType != icSigColorantInfoStruct &&
+          structType != icSigTintZeroStruct &&
+          structType != icSigNamedColorStruct) {
+        record(Severity::Warning, "Unknown named color struct " +
+               sigStr(static_cast<icTagSignature>(structType)) + " for tag " + sigDesc);
+        continue;
+      }
+      auto* structPtr = dynamic_cast<CIccTagStruct*>(thisItem);
+      if (!structPtr) continue;
+
+      // PCS data member — Float16/32/64 array of (L*a*b* or XYZ) triples.
+      CIccTag* pcsElem = structPtr->FindElem(icSigCinfPcsDataMbr);
+      if (!pcsElem) continue;
+      icTagTypeSignature pcsDataType = pcsElem->GetType();
+      if (pcsDataType != icSigFloat64ArrayType && pcsDataType != icSigFloat32ArrayType &&
+          pcsDataType != icSigFloat16ArrayType) {
+        record(Severity::Warning, "Unknown named color struct data type " +
+               sigStr(static_cast<icTagSignature>(pcsDataType)) + " for tag " + sigDesc);
+        continue;
+      }
+      auto* flt = dynamic_cast<CIccTagNumArray*>(pcsElem);
+      if (!flt) continue;
+
+      // TODO - can we easily convert spectra to PCS? Probably not without
+      //        specifying viewing conditions. (carried over from iccProfileVisualize)
+      std::vector<NamedLab> tempColors;
+      icUInt32Number colorCount = flt->GetNumValues() / 3;   // ignore any partial triple
+      for (icUInt32Number k = 0; k < colorCount; ++k) {
+        icFloatNumber v[3], lab[3];
+        flt->GetValues(v, k * 3, 3);
+        if (pcs == icSigXYZData) {
+          icXYZtoLab(lab, v, illum);
+        } else {
+          lab[0] = v[0]; lab[1] = v[1]; lab[2] = v[2];   // Lab directly coded as float
+        }
+        tempColors.push_back(NamedLab{"", lab[0], lab[1], lab[2]});
+      }
+
+      // Name member (optional): CinfName, falling back to CinfLocalizedName.
+      CIccTag* nameElem = structPtr->FindElem(icSigCinfNameMbr);
+      if (!nameElem)
+        nameElem = structPtr->FindElem(icSigCinfLocalizedNameMbr);
+      if (nameElem) {
+        std::string nameString;
+        switch (nameElem->GetType()) {
+          case icSigUtf8TextType:
+            if (auto* t = dynamic_cast<CIccTagUtf8Text*>(nameElem))
+              nameString = std::string((char*)t->GetText());
+            break;
+          case icSigUtf16TextType:
+            if (auto* t = dynamic_cast<CIccTagUtf16Text*>(nameElem)) {
+              std::string buffer;
+              nameString = std::string((char*)t->GetText(buffer));   // GetText converts to UTF8
+            }
+            break;
+          case icSigTextType:
+            if (auto* t = dynamic_cast<CIccTagText*>(nameElem))
+              nameString = std::string((char*)t->GetText());
+            break;
+          case icSigDictType:                       // sometimes used where MLU expected
+          case icSigMultiLocalizedUnicodeType:
+            if (auto* t = dynamic_cast<CIccTagMultiLocalizedUnicode*>(nameElem)) {
+              CIccLocalizedUnicode* u = t->Find(icLanguageCodeEnglish, icCountryCodeUSA);
+              if (u) u->GetText(nameString);
+            }
+            break;
+          default:
+            record(Severity::Warning, "Unknown named color struct name type " +
+                   sigStr(static_cast<icTagSignature>(nameElem->GetType())) + " for tag " + sigDesc);
+            break;
+        }
+        if (!nameString.empty())
+          for (auto& c : tempColors) c.name = nameString;
+      }
+
+      // Tint member (optional): per-colour tint % appended to the name.
+      CIccTag* tintElem = structPtr->FindElem(icSigNmclTintMbr);
+      if (tintElem) {
+        icTagTypeSignature tintType = tintElem->GetType();
+        if (tintType == icSigFloat64ArrayType || tintType == icSigFloat32ArrayType ||
+            tintType == icSigFloat16ArrayType) {
+          if (auto* tflt = dynamic_cast<CIccTagNumArray*>(tintElem)) {
+            icUInt32Number dataCount = tflt->GetNumValues();
+            if (dataCount <= tempColors.size()) {
+              for (icUInt32Number k = 0; k < dataCount; ++k) {
+                icFloatNumber tv;
+                tflt->GetValues(&tv, k, 1);
+                int percent = static_cast<int>(std::lround(tv * 100.0f));
+                tempColors[k].name += "(" + std::to_string(percent) + "%)";
+              }
+            }
+          }
+        } else {
+          record(Severity::Warning, "Unknown named color tint data type " +
+                 sigStr(static_cast<icTagSignature>(tintType)) + " for tag " + sigDesc);
+        }
+      }
+
+      out.insert(out.end(), tempColors.begin(), tempColors.end());
+    }
+
+    // Match iccProfileVisualize's "Color Array: <sig>" page label.
+    title = "Color Array";
+    return !out.empty();
+  }
+
+  return false;  // unknown / unsupported named-colour tag type
 }
 
 Graph buildNamedAB(const std::vector<NamedLab>& colors, const std::string& title) {
@@ -568,8 +720,26 @@ bool buildClutRaster(CIccTag* tag, const std::string& sigDesc, Raster& out,
   if (!clutData)
     return skip("CLUT data unavailable");
 
+  // Defense-in-depth bound for the input read below. The stride fix below makes
+  // the index correct for well-formed CLUTs (square and non-square), but the
+  // packing geometry is still derived from grid metadata rather than the actual
+  // sample array, so a malformed profile with inconsistent grid/channel counts
+  // could still compute an in-range-looking index past the data. Bound every read
+  // against the true element count — NumPoints() grid nodes x outputChannels
+  // samples per node — and treat any out-of-range node as 0 (the buffer is
+  // pre-zeroed) instead of reading out of bounds (CWE-125; issue #1548).
+  const size_t clutSampleCount =
+      static_cast<size_t>(clut->NumPoints()) * static_cast<size_t>(outputChannels);
+
+  // CLUT input strides. n010 is the per-row (x dimension) stride and MUST be
+  // tileHeight*outputChannels: x indexes the tileWidth dimension, and advancing
+  // one x-step skips a full column of tileHeight samples. Using tileWidth here
+  // (as an earlier revision did) only coincides for square CLUTs (tileWidth ==
+  // tileHeight); for a non-square CLUT it over-strides and walks the input index
+  // off the end of clutData — the root cause of the #1548 heap-overflow read.
+  // (Matches the reference iccProfileVisualize layout.)
   size_t n001 = static_cast<size_t>(tileWidth) * tileHeight * outputChannels;
-  size_t n010 = static_cast<size_t>(tileWidth) * outputChannels;
+  size_t n010 = static_cast<size_t>(tileHeight) * outputChannels;
   size_t n100 = static_cast<size_t>(outputChannels);
   if (inputChannels < 2) std::swap(n010, n100);
   size_t outTileStepV = static_cast<size_t>(imageWidth) * tileHeight * outputChannels;
@@ -583,6 +753,10 @@ bool buildClutRaster(CIccTag* tag, const std::string& sigDesc, Raster& out,
       for (int y = 0; y < tileHeight; ++y) {
         size_t in = z * n001 + x * n010 + (tileHeight - 1 - y) * n100;
         size_t o = z3 * outTileStepV + z2 * outTileStepH + y * outRowStep + x * outColStep;
+        // Skip nodes the packing geometry addresses beyond the real CLUT array;
+        // leaves the pre-zeroed output sample intact rather than over-reading (#1548).
+        if (in + static_cast<size_t>(outputChannels) > clutSampleCount)
+          continue;
         if (bytes == 4 || bytes == 8)
           for (int c = 0; c < outputChannels; ++c) buf32[o + c] = clutData[in + c];
         else if (bytes == 2)
@@ -612,9 +786,19 @@ void enumerateLutCurves(CIccProfile* pIcc, icTagSignature sig, CIccMBB* lut,
     {'B', lut->GetCurvesB(), inMtx ? inCh : outCh, inMtx},
     {'M', lut->GetCurvesM(), inMtx ? inCh : outCh, inMtx},
   };
+  // Upper bound on curve channels we will ever enumerate. ICC colour spaces top
+  // out at 15 device channels (nCLR) plus PCS, so 256 is comfortably generous
+  // while still capping a malformed LUT that reports a bogus channel count —
+  // preventing an unbounded loop / DoS (CWE-400/CWE-834).
+  const int kMaxVizChannels = 256;
   for (const Grp& grp : groups) {
     if (!grp.arr) continue;
-    for (int i = 0; i < grp.count; ++i) {
+    // grp.count comes straight from the profile's LUT channel count; clamp it
+    // before driving the loop so untrusted data cannot dictate the iteration
+    // count. The curve arrays are sized by the same channel count, so clamping
+    // down can never read past the array.
+    const int count = std::min(grp.count, kMaxVizChannels);
+    for (int i = 0; i < count; ++i) {
       CIccCurve* c = grp.arr[i];
       if (!c) continue;
       std::string ch = channelName(i, grp.useInput, inSp, outSp, inCh, outCh);
@@ -700,7 +884,8 @@ std::vector<Descriptor> Enumerate(CIccProfile* pIcc) {
   }
 
   static const icTagSignature kNamedSigs[] = {
-    icSigNamedColorTag, icSigNamedColor2Tag, icSigColorantTableTag, icSigColorantTableOutTag };
+    icSigNamedColorTag, icSigNamedColor2Tag, icSigColorantTableTag, icSigColorantTableOutTag,
+    icSigColorantInfoTag, icSigColorantInfoOutTag };   // last two are v5 tagArray
   for (icTagSignature sig : kNamedSigs) {
     CIccTag* t = pIcc->FindTag(sig);
     if (!t) continue;

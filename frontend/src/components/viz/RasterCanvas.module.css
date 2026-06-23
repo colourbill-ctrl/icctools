@@ -1,13 +1,76 @@
-.rasterWrap { display: inline-block; }
-.raster {
-  image-rendering: pixelated;
-  width: 256px;
-  max-width: 100%;
-  height: auto;
+.rasterWrap { display: inline-block; max-width: 100%; }
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.zbtn, .pct {
+  font: inherit;
+  line-height: 1;
+  border: 1px solid var(--border, #e2e6ee);
+  background: var(--card, #fff);
+  color: var(--text, #1a1a1a);
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 4px 8px;
+  user-select: none;
+}
+.zbtn {
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.pct {
+  height: 28px;
+  min-width: 56px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.zbtn:hover, .pct:hover { border-color: var(--accent, #4a90e2); }
+
+.viewport {
+  position: relative;
+  overflow: hidden;
+  max-width: 100%;   /* width/height set inline; never exceed the container */
   border: 1px solid var(--border, #e2e6ee);
   background:
     repeating-conic-gradient(#f3f4f7 0% 25%, #fff 0% 50%) 50% / 16px 16px;
+  cursor: grab;
+  touch-action: none;   /* let pointer-drag pan instead of scrolling the page */
 }
+.viewport:active { cursor: grabbing; }
+
+.raster {
+  position: absolute;
+  left: 0;
+  top: 0;
+  image-rendering: pixelated;
+  will-change: transform;
+}
+
+/* Bottom-right resize grip for the display box. */
+.grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  z-index: 2;
+  cursor: nwse-resize;
+  touch-action: none;
+  background:
+    linear-gradient(135deg,
+      transparent 0 46%, var(--muted, #889) 46% 54%,
+      transparent 54% 66%, var(--muted, #889) 66% 74%,
+      transparent 74%);
+}
+
 .rasterMeta { font-size: 11px; color: var(--muted, #889); margin-top: 4px; }
 
-:global(body.dark) .raster { border-color: #2c3442; }
+:global(body.dark) .viewport { border-color: #2c3442; }
+:global(body.dark) .zbtn, :global(body.dark) .pct { border-color: #2c3442; }
