@@ -124,9 +124,18 @@
   padding: 12px 22px;
   font-size: 11px;
   letter-spacing: 0.3px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .footer a { color: var(--accent); font-weight: normal; }
+
+/* Second footer line (attribution) sits a touch quieter than the slugline. */
+.poweredBy { opacity: 0.85; }
+
+/* Subscribe affordance in the slugline — keep the envelope + word on one line. */
+.subscribe { white-space: nowrap; }
 
 /* Footer build label. Mono so the digits line up nicely next to the slug
    and stay visually distinct from the slug text. Subdued colour by design —

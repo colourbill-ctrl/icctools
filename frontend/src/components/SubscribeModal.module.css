@@ -1,0 +1,215 @@
+/* Subscribe modal — visual port of chardata's #subscribe-dialog so users
+   moving between the two apps see the same signup card. Light by default with
+   explicit body.dark overrides (matches the rest of profiletool's theming). */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.dialog {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(92vw, 440px);
+  max-height: 92vh;
+  overflow: auto;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+  font-family: Arial, Helvetica, sans-serif;
+  color: #333;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e4e4e4;
+}
+
+.headTitle {
+  font-size: 15px;
+  font-weight: bold;
+  color: #333;
+}
+
+.closeX {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: #888;
+  cursor: pointer;
+  padding: 2px 8px;
+  line-height: 1;
+}
+
+.form {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.body {
+  font-size: 13px;
+  color: #555;
+  line-height: 1.45;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: #555;
+  font-weight: 600;
+}
+
+.field input {
+  font-size: 16px;
+  padding: 9px 11px;
+  border: 1px solid #bbb;
+  border-radius: 6px;
+  background: #fff;
+  color: #222;
+  font-family: inherit;
+}
+
+.optional {
+  font-weight: 400;
+  color: #888;
+}
+
+.honeypot {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: #444;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.consent input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.consent a {
+  color: #0066cc;
+  text-decoration: underline;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.btnSecondary {
+  padding: 9px 16px;
+  font-size: 14px;
+  background: #f4f5f7;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  color: #444;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.btnPrimary {
+  padding: 9px 18px;
+  font-size: 14px;
+  background: linear-gradient(to bottom, #4a90e2, #2c6cb6);
+  border: 1px solid #2c6cb6;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 600;
+}
+
+.btnPrimary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.status {
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+
+.statusError {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #f6c4c4;
+}
+
+.statusOk {
+  background: #f0f9ff;
+  color: #075985;
+  border: 1px solid #b9def0;
+}
+
+.thanks {
+  padding: 24px 22px;
+  text-align: center;
+}
+
+.thanksCheck {
+  font-size: 34px;
+  color: #4a90e2;
+  margin-bottom: 8px;
+}
+
+.thanksTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.thanksBody {
+  font-size: 13px;
+  color: #666;
+  line-height: 1.5;
+  margin: 0 0 18px 0;
+}
+
+/* Dark theme — profiletool flips body.dark; recolour the card to match. */
+:global(body.dark) .dialog { background: #1f2226; color: #e6e6e6; }
+:global(body.dark) .head { border-bottom-color: #2f3338; }
+:global(body.dark) .headTitle { color: #f1f1f1; }
+:global(body.dark) .closeX { color: #cfcfcf; }
+:global(body.dark) .body,
+:global(body.dark) .field { color: #cfcfcf; }
+:global(body.dark) .field input {
+  background: #2a2d32;
+  color: #e6e6e6;
+  border-color: #444;
+}
+:global(body.dark) .consent { color: #cfcfcf; }
+:global(body.dark) .btnSecondary {
+  background: #2a2d32;
+  color: #e6e6e6;
+  border-color: #444;
+}
+:global(body.dark) .thanksTitle { color: #f1f1f1; }
+:global(body.dark) .thanksBody { color: #9a9a9a; }

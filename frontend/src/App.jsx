@@ -3,6 +3,7 @@ import DropZone from './components/DropZone.jsx'
 import LoadButton from './components/LoadButton.jsx'
 import ProfileViewer from './components/ProfileViewer.jsx'
 import SettingsBlade from './components/SettingsBlade.jsx'
+import SubscribeModal from './components/SubscribeModal.jsx'
 import { validateProfile, validateBytes, preloadValidator } from './lib/validator.js'
 import { bestEffortParse } from './lib/bestEffortParse.js'
 import { computeChangedTagIds } from './lib/tagDiff.js'
@@ -36,12 +37,29 @@ const MAX_ICC_BYTES = 256 * 1024 * 1024
  * that will be broken by any future format-specific need.
  */
 
+// Render the "powered by" footer line, turning the `{lib}` placeholder in the
+// localized template into a link to iccDEV (IccProfLib's home). Word order
+// varies by locale (e.g. ja puts the library name first), so the link position
+// follows the placeholder rather than being hard-coded.
+function renderPoweredBy(template) {
+  const [before, after] = String(template).split('{lib}')
+  return (
+    <>
+      {before}
+      <a href="https://github.com/InternationalColorConsortium/iccDEV"
+         target="_blank" rel="noreferrer">IccProfLib</a>
+      {after}
+    </>
+  )
+}
+
 export default function App() {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState(null)
   // Resolved from a `#…&tab=` launch fragment; seeds ProfileViewer's open tab.
   const [initialTab, setInitialTab] = useState(null)
+  const [subscribeOpen, setSubscribeOpen] = useState(false)
   const t = useT()
 
   useEffect(() => { preloadValidator() }, [])
@@ -365,11 +383,21 @@ export default function App() {
         </main>
 
         <footer className={styles.footer}>
-          {t('footer')}
-          {' · '}
-          <span className={styles.version}>v{__APP_VERSION__}</span>
+          <div className={styles.copyright}>
+            {t('product_name')}{' '}
+            <span className={styles.version}>v{__APP_VERSION__}</span>. &copy; William Li 2026.{' '}
+            <a href="https://colourbill.com/" target="_blank" rel="noopener">colourbill.com</a>{' '}
+            <a href="#" className={styles.subscribe} title={t('sub_link_title')}
+               onClick={(e) => { e.preventDefault(); setSubscribeOpen(true) }}>
+              <span aria-hidden="true">&#9993;</span> {t('sub_link')}
+            </a>
+          </div>
+          <div className={styles.poweredBy}>
+            {renderPoweredBy(t('powered_by'))}
+          </div>
         </footer>
       </div>
+      <SubscribeModal open={subscribeOpen} onClose={() => setSubscribeOpen(false)} />
       <SettingsBlade />
     </>
   )
