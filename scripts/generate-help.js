@@ -1,3 +1,4 @@
+// (c) William Li 2026
 'use strict';
 // scripts/generate-help.js
 // Run with: node scripts/generate-help.js

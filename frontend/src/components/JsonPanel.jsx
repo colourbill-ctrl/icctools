@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useState } from 'react'
 import { json as jsonLang } from '@codemirror/lang-json'
 import TextEditor from './TextEditor.jsx'

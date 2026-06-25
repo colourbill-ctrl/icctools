@@ -1,3 +1,4 @@
+# (c) William Li 2026
 name: Deploy to Lightsail
 
 # Auto-deploy on push to main, and on any v* tag push. The tag trigger

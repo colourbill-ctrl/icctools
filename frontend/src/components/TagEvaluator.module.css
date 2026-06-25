@@ -1,3 +1,4 @@
+/* (c) William Li 2026 */
 .evaluator { font-size: 12px; }
 
 .loading, .error { color: var(--muted, #889); font-size: 12px; padding: 6px 0; }

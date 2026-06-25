@@ -1,3 +1,4 @@
+// (c) William Li 2026
 /**
  * Render a trusted i18n string that contains a tiny, fixed markup subset
  * (`<em>…</em>` and `<code>…</code>`) as React nodes — without

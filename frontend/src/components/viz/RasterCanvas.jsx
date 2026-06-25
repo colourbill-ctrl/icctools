@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import styles from './RasterCanvas.module.css'
 

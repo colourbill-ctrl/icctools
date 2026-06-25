@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useState } from 'react'
 import { xml as xmlLang } from '@codemirror/lang-xml'
 import TextEditor from './TextEditor.jsx'

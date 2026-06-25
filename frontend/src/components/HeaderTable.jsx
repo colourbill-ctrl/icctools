@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useT } from '../i18n.jsx'
 import styles from './HeaderTable.module.css'
 

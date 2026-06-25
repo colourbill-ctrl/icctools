@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useEffect, useMemo, useState } from 'react'
 import { tagEvalInfo, evaluateTag } from '../lib/vizPlot.js'
 import { useT } from '../i18n.jsx'

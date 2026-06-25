@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import DropZone from './components/DropZone.jsx'
 import LoadButton from './components/LoadButton.jsx'

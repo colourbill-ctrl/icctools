@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useEffect, useMemo, useState } from 'react'
 import { pawgReport } from '../lib/pawg.js'
 import { useT } from '../i18n.jsx'

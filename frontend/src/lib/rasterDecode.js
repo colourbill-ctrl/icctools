@@ -1,3 +1,4 @@
+// (c) William Li 2026
 /**
  * Decode an IccVizModel raster (raw ICC-normalized samples, NOT a TIFF
  * container) to canvas-paintable RGBA.

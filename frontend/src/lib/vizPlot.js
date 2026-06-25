@@ -1,3 +1,4 @@
+// (c) William Li 2026
 /**
  * Lazy-loaded data-first visualization client (iccplot.mjs/wasm, built from
  * validator-wasm/plot-wrapper.cpp + IccVizModel.cpp).

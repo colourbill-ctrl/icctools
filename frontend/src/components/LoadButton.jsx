@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useRef } from 'react'
 import { useT } from '../i18n.jsx'
 

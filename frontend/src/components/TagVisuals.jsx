@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useEffect, useState } from 'react'
 import { renderGraph, renderRaster, tagEvalInfo } from '../lib/vizPlot.js'
 import { decodeRaster } from '../lib/rasterDecode.js'

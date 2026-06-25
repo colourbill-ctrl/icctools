@@ -1,5 +1,14 @@
 # IccProfilePlot / IccVizModel — data-first profile visualization
 
+> **Attribution / origin.** This code is **not** original work by William Li.
+> The visualization code here is predominantly **Chris Cox's**, originating in
+> **IccDev** (the ICC's DemoIccMAX / iccDEV source tree) and carrying the ICC
+> Software License (see the per-file headers). William Li's contribution to date
+> has been a **refactor** of that code into the data-first `IccVizModel` shape;
+> further additions are ongoing. Accordingly the files in this directory are
+> **not** stamped with a `(c) William Li` copyright — the upstream ICC copyright
+> and license stand.
+
 `IccVizModel` turns an ICC profile's plottable content into **data** instead of a
 finished picture. Where [`IccProfileVisualize`](../IccProfileVisualize) renders a
 profile into a single PDF (tone curves, chromaticity, named-colour scatters) plus

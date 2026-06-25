@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import createIccModule from './build/iccprofiledump.mjs';
 import { readFileSync } from 'node:fs';
 

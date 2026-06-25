@@ -1,3 +1,5 @@
+<!-- (c) William Li 2026 -->
+
 # Test corpus — malformed ICC profiles
 
 A small set of deliberately malformed/edge-case ICC profiles used to smoke-test

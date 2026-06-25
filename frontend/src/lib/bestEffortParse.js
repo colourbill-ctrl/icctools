@@ -1,3 +1,4 @@
+// (c) William Li 2026
 /**
  * Best-effort structural parse of an ICC profile the WASM validator could not
  * fully load.

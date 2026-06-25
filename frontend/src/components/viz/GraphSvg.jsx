@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useMemo, useState } from 'react'
 import { colorFor } from './colors.js'
 import styles from './GraphSvg.module.css'

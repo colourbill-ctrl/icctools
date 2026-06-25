@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { Fragment, useEffect, useState } from 'react'
 import { describeTag } from '../lib/validator.js'
 import { enumerateVisualizations } from '../lib/vizPlot.js'

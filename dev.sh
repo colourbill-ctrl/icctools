@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# (c) William Li 2026
 # Start the profiletool frontend. Validation runs client-side via WASM, so no
 # backend service is required.
 #

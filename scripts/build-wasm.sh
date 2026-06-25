@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# (c) William Li 2026
 # Build the WASM validator, copy the artifacts into the frontend, and refresh
 # the committed checksums so anyone can verify public/wasm/* matches
 # validator-wasm/wrapper.cpp + the pinned IccProfLib sources.

@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useRef, useState } from 'react'
 import { useT } from '../i18n.jsx'
 import styles from './DropZone.module.css'

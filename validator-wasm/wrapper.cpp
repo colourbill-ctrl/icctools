@@ -1,3 +1,4 @@
+// (c) William Li 2026
 /**
  * iccprofiledump WASM wrapper.
  *

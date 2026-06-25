@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLang, LANG_OPTIONS, systemLangNative } from '../i18n.jsx'
 import { useNumberBase } from '../numberBase.jsx'

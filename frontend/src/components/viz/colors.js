@@ -1,3 +1,4 @@
+// (c) William Li 2026
 // Shared colour logic for the data-first visualizations (graphs + LUT curves).
 
 // Series colour for chromaticity / scatter / TRC plots. `role: 'hint'` series

@@ -1,4 +1,5 @@
 #!/bin/bash
+# (c) William Li 2026
 # Pre-commit hook for profiletool:
 #   1. Regenerate frontend/public/help.html when MANUAL.md or
 #      scripts/generate-help.js is staged.

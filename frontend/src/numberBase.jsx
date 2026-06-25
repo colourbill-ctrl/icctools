@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 
 // Numeric display base for the tag directory's offset / size / pad columns.

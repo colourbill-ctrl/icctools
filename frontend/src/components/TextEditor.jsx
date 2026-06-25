@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useEffect, useRef } from 'react'
 import { EditorView, basicSetup } from 'codemirror'
 import { EditorState } from '@codemirror/state'

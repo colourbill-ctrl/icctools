@@ -1,3 +1,4 @@
+// (c) William Li 2026
 import { useState } from 'react'
 import styles from './Collapsible.module.css'
 

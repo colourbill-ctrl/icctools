@@ -1,3 +1,5 @@
+<!-- (c) William Li 2026 -->
+
 # ICC Profile Tool — User Manual
 
 **ICC Profile Tool** (profiletool) is a browser-based tool for inspecting, validating, and round-trip editing **ICC.1** colour profiles. It runs entirely in your browser — no upload, no install — using a WebAssembly build of [iccDEV](https://github.com/InternationalColorConsortium/iccDEV), the ICC's official demo implementation of IccProfLib.
