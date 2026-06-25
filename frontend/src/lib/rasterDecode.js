@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 /**
  * Decode an IccVizModel raster (raw ICC-normalized samples, NOT a TIFF
  * container) to canvas-paintable RGBA.

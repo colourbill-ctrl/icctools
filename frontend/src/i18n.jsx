@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 
 // I18N dictionary. EN is the source-of-truth; missing keys fall back to EN.

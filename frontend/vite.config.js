@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'node:fs'

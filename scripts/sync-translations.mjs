@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 // scripts/sync-translations.mjs
 // Regenerate translations/Eng-*.xlsx from the I18N dict in
 // frontend/src/i18n.jsx. Each xlsx has English in column 0 and the target

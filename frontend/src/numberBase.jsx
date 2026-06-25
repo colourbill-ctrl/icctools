@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 
 // Numeric display base for the tag directory's offset / size / pad columns.

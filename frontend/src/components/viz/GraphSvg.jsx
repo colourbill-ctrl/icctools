@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 import { useMemo, useState } from 'react'
 import { colorFor } from './colors.js'
 import styles from './GraphSvg.module.css'

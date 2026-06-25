@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 import { useT } from '../i18n.jsx'
 import styles from './HeaderTable.module.css'
 

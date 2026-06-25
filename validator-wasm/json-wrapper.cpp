@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 /**
  * iccjson WASM wrapper — lazy-loaded third module (sibling of iccxml).
  *

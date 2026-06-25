@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 import { lazy, Suspense, useEffect, useState } from 'react'
 import HeaderTable from './HeaderTable.jsx'
 import TagTable from './TagTable.jsx'

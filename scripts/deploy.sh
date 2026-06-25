@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# (c) William Li 2026
+# (c) 2026 William Li
 # Rebuild and deploy profiletool to chardata.colourbill.com/profiletool/.
 #
 # Usage:

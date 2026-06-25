@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import styles from './RasterCanvas.module.css'
 

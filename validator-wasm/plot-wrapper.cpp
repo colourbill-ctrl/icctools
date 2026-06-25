@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 /**
  * iccplot WASM wrapper — the data-first visualization module.
  *

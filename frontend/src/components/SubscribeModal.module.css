@@ -1,4 +1,4 @@
-/* (c) William Li 2026 */
+/* (c) 2026 William Li */
 /* Subscribe modal — visual port of chardata's #subscribe-dialog so users
    moving between the two apps see the same signup card. Light by default with
    explicit body.dark overrides (matches the rest of profiletool's theming). */

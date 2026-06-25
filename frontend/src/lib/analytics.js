@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 // Google Analytics (GA4) bootstrap.
 //
 // profiletool reports to the shared CharData GA4 property (G-WJN2XTVMG8) — it

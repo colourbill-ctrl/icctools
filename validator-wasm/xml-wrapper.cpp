@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 /**
  * iccxml WASM wrapper — lazy-loaded second module.
  *

@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 import { useState } from 'react'
 import { json as jsonLang } from '@codemirror/lang-json'
 import TextEditor from './TextEditor.jsx'

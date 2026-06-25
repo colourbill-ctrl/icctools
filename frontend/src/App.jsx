@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import DropZone from './components/DropZone.jsx'
 import LoadButton from './components/LoadButton.jsx'
@@ -386,7 +386,7 @@ export default function App() {
         <footer className={styles.footer}>
           <div className={styles.copyright}>
             {t('product_name')}{' '}
-            <span className={styles.version}>v{__APP_VERSION__}</span>. &copy; William Li 2026.{' '}
+            <span className={styles.version}>v{__APP_VERSION__}</span>. &copy; 2026 William Li.{' '}
             <a href="https://colourbill.com/" target="_blank" rel="noopener">colourbill.com</a>{' '}
             <a href="#" className={styles.subscribe} title={t('sub_link_title')}
                onClick={(e) => { e.preventDefault(); setSubscribeOpen(true) }}>

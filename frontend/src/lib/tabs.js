@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 // Stable tab identity + URL-fragment aliases.
 //
 // `key` is the internal identifier used throughout the UI (it is ProfileViewer's

@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 'use strict';
 // scripts/generate-help.js
 // Run with: node scripts/generate-help.js

@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 // Headless driver for profiletool's WASM validator. Runs every *.icc in the
 // corpus through validateProfile() and prints the level/status/messages — the
 // same JSON the browser UI renders, minus the chrome.

@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 // Headless driver for the iccplot (IccVizModel) WASM engine. For every *.icc in
 // the given paths it runs enumerate() + renders every descriptor it lists, the
 // same calls the Profile Plot UI makes — minus the chrome.

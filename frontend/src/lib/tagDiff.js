@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 /**
  * Byte-level tag diff between the originally-loaded profile and the current
  * (possibly round-tripped) one.

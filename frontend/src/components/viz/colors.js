@@ -1,4 +1,4 @@
-// (c) William Li 2026
+// (c) 2026 William Li
 // Shared colour logic for the data-first visualizations (graphs + LUT curves).
 
 // Series colour for chromaticity / scatter / TRC plots. `role: 'hint'` series
