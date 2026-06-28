@@ -18,7 +18,7 @@ const PHOTO = { WHITE_IS_ZERO: 0, BLACK_IS_ZERO: 1, RGB: 2, CMYK: 5, CIELAB: 8 }
 const PHOTO_NAME = { 0: 'Grayscale', 1: 'Grayscale', 2: 'RGB', 5: 'CMYK', 8: 'CIELAB' }
 
 // Lab(D50) → sRGB, Bradford-adapted D50→D65. (Mirror of tiff.js.)
-function labToRgb(L, a, b) {
+export function labToRgb(L, a, b) {
   const fy = (L + 16) / 116
   const fx = fy + a / 500
   const fz = fy - b / 200

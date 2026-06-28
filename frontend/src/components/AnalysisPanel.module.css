@@ -1,0 +1,263 @@
+/* (c) 2026 William Li */
+.panel {
+  padding: 4px 2px 8px;
+}
+
+.panelTitle {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--text);
+}
+
+.intro {
+  margin: 0 0 18px;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* ── analysis section ─────────────────────────────────────────────────────── */
+.section {
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.heading {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--text);
+}
+
+.sectionIntro {
+  margin: 0 0 14px;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.notApplicable {
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+/* ── controls (table selector + epsilon slider) ───────────────────────────── */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 22px;
+  margin-bottom: 14px;
+}
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.control span strong { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+.control select {
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.control input[type='range'] {
+  accent-color: var(--accent);
+  width: 180px;
+}
+
+.summary {
+  font-size: 0.84rem;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+/* ── per-channel subplot grid ─────────────────────────────────────────────── */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 20px;
+  margin-bottom: 20px;
+}
+
+.cell {
+  min-width: 0;
+}
+
+.cellHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.cellCount {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  flex: none;
+}
+
+/* ── per-channel reversal plot (custom SVG) ───────────────────────────────── */
+.plot {
+  width: 100%;
+  max-width: 560px;
+  height: auto;
+  display: block;
+}
+
+.frame { fill: none; stroke: var(--border); stroke-width: 1; }
+.plotGrid { stroke: var(--border-soft); stroke-width: 0.5; }
+.axisVal { font-size: 9px; fill: var(--text-muted); }
+.axisLabel { font-size: 11px; fill: var(--text-muted); }
+.seg { opacity: 0.78; }
+.seg:hover { opacity: 1; }
+.cleanMark { font-size: 30px; fill: var(--valid); opacity: 0.55; }
+
+/* ── ranked reversal table ────────────────────────────────────────────────── */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: top;
+}
+
+.table th {
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.num { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--font-mono); font-size: 0.78rem; white-space: nowrap; }
+
+/* Channel cell stays on one line; the ink-vector cell WRAPS so wide nCLR vectors
+   (e.g. 7-colour) expand the row gracefully instead of overflowing the table. */
+.chanCell { white-space: nowrap; }
+.inkCell {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.tableSection { margin-top: 4px; }
+
+/* ── colour filter chips ──────────────────────────────────────────────────── */
+.filterRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.filterChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.76rem;
+  font-family: var(--font-sans);
+  color: var(--text);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  cursor: pointer;
+}
+.filterChip:hover { border-color: var(--accent); }
+.filterActive {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  font-weight: 600;
+}
+
+.showMore {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  color: var(--accent);
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.showMore:hover { text-decoration: underline; }
+
+/* ── status / loading / diagnostics ───────────────────────────────────────── */
+.status,
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 4px;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: analysis-spin 0.7s linear infinite;
+  flex: none;
+}
+
+@keyframes analysis-spin { to { transform: rotate(360deg); } }
+
+.errorBanner,
+.itemError {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--error-tint);
+  color: var(--error);
+  font-size: 0.85rem;
+}
+
+.itemWarning {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--surface-tint);
+  color: var(--warning);
+  font-size: 0.8rem;
+  margin-bottom: 12px;
+}
+
+/* Single column on narrow viewports (matches the app's 720px reflow). */
+@media (max-width: 720px) {
+  .grid { grid-template-columns: 1fr; }
+  .mono { white-space: normal; }
+}

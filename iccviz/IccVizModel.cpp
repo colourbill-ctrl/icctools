@@ -14,6 +14,7 @@
 #include "IccTagBasic.h"
 #include "IccTagLut.h"
 #include "IccTagComposite.h"   // CIccTagArray / CIccTagStruct (v5 named-colour arrays)
+#include "IccCmm.h"            // CIccXform / CIccApplyXform — device→PCS sampling for InkReversalL
 #include "IccUtil.h"
 
 #include "spectralLocus.hpp"   // const spectralLocus2degree (internal linkage)
@@ -822,6 +823,443 @@ CIccCurve* lutCurveFor(CIccMBB* lut, char grp, int idx) {
   return arr ? arr[idx] : nullptr;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// L* tone-reversal analysis  (Kind::InkReversalL)
+//
+// ALGORITHM — originally due to Harold Boll; reimplemented here independently
+// (no code copied).
+//
+// Premise: a well-behaved colour device gets DARKER as you add more of any one
+// ink. Hold every channel but one fixed, raise the remaining ("varying") channel
+// from low to high, and the resulting L* should never RISE. When a higher ink
+// level comes back LIGHTER than a lower one, the device/profile has an "L*
+// reversal" — a non-monotonic tone response that flags a measurement error, an
+// ink-limit / trapping artefact, a mislabelled patch, or a badly-built CLUT.
+//
+// The profile's own device→PCS LUT (an AToB tag) stands in for measured
+// characterization data: sampled on a regular device lattice it yields
+// (ink vector → L*) just like a chart of printed patches. For a chosen varying
+// channel `vary`, over every fixed combination of the OTHER channels' lattice
+// nodes (a "context"):
+//
+//     evaluate the ramp  L[0..m-1]  along `vary` (device 0→1), then
+//     compare ALL PAIRS  (a < b):  if L[b] > L[a] the ramp reversed,
+//     and emit the segment (x[a],L[a]) → (x[b],L[b]) carrying ΔL* = L[b]−L[a].
+//
+// ALL PAIRS (not just adjacent nodes) is deliberate — a gradual drift that only
+// surfaces across several steps is still a reversal, and one anomalous node is
+// caught against every cleaner node on either side. The per-channel ΔL* threshold
+// ("epsilon" in the original) is NOT applied here: every upward pair is emitted
+// with its ΔL* in Vertex.aux, and the CALLER filters by epsilon (and ranks the
+// worst offenders) at draw time. That keeps this a pure data producer and makes
+// the UI's epsilon control instant. One graph is produced per varying channel.
+//
+// DATA-INGESTION GUARDS — every value below is profile-controlled and therefore
+// untrusted; each is bounded before it drives a loop or an allocation, in the
+// same defensive spirit as buildClutRaster():
+//   · tag present, a CIccMBB, carries a CLUT, device input + Lab/XYZ PCS output;
+//   · input/output channel counts in (0, kMaxInkChannels]; `vary` in range;
+//   · every axis grid count clamped to [2, kMaxAxisSamples];
+//   · the lattice-node product accumulated in 64-bit and rejected on overflow or
+//     above kMaxLatticeNodes (a malformed grid cannot drive an unbounded
+//     evaluation — CWE-400 / CWE-834);
+//   · the transform build / Begin / apply are each checked; a non-finite L* is
+//     dropped rather than allowed to poison the comparisons;
+//   · the emitted-segment count is capped (largest ΔL* kept), so even a
+//     pathologically reversed profile yields bounded output.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Bounds for the untrusted profile geometry (see guards above).
+const int kMaxInkChannels            = 15;        // ICC device spaces top out at 15 (nCLR)
+const int kMaxAxisSamples            = 64;        // per-channel lattice resolution clamp
+const std::uint64_t kMaxLatticeNodes = 2000000;   // total device-lattice node ceiling
+const int kMaxReversalSegments       = 512;       // emitted reversals per channel (largest ΔL*)
+const float kReversalFloor           = 1e-4f;     // ignore sub-noise upticks (real filter = caller epsilon)
+
+bool isPcsSpace(icColorSpaceSignature s) {
+  return s == icSigLabData || s == icSigXYZData;
+}
+
+// AToB rendering intent is implicit in the tag (…0 perceptual, …2 saturation,
+// else relative colorimetric) — mirrors the choice the CLUT-image / evaluator
+// paths make, so the sampled colours match what that table actually renders.
+icRenderingIntent reversalIntentForSig(icTagSignature sig) {
+  switch (sig) {
+    case icSigAToB0Tag: return icPerceptual;
+    case icSigAToB2Tag: return icSaturation;
+    default:            return icRelativeColorimetric;
+  }
+}
+
+// One transform output (internal PCS encoding) → human L*. Returns NaN for an
+// unsupported PCS or a non-finite result, which the scan then drops (guarding the
+// pairwise comparison from NaN poisoning).
+float pcsToLstar(const icFloatNumber* dst, int outCh, icColorSpaceSignature pcs) {
+  if (outCh < 3) return kNaN;
+  icFloatNumber v[3] = { dst[0], dst[1], dst[2] };
+  if (pcs == icSigLabData) {
+    icLabFromPcs(v);                  // PCS-encoded Lab → human L*a*b*
+    return std::isfinite(v[0]) ? static_cast<float>(v[0]) : kNaN;
+  }
+  if (pcs == icSigXYZData) {
+    icXyzFromPcs(v);                  // PCS-encoded XYZ → human XYZ (D50)
+    icFloatNumber lab[3] = { 0, 0, 0 };
+    icXYZtoLab(lab, v, nullptr);      // nullptr white → D50 default
+    return std::isfinite(lab[0]) ? static_cast<float>(lab[0]) : kNaN;
+  }
+  return kNaN;
+}
+
+// Format a full device ink vector (node indices → device 0..1) as "c0,c1,…" with
+// 3 decimals. Carried on each segment's low vertex so the caller can rebuild the
+// reversal table (ink vector / L* / ΔL*) without re-sampling the profile.
+std::string encodeInkVector(const int* idx, const int* n, int inCh) {
+  std::string s;
+  char buf[32];
+  for (int c = 0; c < inCh; ++c) {
+    float v = (n[c] > 1) ? static_cast<float>(idx[c]) / static_cast<float>(n[c] - 1) : 0.0f;
+    std::snprintf(buf, sizeof buf, "%.3f", v);
+    if (c) s += ',';
+    s += buf;
+  }
+  return s;
+}
+
+// Clamped analysis-lattice node count for a CLUT, using the SAME per-axis
+// clamping buildReversalGraph applies. Returns false if any grid axis is invalid
+// or the product would exceed kMaxLatticeNodes — i.e. the tag is not analysable.
+// Enumerate() uses this so it never advertises a reversal graph RenderGraph would
+// then refuse (the UI degrades to "not applicable" rather than erroring).
+bool reversalLatticeFits(CIccCLUT* clut, int inCh) {
+  std::uint64_t nodes = 1;
+  for (int i = 0; i < inCh; ++i) {
+    int g = clut->GridPoint(i);
+    if (g <= 0) return false;
+    if (g < 2) g = 2;
+    if (g > kMaxAxisSamples) g = kMaxAxisSamples;
+    nodes *= static_cast<std::uint64_t>(g);
+    if (nodes > kMaxLatticeNodes) return false;
+  }
+  return true;
+}
+
+// Build the L* reversal graph for one varying channel of one device→PCS LUT tag.
+// Returns false (with a diagnostic) on any hard guard failure; true otherwise
+// (possibly with a Warning when the reversal count was capped).
+bool buildReversalGraph(CIccProfile* pIcc, icTagSignature sig, int vary,
+                        Graph& out, std::vector<Diagnostic>* diag) {
+  const std::string sigDesc = sigStr(sig);
+  auto skip = [&](const std::string& why) -> bool {
+    if (diag) diag->push_back({Severity::Error, "Skipping " + sigDesc + " L* reversal: " + why});
+    return false;
+  };
+
+  // ── guard: a CLUT-bearing device→PCS LUT ──
+  CIccTag* tag = pIcc ? pIcc->FindTag(sig) : nullptr;
+  auto* lut = dynamic_cast<CIccMBB*>(tag);
+  if (!lut)  return skip("tag is not a LUT");
+  CIccCLUT* clut = lut->GetCLUT();
+  if (!clut) return skip("LUT carries no CLUT lattice");
+  clut->Begin();                                  // initialise grid metadata
+
+  const int inCh  = lut->InputChannels();
+  const int outCh = lut->OutputChannels();
+  if (inCh <= 0 || outCh <= 0)   return skip("invalid channel count");
+  if (inCh > kMaxInkChannels)    return skip("too many input channels");
+  if (vary < 0 || vary >= inCh)  return skip("varying channel out of range");
+
+  const icColorSpaceSignature inSp  = lut->GetCsInput();
+  const icColorSpaceSignature outSp = lut->GetCsOutput();
+  if (isPcsSpace(inSp))                                 return skip("LUT input is not a device space");
+  if (outSp != icSigLabData && outSp != icSigXYZData)  return skip("LUT output is not a PCS");
+
+  // ── guard: per-axis sample counts + total lattice size ──
+  // GridPoint(i) is a uint8 (≤255) but still profile-controlled: clamp every axis
+  // to [2, kMaxAxisSamples] and accumulate the product in 64-bit, rejecting an
+  // overflow or oversized lattice before evaluating a single node.
+  int n[16] = { 0 };
+  std::uint64_t totalNodes = 1;
+  for (int i = 0; i < inCh; ++i) {
+    int g = clut->GridPoint(i);
+    if (g <= 0) return skip("invalid CLUT grid");
+    if (g < 2)  g = 2;                              // need ≥2 nodes to form a ramp
+    if (g > kMaxAxisSamples) g = kMaxAxisSamples;
+    n[i] = g;
+    totalNodes *= static_cast<std::uint64_t>(g);
+    if (totalNodes > kMaxLatticeNodes) return skip("device lattice too large to analyse");
+  }
+
+  // ── build the device→PCS transform once; reuse the apply for every node ──
+  CIccXform* xform = CIccXform::Create(pIcc, tag, /*bInput=*/true,
+                                       reversalIntentForSig(sig), icInterpLinear);
+  if (!xform) return skip("could not build device→PCS transform");
+  xform->ShareProfile();                           // we do NOT own pIcc
+  if (xform->Begin() != icCmmStatOk) { delete xform; return skip("transform Begin failed"); }
+  icStatusCMM st = icCmmStatOk;
+  CIccApplyXform* apply = xform->GetNewApply(st);
+  if (!apply || st != icCmmStatOk) { delete apply; delete xform; return skip("transform apply init failed"); }
+
+  std::vector<icFloatNumber> src(inCh, 0.0f), dst(outCh, 0.0f);
+  int idx[16] = { 0 };
+  // Evaluate L* at the current context with `vary` set to node varyIdx.
+  auto evalLstar = [&](int varyIdx) -> float {
+    idx[vary] = varyIdx;
+    for (int c = 0; c < inCh; ++c) {
+      float v = (n[c] > 1) ? static_cast<float>(idx[c]) / static_cast<float>(n[c] - 1) : 0.0f;
+      src[c] = static_cast<icFloatNumber>(v < 0 ? 0 : (v > 1 ? 1 : v));   // clamp — defensive
+    }
+    xform->Apply(apply, dst.data(), src.data());
+    return pcsToLstar(dst.data(), outCh, outSp);
+  };
+
+  // Collected reversals, bounded to the largest kMaxReversalSegments by ΔL*. Each
+  // stores its context as a linear index (decoded back to ink values at emit
+  // time) plus the low/high node indices along `vary`.
+  struct Rev { std::uint32_t ctx; int a, b; float Llo, Lhi, dL; };
+  auto byDLdesc = [](const Rev& x, const Rev& y) { return x.dL > y.dL; };
+  std::vector<Rev> revs;
+  std::uint64_t totalRevs = 0;
+
+  std::vector<float> ramp(n[vary]);
+  for (int c = 0; c < inCh; ++c) idx[c] = 0;
+  std::uint32_t ctx = 0;
+
+  // Odometer over the inCh−1 context dims (every channel except `vary`); the
+  // lowest such channel advances fastest, which is the radix order the ctx→ink
+  // decode below relies on. `ctx` counts completed contexts and therefore equals
+  // the mixed-radix encoding of the current odometer position.
+  for (;;) {
+    for (int j = 0; j < n[vary]; ++j) ramp[j] = evalLstar(j);
+    idx[vary] = 0;
+
+    // ALL-PAIRS reversal test on this ramp (skip pairs touching a non-finite L*).
+    for (int a = 0; a < n[vary]; ++a) {
+      if (!std::isfinite(ramp[a])) continue;
+      for (int b = a + 1; b < n[vary]; ++b) {
+        if (!std::isfinite(ramp[b])) continue;
+        float dL = ramp[b] - ramp[a];
+        if (dL <= kReversalFloor) continue;        // monotone / sub-noise → fine
+        ++totalRevs;
+        revs.push_back({ ctx, a, b, ramp[a], ramp[b], dL });
+        if (revs.size() >= static_cast<size_t>(2 * kMaxReversalSegments)) {
+          // Bound memory: keep only the largest ΔL* so far, then continue.
+          std::nth_element(revs.begin(), revs.begin() + kMaxReversalSegments, revs.end(), byDLdesc);
+          revs.resize(kMaxReversalSegments);
+        }
+      }
+    }
+
+    // Advance the odometer over the context dims (skipping `vary`); stop once
+    // every context dim has wrapped back to 0.
+    int c = 0;
+    for (; c < inCh; ++c) {
+      if (c == vary) continue;
+      if (++idx[c] < n[c]) break;
+      idx[c] = 0;
+    }
+    if (c >= inCh) break;
+    ++ctx;
+  }
+
+  delete apply;
+  delete xform;
+
+  std::sort(revs.begin(), revs.end(), byDLdesc);
+  if (revs.size() > static_cast<size_t>(kMaxReversalSegments))
+    revs.resize(kMaxReversalSegments);
+
+  // ── assemble the graph: each reversal is a 2-vertex polyline (low→high), the
+  // low vertex labelled with the full ink vector and the high vertex carrying
+  // ΔL* as aux, so the caller can both plot the segments and rebuild the table. ──
+  const std::string chName = channelName(vary, /*useInput=*/true, inSp, outSp, inCh, outCh);
+  out = Graph{};
+  out.title = sigDesc + " — L* reversal vs " + chName;
+  out.description = (outSp == icSigLabData) ? std::string() : std::string("L* via XYZ→Lab (D50)");
+  out.xAxis.label = chName + " (device 0–1)"; out.xAxis.minHint = 0.0f; out.xAxis.maxHint = 1.0f;
+  out.yAxis.label = "L*";                     out.yAxis.minHint = 0.0f; out.yAxis.maxHint = 100.0f;
+
+  int work[16];
+  int segId = 0;
+  for (const Rev& r : revs) {
+    // Decode the context linear index back to per-channel nodes (same radix order
+    // as the odometer), then place `vary` at its low node to recover the full ink
+    // vector at the segment's low end.
+    std::uint64_t t = r.ctx;
+    for (int c = 0; c < inCh; ++c) {
+      if (c == vary) continue;
+      work[c] = static_cast<int>(t % static_cast<std::uint64_t>(n[c]));
+      t /= static_cast<std::uint64_t>(n[c]);
+    }
+    work[vary] = r.a;
+    const float xLo = static_cast<float>(r.a) / static_cast<float>(n[vary] - 1);
+    const float xHi = static_cast<float>(r.b) / static_cast<float>(n[vary] - 1);
+
+    Series s;
+    s.id = "rev" + std::to_string(segId++);
+    s.role = Role::Primary;
+    s.shape = Shape::Polyline;
+    s.auxKind = "dLstar";
+    Vertex v0; v0.x = xLo; v0.y = r.Llo; v0.label = encodeInkVector(work, n, inCh);
+    Vertex v1; v1.x = xHi; v1.y = r.Lhi; v1.aux = r.dL;
+    s.verts.push_back(std::move(v0));
+    s.verts.push_back(std::move(v1));
+    out.series.push_back(std::move(s));
+  }
+
+  // Non-fatal: report when the reversal count was capped. Emitted as a
+  // locale-agnostic structured marker — "reversal:capped:<total>:<shown>" — that
+  // the receiver parses and renders through its own i18n, instead of a fixed
+  // English sentence the UI couldn't translate.
+  if (diag && totalRevs > revs.size()) {
+    char msg[64];
+    std::snprintf(msg, sizeof msg, "reversal:capped:%llu:%zu",
+                  static_cast<unsigned long long>(totalRevs), revs.size());
+    diag->push_back({Severity::Warning, std::string(msg)});
+  }
+  return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Neutral Axis Inking  (Kind::NeutralAxisInking)
+//
+// Sweeps the neutral axis (a*=b*=0) from white (L*=100) to black (L*=0) through a
+// B2A table (PCS→device) and records how much of each device colorant the profile
+// lays down — the classic GCR / neutral-build curve. One graph, one polyline per
+// device channel: x = L* (100→0), y = colorant % (0–100). The receiver styles and
+// plots it (and restricts the analysis to output profiles).
+// ─────────────────────────────────────────────────────────────────────────────
+const int kNeutralSamples = 101;
+
+// The rendering intent a B2A tag embodies (…0 perceptual, …2 saturation, else
+// relative colorimetric) — used only as the Create() hint; the specific tag wins.
+icRenderingIntent neutralIntentForSig(icTagSignature sig) {
+  switch (sig) {
+    case icSigBToA0Tag: return icPerceptual;
+    case icSigBToA2Tag: return icSaturation;
+    default:            return icRelativeColorimetric;
+  }
+}
+
+// Neutral CIELAB (L*,0,0) → the B2A source-space input, written into src[] in the
+// internal PCS encoding the xform expects (Lab directly, or D50 XYZ for XYZ PCS).
+void neutralSrc(float L, icColorSpaceSignature pcs, icFloatNumber* src) {
+  if (pcs == icSigXYZData) {
+    float f = (L + 16.0f) / 116.0f;
+    float g = (f * f * f > 0.008856f) ? f * f * f : (f - 16.0f / 116.0f) / 7.787f;
+    src[0] = 0.9642f * g; src[1] = 1.0f * g; src[2] = 0.8249f * g;   // D50 human XYZ
+    icXyzToPcs(src);
+  } else {
+    src[0] = L; src[1] = 0.0f; src[2] = 0.0f;                        // human L*a*b*
+    icLabToPcs(src);
+  }
+}
+
+bool buildNeutralAxisGraph(CIccProfile* pIcc, icTagSignature sig, Graph& out,
+                           std::vector<Diagnostic>* diag) {
+  const std::string sigDesc = sigStr(sig);
+  auto skip = [&](const std::string& why) -> bool {
+    if (diag) diag->push_back({Severity::Error, "Skipping " + sigDesc + " neutral inking: " + why});
+    return false;
+  };
+
+  // ── guard: a CLUT-bearing PCS→device LUT ──
+  CIccTag* tag = pIcc ? pIcc->FindTag(sig) : nullptr;
+  auto* lut = dynamic_cast<CIccMBB*>(tag);
+  if (!lut)  return skip("tag is not a LUT");
+  if (!lut->GetCLUT()) return skip("LUT carries no CLUT lattice");
+
+  const icColorSpaceSignature inSp  = lut->GetCsInput();
+  const icColorSpaceSignature outSp = lut->GetCsOutput();
+  if (!isPcsSpace(inSp)) return skip("LUT input is not a PCS");        // B2A: PCS in
+  if (isPcsSpace(outSp)) return skip("LUT output is not a device space");
+  const int inCh  = lut->InputChannels();    // 3 (PCS)
+  const int outCh = lut->OutputChannels();   // N device colorants
+  if (inCh < 3 || outCh <= 0 || outCh > kMaxInkChannels) return skip("invalid channel count");
+
+  CIccXform* xform = CIccXform::Create(pIcc, tag, /*bInput=*/false,
+                                       neutralIntentForSig(sig), icInterpLinear);
+  if (!xform) return skip("could not build PCS→device transform");
+  xform->ShareProfile();
+  if (xform->Begin() != icCmmStatOk) { delete xform; return skip("transform Begin failed"); }
+  icStatusCMM st = icCmmStatOk;
+  CIccApplyXform* apply = xform->GetNewApply(st);
+  if (!apply || st != icCmmStatOk) { delete apply; delete xform; return skip("transform apply init failed"); }
+
+  // One series per device colorant; sample L* from 100 (white) down to 0 (black).
+  std::vector<Series> series(outCh);
+  for (int c = 0; c < outCh; ++c) {
+    series[c].id = "ch" + std::to_string(c);
+    series[c].name = channelName(c, /*useInput=*/false, inSp, outSp, inCh, outCh);
+    series[c].role = Role::Primary;
+    series[c].shape = Shape::Polyline;
+    series[c].verts.reserve(kNeutralSamples);
+  }
+
+  std::vector<icFloatNumber> src(inCh, 0.0f), dst(outCh, 0.0f);
+  for (int i = 0; i < kNeutralSamples; ++i) {
+    float L = 100.0f * (1.0f - static_cast<float>(i) / static_cast<float>(kNeutralSamples - 1));
+    neutralSrc(L, inSp, src.data());
+    xform->Apply(apply, dst.data(), src.data());
+    for (int c = 0; c < outCh; ++c) {
+      float v = static_cast<float>(dst[c]) * 100.0f;                  // device 0..1 → %
+      if (!std::isfinite(v)) v = 0.0f;
+      Vertex vert; vert.x = L; vert.y = v;
+      series[c].verts.push_back(vert);
+    }
+  }
+
+  delete apply;
+  delete xform;
+
+  // Per-colorant display hint: the Lab of 100% of each ink alone, obtained from
+  // the forward A2B1 (relative-colorimetric) table. Carried in series.colorHint as
+  // a "L,a,b" string — DATA only; the receiver does the Lab→sRGB display mapping
+  // (this model never produces display colours). Absent/odd A2B1 → no hint, and the
+  // receiver falls back to its channel palette.
+  if (CIccTag* fwdTag = pIcc->FindTag(icSigAToB1Tag)) {
+    if (CIccXform* fwd = CIccXform::Create(pIcc, fwdTag, /*bInput=*/true,
+                                           icRelativeColorimetric, icInterpLinear)) {
+      fwd->ShareProfile();
+      icStatusCMM fst = icCmmStatOk;
+      CIccApplyXform* fapply = (fwd->Begin() == icCmmStatOk) ? fwd->GetNewApply(fst) : nullptr;
+      if (fapply && fst == icCmmStatOk &&
+          fwd->GetNumSrcSamples() == outCh && fwd->GetNumDstSamples() >= 3) {
+        const icColorSpaceSignature fOut = fwd->GetDstSpace();
+        std::vector<icFloatNumber> usrc(outCh, 0.0f), udst(fwd->GetNumDstSamples(), 0.0f);
+        for (int c = 0; c < outCh; ++c) {
+          for (int k = 0; k < outCh; ++k) usrc[k] = (k == c) ? 1.0f : 0.0f;   // 100% of ink c
+          fwd->Apply(fapply, udst.data(), usrc.data());
+          icFloatNumber lab[3] = { udst[0], udst[1], udst[2] };
+          if (fOut == icSigLabData) {
+            icLabFromPcs(lab);
+          } else if (fOut == icSigXYZData) {
+            icXyzFromPcs(lab);
+            icFloatNumber l2[3] = { 0, 0, 0 };
+            icXYZtoLab(l2, lab, nullptr);
+            lab[0] = l2[0]; lab[1] = l2[1]; lab[2] = l2[2];
+          } else {
+            continue;
+          }
+          if (!std::isfinite(lab[0])) continue;
+          char buf[48];
+          std::snprintf(buf, sizeof buf, "%.1f,%.1f,%.1f",
+                        static_cast<double>(lab[0]), static_cast<double>(lab[1]), static_cast<double>(lab[2]));
+          series[c].colorHint = buf;
+        }
+      }
+      delete fapply;
+      delete fwd;
+    }
+  }
+
+  out = Graph{};
+  out.title = sigDesc + " — neutral axis inking";
+  out.xAxis.label = "L*";    out.xAxis.minHint = 100.0f; out.xAxis.maxHint = 0.0f;  // 100 left → 0 right
+  out.yAxis.label = "% ink"; out.yAxis.minHint = 0.0f;   out.yAxis.maxHint = 100.0f;
+  for (auto& s : series) out.series.push_back(std::move(s));
+  return true;
+}
+
 } // namespace
 
 // ── public API ───────────────────────────────────────────────────────────────
@@ -883,6 +1321,59 @@ std::vector<Descriptor> Enumerate(CIccProfile* pIcc) {
     }
   }
 
+  // L* tone-reversal scans (Kind::InkReversalL) — one graph per device-input
+  // channel of each device→PCS AToB LUT that carries a CLUT. BToA/gamut/preview
+  // are PCS-input, so "increase one ink" is undefined and they are excluded here.
+  static const icTagSignature kReversalSigs[] = {
+    icSigAToB0Tag, icSigAToB1Tag, icSigAToB2Tag };
+  for (icTagSignature sig : kReversalSigs) {
+    auto* lut = dynamic_cast<CIccMBB*>(pIcc->FindTag(sig));
+    if (!lut) continue;
+    CIccCLUT* clut = lut->GetCLUT();
+    if (!clut) continue;                                            // need a lattice
+    clut->Begin();                                                  // init grid metadata
+    const icColorSpaceSignature inSp  = lut->GetCsInput();
+    const icColorSpaceSignature outSp = lut->GetCsOutput();
+    if (isPcsSpace(inSp)) continue;                                 // device input only
+    if (outSp != icSigLabData && outSp != icSigXYZData) continue;   // PCS output only
+    const int inCh  = lut->InputChannels();
+    const int outCh = lut->OutputChannels();
+    if (inCh <= 0 || inCh > kMaxInkChannels) continue;
+    // Don't advertise a reversal graph RenderGraph couldn't build: skip the tag if
+    // its device lattice would exceed the node cap. Over-cap profiles then show
+    // "not applicable" gracefully instead of erroring when the tab renders.
+    if (!reversalLatticeFits(clut, inCh)) continue;
+    for (int ch = 0; ch < inCh; ++ch) {
+      Descriptor d;
+      d.kind = Kind::InkReversalL; d.output = Output::Graph;
+      d.id = "reversal:" + sigStr(sig) + ":" + std::to_string(ch);
+      d.title = sigStr(sig) + " L* reversal: " +
+                channelName(ch, /*useInput=*/true, inSp, outSp, inCh, outCh);
+      d.tag = sig; d.idx = ch;
+      out.push_back(std::move(d));
+    }
+  }
+
+  // Neutral-axis inking (Kind::NeutralAxisInking) — one graph per B2A table that
+  // maps PCS→device. (The receiver restricts these to output profiles and adds the
+  // rendering-intent labels; structurally we just need a PCS-in / device-out CLUT.)
+  static const icTagSignature kNeutralSigs[] = {
+    icSigBToA0Tag, icSigBToA1Tag, icSigBToA2Tag };
+  for (icTagSignature sig : kNeutralSigs) {
+    auto* lut = dynamic_cast<CIccMBB*>(pIcc->FindTag(sig));
+    if (!lut || !lut->GetCLUT()) continue;
+    const icColorSpaceSignature inSp  = lut->GetCsInput();
+    const icColorSpaceSignature outSp = lut->GetCsOutput();
+    if (!isPcsSpace(inSp)) continue;                                 // PCS input
+    if (isPcsSpace(outSp)) continue;                                 // device output
+    const int outCh = lut->OutputChannels();
+    if (outCh <= 0 || outCh > kMaxInkChannels) continue;
+    Descriptor d;
+    d.kind = Kind::NeutralAxisInking; d.output = Output::Graph;
+    d.id = "neutral:" + sigStr(sig); d.title = sigStr(sig) + " neutral axis inking"; d.tag = sig;
+    out.push_back(std::move(d));
+  }
+
   static const icTagSignature kNamedSigs[] = {
     icSigNamedColorTag, icSigNamedColor2Tag, icSigColorantTableTag, icSigColorantTableOutTag,
     icSigColorantInfoTag, icSigColorantInfoOutTag };   // last two are v5 tagArray
@@ -940,6 +1431,24 @@ GraphResult RenderGraph(CIccProfile* pIcc, const std::string& id, Verbosity v) {
         // than a generic string — restoring outputNamedColors' diagnostics.
         res.error = res.diagnostics.empty() ? "no colours" : res.diagnostics.back().message;
       }
+      emitDiagnostics(res.diagnostics, v);
+      return res;
+    }
+    if (d.kind == Kind::InkReversalL) {
+      if (buildReversalGraph(pIcc, d.tag, d.idx, res.graph, &res.diagnostics))
+        res.ok = true;
+      else
+        res.error = res.diagnostics.empty() ? "no reversal data"
+                                            : res.diagnostics.back().message;
+      emitDiagnostics(res.diagnostics, v);
+      return res;
+    }
+    if (d.kind == Kind::NeutralAxisInking) {
+      if (buildNeutralAxisGraph(pIcc, d.tag, res.graph, &res.diagnostics))
+        res.ok = true;
+      else
+        res.error = res.diagnostics.empty() ? "no neutral data"
+                                            : res.diagnostics.back().message;
       emitDiagnostics(res.diagnostics, v);
       return res;
     }

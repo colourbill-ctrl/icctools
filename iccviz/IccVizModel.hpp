@@ -108,6 +108,8 @@ enum class Kind : unsigned int {
   NamedColorsXY  = 4,   // named/colorant colours on the xy chart
   ClutImage      = 5,   // nD CLUT lattice flattened to an image (raster)
   // SmoothnessLattice = 6,  // reserved — deferred to a later phase
+  InkReversalL   = 7,   // per-channel L* tone-reversal scan of a device→PCS LUT (graph)
+  NeutralAxisInking = 8,// device colorant along the neutral axis from a PCS→device LUT (graph)
 };
 
 enum class Output : unsigned char { Graph, Raster };

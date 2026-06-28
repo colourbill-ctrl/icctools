@@ -13,6 +13,9 @@ const JsonPanel      = lazy(() => import('./JsonPanel.jsx'))
 // The Validation tab renders the Profile Assessment WG report; its WASM module
 // loads on tab open. (Tab key is still 'PAWG' — see lib/tabs.js.)
 const PawgPanel      = lazy(() => import('./PawgPanel.jsx'))
+// The Analysis tab hosts whole-profile quality analyses (L* tone reversal, …),
+// driven by the iccviz IccVizModel WASM module — loaded on tab open.
+const AnalysisPanel  = lazy(() => import('./AnalysisPanel.jsx'))
 
 // Tab identity + URL-fragment aliases live in lib/tabs.js (TAB_DEFS).
 
@@ -60,7 +63,7 @@ export default function ProfileViewer({
   // read-only and can't be round-tripped, so hide the XML/JSON converter tabs
   // and fall back to a visible tab if the active one is now hidden.
   const tabs = data.partial
-    ? TABS.filter(tab => tab.key !== 'XML' && tab.key !== 'JSON' && tab.key !== 'PAWG')
+    ? TABS.filter(tab => tab.key !== 'XML' && tab.key !== 'JSON' && tab.key !== 'PAWG' && tab.key !== 'Analysis')
     : TABS
   const active = tabs.some(tab => tab.key === activeTab) ? activeTab : 'Header'
 
@@ -110,6 +113,11 @@ export default function ProfileViewer({
         {active === 'PAWG'       && (
           <Suspense fallback={<div className={styles.loading}>{t('loading_pawg') || 'Loading Profile Assessment WG report…'}</div>}>
             <PawgPanel bytes={bytes} />
+          </Suspense>
+        )}
+        {active === 'Analysis'   && (
+          <Suspense fallback={<div className={styles.loading}>{t('analysis_loading') || 'Analysing…'}</div>}>
+            <AnalysisPanel bytes={bytes} profileClass={data.header?.['Profile Class']} />
           </Suspense>
         )}
         {active === 'XML'        && (

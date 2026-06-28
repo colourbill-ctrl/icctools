@@ -16,7 +16,7 @@ import styles from './GraphSvg.module.css'
  *               chromaticity plot shown under the white-point / colorant tags.
  *   legend    — optional: show an interactive legend with per-series on/off toggles.
  */
-export default function GraphSvg({ graph, highlight, legend = false }) {
+export default function GraphSvg({ graph, highlight, legend = false, resizable = false }) {
   const [hidden, setHidden] = useState(() => new Set())
   const hl = highlight ? String(highlight).toLowerCase() : null
 
@@ -85,6 +85,7 @@ export default function GraphSvg({ graph, highlight, legend = false }) {
 
   return (
     <div className={styles.wrap}>
+      <div className={resizable ? styles.resizable : undefined}>
       <svg className={styles.svg} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={graph.title}>
         <rect x={m.l} y={m.t} width={pw} height={ph} className={styles.frame} />
         {grid}
@@ -99,6 +100,7 @@ export default function GraphSvg({ graph, highlight, legend = false }) {
           <text x={m.l + pw} y={m.t + 12} className={styles.descLabel} textAnchor="end">{graph.description}</text>
         )}
       </svg>
+      </div>
       {legendSeries.length > 0 && (
         <div className={styles.legend}>
           {legendSeries.map((s) => {

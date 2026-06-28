@@ -20,6 +20,7 @@ export const TAB_DEFS = [
   { key: 'Header',      i18n: 'tab_header',      long: 'Header',     short: 'HEADER' },
   { key: 'Tags',        i18n: 'tab_tags',        long: 'Tags',       short: 'TAGS'   },
   { key: 'PAWG',        i18n: 'tab_validation',  long: 'Validation', short: 'VAL', extra: ['PAWG'] },
+  { key: 'Analysis',    i18n: 'tab_analysis',    long: 'Analysis',   short: 'ANALYSIS' },
   { key: 'XML',         i18n: 'tab_xml',         long: 'XML',        short: 'XML'    },
   { key: 'JSON',        i18n: 'tab_json',        long: 'JSON',       short: 'JSON'   },
 ]
