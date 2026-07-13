@@ -15,47 +15,64 @@ const OUT  = path.join(__dirname, '../frontend/public/help.html');
 
 // ── SVG primitives ────────────────────────────────────────────────────────────
 
+// Every selector is scoped under `.diag` (the class on each diagram's <svg>).
+// An SVG <style> inside an HTML document is NOT shadow-scoped — its rules apply
+// document-wide — so a bare `text{…}` or `:root{--tx…}` here would leak onto the
+// app's own SVG graphs (viz/GraphSvg.jsx) when the guide panel injects these
+// diagrams into the live DOM. Scoping to `.diag` also confines the CSS variables
+// to the diagram subtree.
+//
+// Theming: the SAME help.html serves two contexts, so the diagrams follow both.
+//   • In profiletool (GuidePanel), the app owns the theme — it sets `body.dark`
+//     for dark and `body.light` for light (see SettingsBlade::applyTheme). So
+//     `body.dark .diag` drives dark, and `body:not(.light)` guards the OS media
+//     query so an app set to *light* on a dark-OS machine stays light.
+//   • Standalone help.html has no body theme class, so the media query falls
+//     through to the OS preference (`body:not(.light)` always matches there).
+const DIAG_DARK = `
+    --bg:#1a1c1f; --pnl:#22262e; --pnl-bd:#3a4048; --hd:#252930; --hd-bd:#3a4048;
+    --sec:#1e2128; --sec-bd:#333a44; --btn:#252930; --btn-bd:#444;
+    --act:#2a5a90; --act2:#1f4070; --red:#8a2a2a; --amber:#7a5418; --green:#1f6a3a;
+    --tx:#c8cdd4; --tx2:#9aa0a8; --tx3:#555e6a; --txW:#c8cdd4; --txA:#7ab8e8;
+    --ln:#2e3440;`;
 const SHARED_STYLE = `
 <style>
-:root {
+.diag {
   --bg:#f0f2f5; --pnl:#fff; --pnl-bd:#ccd6e0; --hd:#e8edf2; --hd-bd:#c0ccd8;
   --sec:#f5f6f8; --sec-bd:#dde4ec; --btn:#e8edf2; --btn-bd:#bbb;
   --act:#4a90e2; --act2:#2a6ab5; --red:#e24a4a; --amber:#d49930; --green:#27ae60;
   --tx:#333; --tx2:#555; --tx3:#888; --txW:#fff; --txA:#1a5a8a;
   --ln:#dde4ec;
 }
+body.dark .diag {${DIAG_DARK}
+}
 @media(prefers-color-scheme:dark){
-  :root{
-    --bg:#1a1c1f; --pnl:#22262e; --pnl-bd:#3a4048; --hd:#252930; --hd-bd:#3a4048;
-    --sec:#1e2128; --sec-bd:#333a44; --btn:#252930; --btn-bd:#444;
-    --act:#2a5a90; --act2:#1f4070; --red:#8a2a2a; --amber:#7a5418; --green:#1f6a3a;
-    --tx:#c8cdd4; --tx2:#9aa0a8; --tx3:#555e6a; --txW:#c8cdd4; --txA:#7ab8e8;
-    --ln:#2e3440;
+  body:not(.light) .diag {${DIAG_DARK}
   }
 }
-rect.bg    { fill:var(--bg); }
-rect.pnl   { fill:var(--pnl);  stroke:var(--pnl-bd); stroke-width:1.5; }
-rect.hd    { fill:var(--hd);   stroke:var(--hd-bd);  stroke-width:1; }
-rect.sec   { fill:var(--sec);  stroke:var(--sec-bd); stroke-width:1; }
-rect.btn   { fill:var(--btn);  stroke:var(--btn-bd); stroke-width:1; }
-rect.act   { fill:var(--act);  stroke:var(--act2);   stroke-width:1; }
-rect.red   { fill:var(--red);  stroke:#a03030;       stroke-width:1; }
-rect.amber { fill:var(--amber);stroke:#a07418;       stroke-width:1; }
-rect.green { fill:var(--green);stroke:#1f7a44;       stroke-width:1; }
-rect.lnbd  { fill:none; stroke:var(--ln); stroke-width:1; }
-line.div   { stroke:var(--ln); stroke-width:1; }
-text       { font-family:Arial,sans-serif; font-size:11px; fill:var(--tx); }
-text.tT    { font-size:13px; font-weight:bold; fill:var(--txA); }
-text.tB    { font-weight:bold; }
-text.t2    { fill:var(--tx2); }
-text.t3    { fill:var(--tx3); font-size:10px; }
-text.tW    { fill:var(--txW); }
-text.tA    { fill:var(--txA); font-weight:bold; }
-text.mono  { font-family:ui-monospace,Menlo,Consolas,monospace; }
+.diag rect.bg    { fill:var(--bg); }
+.diag rect.pnl   { fill:var(--pnl);  stroke:var(--pnl-bd); stroke-width:1.5; }
+.diag rect.hd    { fill:var(--hd);   stroke:var(--hd-bd);  stroke-width:1; }
+.diag rect.sec   { fill:var(--sec);  stroke:var(--sec-bd); stroke-width:1; }
+.diag rect.btn   { fill:var(--btn);  stroke:var(--btn-bd); stroke-width:1; }
+.diag rect.act   { fill:var(--act);  stroke:var(--act2);   stroke-width:1; }
+.diag rect.red   { fill:var(--red);  stroke:#a03030;       stroke-width:1; }
+.diag rect.amber { fill:var(--amber);stroke:#a07418;       stroke-width:1; }
+.diag rect.green { fill:var(--green);stroke:#1f7a44;       stroke-width:1; }
+.diag rect.lnbd  { fill:none; stroke:var(--ln); stroke-width:1; }
+.diag line.div   { stroke:var(--ln); stroke-width:1; }
+.diag text       { font-family:Arial,sans-serif; font-size:11px; fill:var(--tx); }
+.diag text.tT    { font-size:13px; font-weight:bold; fill:var(--txA); }
+.diag text.tB    { font-weight:bold; }
+.diag text.t2    { fill:var(--tx2); }
+.diag text.t3    { fill:var(--tx3); font-size:10px; }
+.diag text.tW    { fill:var(--txW); }
+.diag text.tA    { fill:var(--txA); font-weight:bold; }
+.diag text.mono  { font-family:ui-monospace,Menlo,Consolas,monospace; }
 </style>`;
 
 function svg(w, h, body) {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}"
+  return `<svg xmlns="http://www.w3.org/2000/svg" class="diag" viewBox="0 0 ${w} ${h}"
   style="width:100%;max-width:${w}px;display:block;margin:20px 0;border-radius:8px;overflow:visible;">
 ${SHARED_STYLE}
 ${body}

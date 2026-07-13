@@ -4,10 +4,9 @@ import { useLang, LANG_OPTIONS, systemLangNative } from '../i18n.jsx'
 import { useNumberBase } from '../numberBase.jsx'
 import styles from './SettingsBlade.module.css'
 
-// Help opens the bundled help.html (generated from MANUAL.md by
-// scripts/generate-help.js). BASE_URL resolves to '/' in dev and '/profiletool/'
-// in production, matching vite.config.js's `base` setting.
-const HELP_URL    = `${import.meta.env.BASE_URL}help.html`
+// Help opens the in-app guide pane (GuidePanel), which renders the same content
+// generated from MANUAL.md into help.html by scripts/generate-help.js. The opener
+// is passed down from App as onOpenHelp.
 // Contact opens colourbill.com's modal with profiletool as the source, so
 // submissions are attributed to profiletool in the form's hidden source field.
 // The colourbill.com handler allow-lists 'chardata' and 'profiletool'.
@@ -33,9 +32,15 @@ function applyTheme(theme) {
     dark = theme === 'dark'
   }
   document.body.classList.toggle('dark', dark)
+  // Also set an explicit `light` marker so the in-app user-guide diagrams (whose
+  // <style> keys dark off `body.dark` and guards the OS media query with
+  // `body:not(.light)`) follow the app theme, not the OS — a light app on a
+  // dark-OS machine keeps light diagrams. index.css itself only reads body.dark,
+  // so this class is otherwise inert.
+  document.body.classList.toggle('light', !dark)
 }
 
-export default function SettingsBlade() {
+export default function SettingsBlade({ onOpenHelp }) {
   const { lang, setLang, t } = useLang()
   const { base, setBase }    = useNumberBase()
   const [theme, setTheme]       = useState(readTheme)
@@ -108,7 +113,7 @@ export default function SettingsBlade() {
           </button>
           <button
             className={styles.tabBtn}
-            onClick={() => window.open(HELP_URL, '_blank', 'noopener')}
+            onClick={onOpenHelp}
             title={t('help')}
             aria-label={t('help')}
             type="button"
@@ -192,7 +197,7 @@ export default function SettingsBlade() {
       </button>
       <button
         className={styles.mobileHelp}
-        onClick={() => window.open(HELP_URL, '_blank', 'noopener')}
+        onClick={onOpenHelp}
         title={t('help')}
         aria-label={t('help')}
         type="button"

@@ -86,6 +86,7 @@ App.jsx                  — preloads WASM, orchestrates validation, top-level e
 │   ├── ValidationPanel.jsx — status card + messages list
 │   └── TagDetailModal.jsx — signature + type + offset + size + Describe() text
 └── SettingsBlade.jsx    — right-side slide-out panel (Background + Language)
+└── GuidePanel.jsx       — slide-in user-guide pane (renders help.html body + search)
 ```
 
 Each component has a co-located `*.module.css` file. Global tokens (colours, fonts) are CSS custom properties in `src/index.css`. The visual identity matches chardata (Arial on `#f0f2f5` blue-grey, blue `#4a90e2` accent, rounded white card with light shadow, gradient `.btn-primary` buttons) so users moving between the two apps see a consistent look. When tweaking colours, edit the CSS variables in `index.css` first — most components consume them.
@@ -103,7 +104,7 @@ When the user picks **System** for theme, the blade subscribes to `prefers-color
 
 The blade also toggles `body.blade-open` / `body.blade-collapsed` so the centred 841 px `.layout` gets `padding-right` to avoid being overlapped on narrow viewports. The mobile breakpoint resets the padding to zero.
 
-The **Help** button (`?`) opens `${import.meta.env.BASE_URL}help.html` — the static page generated from `MANUAL.md` (see "Help / MANUAL.md" below).
+The **Help** button (`?`) — on both the blade tab column and the mobile FAB — calls `onOpenHelp` (passed from `App`), which opens the in-app **`GuidePanel`** (see "Help / MANUAL.md" below) rather than navigating to a new tab.
 
 The **Contact** button (`✉`) opens `https://www.colourbill.com/?contact=profiletool`. The IIFE on colourbill.com that opens the contact modal allow-lists `['chardata', 'profiletool']` and passes the matched value through to the form's hidden `cb-source` field; the server-side handler (`colourbill_handle_contact()` in `colourbill-customizations.php`) mirrors the same allow-list and prefixes the email subject with `[profiletool]` for attribution.
 
@@ -113,11 +114,13 @@ The **Contact** button (`✉`) opens `https://www.colourbill.com/?contact=profil
 - Strips the H1 title (replaced with hardcoded HTML in the page chrome).
 - Splits the doc into intro (before the first `---`) and body (after it).
 - Renders a small markdown subset → HTML (headings, lists, tables, paragraphs, fenced inline `code`, `**bold**` / `*italic*`, `[links](…)`, raw HTML blocks like `<div class="note">`).
-- Inlines two SVG diagrams under `id="1-loading-a-profile"` and `id="2-settings-panel"` via `insertAfter()`. Diagram colours follow a `prefers-color-scheme` `:root` variable scheme so the help page works in both light and dark UA themes (independently of profiletool's own theme switch).
+- Inlines two SVG diagrams under `id="1-loading-a-profile"` and `id="2-settings-panel"` via `insertAfter()`. Diagram colours follow a `prefers-color-scheme` variable scheme so the help page works in both light and dark UA themes (independently of profiletool's own theme switch). Every diagram selector is **scoped under `.diag`** (the class on each `<svg>`): an SVG `<style>` in an HTML document is not shadow-scoped, so an unscoped `text{…}` / `:root{--…}` would leak onto the app's own SVG graphs (`viz/GraphSvg.jsx`) when `GuidePanel` renders the diagrams into the live DOM.
 
 The pre-commit hook regenerates `help.html` when `MANUAL.md` or `scripts/generate-help.js` is staged, and **aborts the commit** if `help.html` is hand-edited. Edit `MANUAL.md` (or the generator for diagrams / layout) instead.
 
 This setup mirrors chardata's `MANUAL.md` / `scripts/generate-help.js` / `hooks/pre-commit` flow exactly. If you extend one generator with a new feature (new diagram primitive, new markdown construct), consider keeping the two in sync so future maintainers can copy patterns between them.
+
+**In-app guide pane (`components/GuidePanel.jsx`).** The `?` help button opens a tiffview-style slide-in pane (dimmed backdrop over the rest of the window, panel slides in from the right) instead of a new tab. It fetches `help.html` **once** and renders its `.page` body — but because the pre-commit **F4 invariant forbids any HTML-injection sink in `frontend/src`** (`dangerouslySetInnerHTML`/`.innerHTML`/… — the grep matches *comments* too, so don't spell those tokens out), the body is **parsed with `DOMParser` and converted to real React elements** via `domToReact()` (text → auto-escaped string children; `class`→`className`, hyphenated SVG attrs → camelCase; the page `<h1>`/subtitle are stripped since the pane has its own header). The header carries a persistent **search box** (magnifier + input + `n/m` count + `˄`/`˅` nav) — a plain in-page find ported from tiffview: it walks the rendered body with a `TreeWalker`, wraps matches in `<mark>`, jumps to the first, cycles with `Enter`/`Shift+Enter`, and `Escape` clears (a second `Escape` closes). The marking is imperative DOM mutation, which is safe only because the converted tree is `useMemo`'d on the fetched text, so the body subtree keeps stable element references and React never reconciles the marks away. New user-facing chrome strings (`guide_*`) are in `i18n.jsx` across all 12 locales.
 
 ### i18n
 

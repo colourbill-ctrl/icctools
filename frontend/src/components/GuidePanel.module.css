@@ -1,0 +1,285 @@
+/* (c) 2026 William Li */
+/* Slide-in user-guide pane, ported from tiffview's #help panel. The colours use
+   profiletool's design tokens (index.css), which already flip under body.dark,
+   so the pane recolours with the app theme automatically — only the non-token
+   <mark> highlight needs explicit dark rules. */
+
+/* Dimmed backdrop over the rest of the window (the "shadow on everything else").
+   Sits above the settings blade (z-index 1001 on mobile) but the panel is higher. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1150;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(720px, 96vw);
+  z-index: 1151;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: -6px 0 28px rgba(0, 0, 0, 0.35);
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+  display: flex;
+  flex-direction: column;
+}
+.panel.open {
+  transform: translateX(0);
+}
+
+.head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-alt);
+}
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.headRight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+/* Persistent search box: magnifier + input + n/m count + ˄/˅ nav. */
+.search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 4px 8px;
+}
+.search:focus-within {
+  border-color: var(--accent);
+}
+.search > svg {
+  color: var(--text-muted);
+  flex: none;
+}
+.searchInput {
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: var(--font-sans);
+  width: 128px;
+  padding: 0;
+}
+.searchInput::placeholder {
+  color: var(--text-muted);
+}
+.searchInput:disabled {
+  cursor: default;
+}
+.searchCount {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 30px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.searchCount:empty {
+  display: none;
+}
+.searchNav {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  font-size: 11px;
+  padding: 0;
+  cursor: pointer;
+  flex: none;
+}
+.searchNav:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+}
+
+.closeX {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 22px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  flex: none;
+}
+.closeX:hover {
+  color: var(--text);
+}
+
+/* search highlight (mark elements are injected imperatively; see GuidePanel.jsx) */
+.hit {
+  background: #f7e08a;
+  color: #1a1d22;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.hit.cur {
+  background: #f5a623;
+  box-shadow: 0 0 0 2px rgba(245, 166, 35, 0.45);
+}
+:global(body.dark) .hit {
+  background: #ffe58a;
+  color: #1a1d22;
+}
+:global(body.dark) .hit.cur {
+  background: #ffab2e;
+}
+
+/* Loading / error placeholder shown before (or instead of) the guide body. */
+.state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ── guide body (content injected from help.html) ─────────────────────────── */
+.body {
+  padding: 18px 22px 56px;
+  overflow-y: auto;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.body h2 {
+  font-size: 15px;
+  color: var(--accent-dark);
+  margin: 24px 0 9px;
+  padding-bottom: 5px;
+  border-bottom: 2px solid var(--accent-tint-strong);
+}
+.body h2:first-of-type {
+  margin-top: 4px;
+}
+.body h3 {
+  font-size: 13.5px;
+  font-weight: bold;
+  color: var(--text);
+  margin: 18px 0 6px;
+}
+.body h4 {
+  font-size: 12.5px;
+  font-weight: bold;
+  color: var(--text-muted);
+  margin: 14px 0 4px;
+}
+.body p {
+  margin: 7px 0;
+}
+.body ul,
+.body ol {
+  margin: 7px 0;
+  padding-left: 22px;
+}
+.body li {
+  margin: 3px 0;
+}
+.body a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.body a:hover {
+  text-decoration: underline;
+}
+.body strong {
+  color: var(--text);
+  font-weight: bold;
+}
+.body code {
+  background: var(--accent-tint);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 26px 0;
+}
+.body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 10px 0 14px;
+  font-size: 12.5px;
+}
+.body th,
+.body td {
+  border: 1px solid var(--border);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+.body th {
+  background: var(--surface-alt);
+  font-weight: bold;
+  color: var(--text);
+}
+.body tr:nth-child(even) td {
+  background: var(--surface-alt);
+}
+/* .note comes in as a global class from the injected HTML */
+.body :global(.note) {
+  background: var(--accent-tint);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  padding: 8px 12px;
+  margin: 10px 0;
+  font-size: 12.5px;
+}
+/* table-of-contents block */
+.body :global(nav) {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 18px;
+  margin: 4px 0 14px;
+  font-size: 12.5px;
+}
+.body :global(nav) ol {
+  margin: 6px 0 0 18px;
+}
+
+@media (max-width: 720px) {
+  .panel {
+    width: 100vw;
+  }
+  .searchInput {
+    width: 92px;
+  }
+}

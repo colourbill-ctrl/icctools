@@ -5,6 +5,7 @@ import LoadButton from './components/LoadButton.jsx'
 import ProfileViewer from './components/ProfileViewer.jsx'
 import SettingsBlade from './components/SettingsBlade.jsx'
 import SubscribeModal from './components/SubscribeModal.jsx'
+import GuidePanel from './components/GuidePanel.jsx'
 import { validateProfile, validateBytes, preloadValidator } from './lib/validator.js'
 import { bestEffortParse } from './lib/bestEffortParse.js'
 import { computeChangedTagIds } from './lib/tagDiff.js'
@@ -61,6 +62,7 @@ export default function App() {
   // Resolved from a `#…&tab=` launch fragment; seeds ProfileViewer's open tab.
   const [initialTab, setInitialTab] = useState(null)
   const [subscribeOpen, setSubscribeOpen] = useState(false)
+  const [guideOpen, setGuideOpen] = useState(false)
   const t = useT()
 
   useEffect(() => { preloadValidator() }, [])
@@ -399,7 +401,8 @@ export default function App() {
         </footer>
       </div>
       <SubscribeModal open={subscribeOpen} onClose={() => setSubscribeOpen(false)} />
-      <SettingsBlade />
+      <SettingsBlade onOpenHelp={() => setGuideOpen(true)} />
+      <GuidePanel open={guideOpen} onClose={() => setGuideOpen(false)} />
     </>
   )
 }
