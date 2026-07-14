@@ -390,6 +390,30 @@ std::string evaluateTagImpl(const std::string& bytes, const std::string& tagSigS
               {"dstIsPcs", isPcsSpace(dstSp)}}.dump();
 }
 
+// Gamut volume (ΔE*ab³) for one device→PCS (AToB) tag at a rendering intent.
+// intent: 0 perceptual, 1 relative-colorimetric, 2 saturation, 3 absolute — the
+// ICC intent values, cast straight to icRenderingIntent. Typical (tag,intent)
+// pairs: AToB0/0, AToB1/1, AToB2/2, AToB1/3 (absolute). See iccviz::GamutVolume.
+std::string gamutVolumeImpl(const std::string& bytes, const std::string& tagSigStr, int intent) {
+  if (bytes.size() > kMaxIccBytes)
+    return json{{"error", "Profile exceeds size limit"}}.dump();
+  CIccProfile* pIcc = parseCached(bytes);
+  if (!pIcc) return json{{"error", "Failed to parse ICC profile"}}.dump();
+  if (tagSigStr.size() != 4) return json{{"error", "Bad tag signature"}}.dump();
+
+  icTagSignature sig = static_cast<icTagSignature>(
+      (icUInt8Number(tagSigStr[0]) << 24) | (icUInt8Number(tagSigStr[1]) << 16) |
+      (icUInt8Number(tagSigStr[2]) << 8)  |  icUInt8Number(tagSigStr[3]));
+  if (intent < 0 || intent > 3) intent = 1;   // default: relative colorimetric
+
+  iccviz::GamutVolumeResult v =
+      iccviz::GamutVolume(pIcc, sig, static_cast<icRenderingIntent>(intent));
+  if (!v.ok) return json{{"error", v.error}}.dump();
+  return json{{"volume", v.volume}, {"voxels", v.voxels},
+              {"samplesPerAxis", v.samplesPerAxis}, {"voxelSize", v.voxelSize},
+              {"nColorants", v.nColorants}}.dump();
+}
+
 // ── exception-safe boundary wrappers ─────────────────────────────────────────
 // The names embind binds. Every entry point converts an unexpected C++ throw
 // (std::bad_alloc on a crafted huge LUT, an nlohmann type_error, an IccProfLib
@@ -434,6 +458,33 @@ std::string evaluateTag(const std::string& bytes, const std::string& tagSigStr,
   catch (...) { return json{{"error", "evaluateTag threw an unknown exception"}}.dump(); }
 }
 
+std::string gamutVolume(const std::string& bytes, const std::string& tagSigStr, int intent) {
+  try { return gamutVolumeImpl(bytes, tagSigStr, intent); }
+  catch (const std::exception& e) { return json{{"error", std::string("gamutVolume threw: ") + e.what()}}.dump(); }
+  catch (...) { return json{{"error", "gamutVolume threw an unknown exception"}}.dump(); }
+}
+
+// B2A round-trip accuracy (ΔE*ab of Lab → device → Lab) at a rendering intent.
+// intent: 0 perceptual, 1 relative, 2 saturation, 3 absolute (ICC values).
+std::string roundTripDEImpl(const std::string& bytes, int intent) {
+  if (bytes.size() > kMaxIccBytes)
+    return json{{"error", "Profile exceeds size limit"}}.dump();
+  CIccProfile* pIcc = parseCached(bytes);
+  if (!pIcc) return json{{"error", "Failed to parse ICC profile"}}.dump();
+  if (intent < 0 || intent > 3) intent = 1;
+
+  iccviz::RoundTripResult v = iccviz::RoundTripDE(pIcc, static_cast<icRenderingIntent>(intent));
+  if (!v.ok) return json{{"error", v.error}}.dump();
+  return json{{"n", v.n}, {"meanDE", v.meanDE}, {"p90DE", v.p90DE},
+              {"maxDE", v.maxDE}, {"stdDE", v.stdDE}, {"nColorants", v.nColorants}}.dump();
+}
+
+std::string roundTripDE(const std::string& bytes, int intent) {
+  try { return roundTripDEImpl(bytes, intent); }
+  catch (const std::exception& e) { return json{{"error", std::string("roundTripDE threw: ") + e.what()}}.dump(); }
+  catch (...) { return json{{"error", "roundTripDE threw an unknown exception"}}.dump(); }
+}
+
 } // namespace
 
 EMSCRIPTEN_BINDINGS(iccplot) {
@@ -442,4 +493,6 @@ EMSCRIPTEN_BINDINGS(iccplot) {
   emscripten::function("renderRaster", &renderRaster);
   emscripten::function("tagEvalInfo", &tagEvalInfo);
   emscripten::function("evaluateTag", &evaluateTag);
+  emscripten::function("gamutVolume", &gamutVolume);
+  emscripten::function("roundTripDE", &roundTripDE);
 }

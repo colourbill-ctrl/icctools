@@ -216,6 +216,59 @@ std::vector<Descriptor> Enumerate(CIccProfile* pIcc);
 GraphResult  RenderGraph (CIccProfile* pIcc, const std::string& id, Verbosity v = Verbosity::Default);
 RasterResult RenderRaster(CIccProfile* pIcc, const std::string& id, Verbosity v = Verbosity::Default);
 
+// ── Gamut volume ─────────────────────────────────────────────────────────────
+// Volume (ΔE*ab³) enclosed by a profile's gamut, measured by boundary
+// voxelisation + flood-fill: sample the device-cube 2-skeleton through the
+// AToB transform → L*a*b*, voxelise, dilate to seal sampling gaps, flood-fill
+// the exterior, erode the dilation back, count enclosed voxels. A scalar
+// metric — not a Graph/Raster — so it sits outside the Enumerate/Render path.
+//
+// Ported from chardata's lcms2 `gamutVolumeIcc`; here the device→PCS step uses
+// IccProfLib (CIccXform on `aToBTag`, device values 0..1, PCS→Lab decoded via
+// icLabFromPcs / icXyzFromPcs+icXYZtoLab). Pick (tag, intent) to select the
+// gamut: perceptual = AToB0/icPerceptual, relative = AToB1/icRelativeColorimetric,
+// saturation = AToB2/icSaturation, absolute = AToB1/icAbsoluteColorimetric.
+struct GamutVolumeResult {
+  bool        ok             = false;
+  std::string error;
+  double      volume         = 0.0;  // ΔE*ab³ = enclosed voxels × voxelSize³
+  long long   voxels         = 0;
+  int         samplesPerAxis = 0;    // device 2-skeleton boundary steps used
+  double      voxelSize      = 0.0;  // Lab grid cell edge (ΔE*ab)
+  int         nColorants     = 0;    // device channels
+};
+
+// Compute the gamut volume for one device→PCS (AToB) tag at `intent`. Pass 0 for
+// samplesPerAxis / voxelSize / dilate to auto-pick them from the colorant count.
+GamutVolumeResult GamutVolume(CIccProfile* pIcc, icTagSignature aToBTag,
+                              icRenderingIntent intent,
+                              int samplesPerAxis = 0, double voxelSize = 0.0,
+                              int dilate = 0);
+
+// ── B2A round-trip accuracy ───────────────────────────────────────────────────
+// Round-trip of Lab through the profile: seed in-gamut L*a*b* by sampling the
+// device cube on an interior grid and pushing it through A2B, then run each
+// Lab₁ → device (B2A) → Lab₂ (A2B) and report ΔE*ab(Lab₁, Lab₂). Measures how
+// accurately the B2A (PCS→device) table inverts the A2B for that intent — the
+// headline accuracy metric in Harold Boll's doQCpfA. A scalar metric (outside
+// the Enumerate/Render path). Needs matching AToB/BToA tags for `intent`
+// (perceptual = A2B0/B2A0, relative & absolute = A2B1/B2A1, saturation =
+// A2B2/B2A2); `intent` also drives the PCS white handling (relative vs absolute).
+struct RoundTripResult {
+  bool        ok         = false;
+  std::string error;
+  int         n          = 0;    // finite test points
+  double      meanDE     = 0.0;  // ΔE*ab
+  double      p90DE      = 0.0;
+  double      maxDE      = 0.0;
+  double      stdDE      = 0.0;
+  int         nColorants = 0;    // device channels
+};
+
+// samplesPerAxis 0 → auto-pick the device seed grid from the colorant count.
+RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
+                            int samplesPerAxis = 0);
+
 } // namespace iccviz
 
 #endif // ICC_VIZ_MODEL_HPP

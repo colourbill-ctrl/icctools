@@ -98,6 +98,38 @@ export async function evaluateTag(bytes, tagSig, input, inputIsNormalized = fals
   return r
 }
 
+/**
+ * Gamut volume (ΔE*ab³) enclosed by the gamut of one device→PCS (AToB) tag at a
+ * rendering intent, via boundary voxelisation + flood-fill (IccProfLib, no lcms2).
+ * `tagSig` is the 4-char AToB tag id ('A2B0'|'A2B1'|'A2B2'); `intent` is the ICC
+ * value 0 perceptual / 1 relative / 2 saturation / 3 absolute. Typical pairs:
+ * ('A2B0',0), ('A2B1',1), ('A2B2',2), ('A2B1',3) for absolute. →
+ * {volume, voxels, samplesPerAxis, voxelSize, nColorants}.
+ */
+export async function gamutVolume(bytes, tagSig, intent) {
+  const mod = await loadModule()
+  let out
+  try { out = mod.gamutVolume(bytes, tagSig, intent) } catch (e) { throw toError(mod, e) }
+  const r = JSON.parse(out)
+  if (r.error) throw new Error(r.error)
+  return r
+}
+
+/**
+ * B2A round-trip accuracy at a rendering intent (IccProfLib, no lcms2): in-gamut
+ * L*a*b* seeded from a device grid via A2B, round-tripped Lab → device (B2A) →
+ * Lab (A2B), reporting ΔE*ab. `intent`: 0 perceptual / 1 relative / 2 saturation
+ * / 3 absolute. → { n, meanDE, p90DE, maxDE, stdDE, nColorants }.
+ */
+export async function roundTripDE(bytes, intent) {
+  const mod = await loadModule()
+  let out
+  try { out = mod.roundTripDE(bytes, intent) } catch (e) { throw toError(mod, e) }
+  const r = JSON.parse(out)
+  if (r.error) throw new Error(r.error)
+  return r
+}
+
 /** Render one raster by id → {width,height,channels,bitsPerChannel,photometric,samples}. */
 export async function renderRaster(bytes, id) {
   const mod = await loadModule()

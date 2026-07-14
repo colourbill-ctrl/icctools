@@ -1260,6 +1260,140 @@ bool buildNeutralAxisGraph(CIccProfile* pIcc, icTagSignature sig, Graph& out,
   return true;
 }
 
+// ── Gamut volume: boundary voxelisation + flood-fill (see IccVizModel.hpp) ────
+// Pure Lab-space geometry, ported verbatim from chardata's gamut-wasm
+// `gamutVolumeIcc` (the ICC-specific device→PCS boundary eval lives in the public
+// GamutVolume() below). Why this and not signed-tetra / convex hull / star-|tetra|
+// on the boundary: the device 2-skeleton tiles the gamut surface but self-overlaps
+// and isn't consistently wound, so those all mis-measure; voxel occupancy of the
+// enclosed solid is robust. Dilate seals sampling gaps against flood-fill leaks;
+// the matching erosion removes the dilation's outward bias.
+
+// Voxelise flat Lab boundary points (x3), dilate by `dilate`, flood-fill the
+// exterior, erode the dilation back, return the enclosed volume (ΔE*ab³). Fixed
+// generous Lab box so real gamuts sit strictly interior to it.
+double voxelEnclosedVolume(const std::vector<float>& lab, double vs,
+                           int dilate, long long& enclosedCells) {
+  const double Lmin = -20, Lmax = 120, ABmin = -150, ABmax = 150;
+  const int nL = std::max(1, (int)std::ceil((Lmax - Lmin) / vs));
+  const int nA = std::max(1, (int)std::ceil((ABmax - ABmin) / vs));
+  const int nB = nA;
+  auto IDX = [&](int l, int a, int b) -> std::size_t {
+    return ((std::size_t)l * nA + a) * nB + b;
+  };
+  auto cl = [](int v, int hi) { return v < 0 ? 0 : (v >= hi ? hi - 1 : v); };
+  std::vector<unsigned char> g((std::size_t)nL * nA * nB, 0);  // 0 empty, 1 solid, 2 exterior
+
+  const int nPts = (int)(lab.size() / 3);
+  for (int i = 0; i < nPts; ++i) {
+    const int li = (int)std::floor((lab[i*3]     - Lmin)  / vs);
+    const int ai = (int)std::floor((lab[i*3 + 1] - ABmin) / vs);
+    const int bi = (int)std::floor((lab[i*3 + 2] - ABmin) / vs);
+    for (int dl = -dilate; dl <= dilate; ++dl)
+      for (int da = -dilate; da <= dilate; ++da)
+        for (int db = -dilate; db <= dilate; ++db)
+          g[IDX(cl(li + dl, nL), cl(ai + da, nA), cl(bi + db, nB))] = 1;
+  }
+
+  std::vector<int> st;
+  auto push = [&](int l, int a, int b) {
+    const std::size_t id = IDX(l, a, b);
+    if (g[id] == 0) { g[id] = 2; st.push_back((int)id); }
+  };
+  for (int a = 0; a < nA; ++a) for (int b = 0; b < nB; ++b) { push(0, a, b); push(nL - 1, a, b); }
+  for (int l = 0; l < nL; ++l) for (int b = 0; b < nB; ++b) { push(l, 0, b); push(l, nA - 1, b); }
+  for (int l = 0; l < nL; ++l) for (int a = 0; a < nA; ++a) { push(l, a, 0); push(l, a, nB - 1); }
+  while (!st.empty()) {
+    const int id = st.back(); st.pop_back();
+    const int b = id % nB, a = (id / nB) % nA, l = (int)(id / ((std::size_t)nB * nA));
+    if (l > 0)      push(l - 1, a, b);
+    if (l < nL - 1) push(l + 1, a, b);
+    if (a > 0)      push(l, a - 1, b);
+    if (a < nA - 1) push(l, a + 1, b);
+    if (b > 0)      push(l, a, b - 1);
+    if (b < nB - 1) push(l, a, b + 1);
+  }
+
+  const std::size_t total = (std::size_t)nL * nA * nB;
+  for (int pass = 0; pass < dilate; ++pass) {
+    std::vector<int> add;
+    for (std::size_t id = 0; id < total; ++id) {
+      if (g[id] == 2) continue;
+      const int b = (int)(id % nB), a = (int)((id / nB) % nA), l = (int)(id / ((std::size_t)nB * nA));
+      if ((l > 0      && g[IDX(l - 1, a, b)] == 2) || (l < nL - 1 && g[IDX(l + 1, a, b)] == 2) ||
+          (a > 0      && g[IDX(l, a - 1, b)] == 2) || (a < nA - 1 && g[IDX(l, a + 1, b)] == 2) ||
+          (b > 0      && g[IDX(l, a, b - 1)] == 2) || (b < nB - 1 && g[IDX(l, a, b + 1)] == 2))
+        add.push_back((int)id);
+    }
+    for (int id : add) g[id] = 2;
+  }
+  std::size_t ext = 0;
+  for (std::size_t i = 0; i < total; ++i) if (g[i] == 2) ++ext;
+  enclosedCells = (long long)(total - ext);
+  return (double)enclosedCells * vs * vs * vs;
+}
+
+// Device-cube 2-skeleton (boundary-face) samples in 0..1 (IccProfLib device
+// convention): for each free-axis pair (di,dj) swept 0..S, all 2^(N-2) corner
+// combinations of the remaining axes. Flat buffer, N floats per point.
+std::vector<float> boundaryDeviceSamples(int N, int S) {
+  std::vector<float> out;
+  int fixed[kMaxInkChannels];
+  float cv[kMaxInkChannels];
+  for (int di = 0; di < N; ++di)
+    for (int dj = di + 1; dj < N; ++dj) {
+      int nFixed = 0;
+      for (int d = 0; d < N; ++d) if (d != di && d != dj) fixed[nFixed++] = d;
+      const int nCombos = 1 << nFixed;
+      for (int combo = 0; combo < nCombos; ++combo)
+        for (int u = 0; u <= S; ++u)
+          for (int w = 0; w <= S; ++w) {
+            for (int d = 0; d < N; ++d) cv[d] = 0.0f;
+            cv[di] = (float)u / S;
+            cv[dj] = (float)w / S;
+            for (int k = 0; k < nFixed; ++k) cv[fixed[k]] = ((combo >> k) & 1) ? 1.0f : 0.0f;
+            for (int d = 0; d < N; ++d) out.push_back(cv[d]);
+          }
+    }
+  return out;
+}
+
+// Auto boundary-sampling params by colorant count — mirrors chardata gamut.js
+// volumeParams. Returns steps = -1 when even the coarsest sampling would exceed
+// the boundary-point ceiling (a very-high-channel profile → volume unsupported).
+void gamutVolumeParams(int N, int& steps, double& vs, int& dilate) {
+  if (N < 1) N = 1;
+  const double faces = (N * (N - 1) / 2.0) * std::pow(2.0, std::max(0, N - 2));
+  const double TARGET = 180000.0, MAX_POINTS = 1500000.0;
+  int s = (int)std::floor(std::sqrt(TARGET / std::max(1.0, faces))) - 1;
+  if (s > 48) s = 48;
+  if (s < 6)  s = 6;
+  while (s > 2 && faces * (double)(s + 1) * (s + 1) > MAX_POINTS) --s;
+  steps  = (faces * (double)(s + 1) * (s + 1) > MAX_POINTS) ? -1 : s;
+  vs     = (N <= 4) ? 2.0 : (N <= 6 ? 2.5 : 3.0);
+  dilate = (s >= 40) ? 1 : (s >= 20 ? 2 : 3);
+}
+
+// ── B2A round-trip helpers ────────────────────────────────────────────────────
+// Internal-PCS-encoded (Lab or XYZ) → human L*a*b*. Returns false for an
+// unsupported PCS. (pcsToLstar above returns only L*; here we need full Lab.)
+bool pcsToLabFull(const icFloatNumber* pcs, icColorSpaceSignature sp, icFloatNumber out[3]) {
+  icFloatNumber v[3] = { pcs[0], pcs[1], pcs[2] };
+  if (sp == icSigLabData) { icLabFromPcs(v); out[0]=v[0]; out[1]=v[1]; out[2]=v[2]; return true; }
+  if (sp == icSigXYZData) { icXyzFromPcs(v); icXYZtoLab(out, v, nullptr); return true; }  // D50
+  return false;
+}
+double deltaEab(const icFloatNumber a[3], const icFloatNumber b[3]) {
+  const double dL=a[0]-b[0], da=a[1]-b[1], db=a[2]-b[2];
+  return std::sqrt(dL*dL + da*da + db*db);
+}
+// Device interior-grid steps per axis, bounded to ~30k seed points total.
+int roundTripSteps(int N) {
+  if (N < 1) N = 1;
+  int s = (int)std::floor(std::pow(30000.0, 1.0 / N)) - 1;
+  return s < 2 ? 2 : (s > 32 ? 32 : s);
+}
+
 } // namespace
 
 // ── public API ───────────────────────────────────────────────────────────────
@@ -1477,6 +1611,173 @@ RasterResult RenderRaster(CIccProfile* pIcc, const std::string& id, Verbosity v)
   }
   res.error = "unknown visualization id: " + id;
   return res;
+}
+
+// ── Gamut volume ─────────────────────────────────────────────────────────────
+GamutVolumeResult GamutVolume(CIccProfile* pIcc, icTagSignature aToBTag,
+                              icRenderingIntent intent,
+                              int samplesPerAxis, double voxelSize, int dilate) {
+  GamutVolumeResult r;
+  auto fail = [&](const std::string& why) -> GamutVolumeResult { r.ok = false; r.error = why; return r; };
+
+  if (!pIcc) return fail("null profile");
+  CIccTag* pTag = pIcc->FindTag(aToBTag);
+  if (!pTag) return fail("AToB tag not present");
+
+  // Device→PCS transform for this tag (bInput=true = A2B / "input" side).
+  CIccXform* x = CIccXform::Create(pIcc, pTag, /*bInput=*/true, intent, icInterpLinear);
+  if (!x) return fail("could not build device→PCS transform");
+  x->ShareProfile();                                   // we do NOT own pIcc
+  if (x->Begin() != icCmmStatOk) { delete x; return fail("transform Begin failed"); }
+
+  const icColorSpaceSignature srcSp = x->GetSrcSpace();
+  const icColorSpaceSignature dstSp = x->GetDstSpace();
+  const int N     = x->GetNumSrcSamples();
+  const int dstCh = x->GetNumDstSamples();
+  if (isPcsSpace(srcSp))                                { delete x; return fail("tag input is not a device space"); }
+  if (dstSp != icSigLabData && dstSp != icSigXYZData)   { delete x; return fail("tag output is not a PCS"); }
+  if (N < 1 || N > kMaxInkChannels)                     { delete x; return fail("unsupported device channel count"); }
+  if (dstCh < 3)                                        { delete x; return fail("PCS output has < 3 channels"); }
+
+  // Sampling params: auto-pick any left at their sentinel (≤0).
+  int S = samplesPerAxis, dl = dilate;
+  double vs = voxelSize;
+  {
+    int aS, aDl; double aVs;
+    gamutVolumeParams(N, aS, aVs, aDl);
+    if ((S <= 0 || dl <= 0) && aS < 0) { delete x; return fail("too many device channels for volume"); }
+    if (S  <= 0) S  = aS;
+    if (vs <= 0) vs = aVs;
+    if (dl <= 0) dl = aDl;
+  }
+  if (S < 2) S = 2;
+  // Hard ceiling on total boundary points (CWE-400 guard against a crafted profile).
+  const double faces = (N * (N - 1) / 2.0) * std::pow(2.0, std::max(0, N - 2));
+  if (faces * (double)(S + 1) * (S + 1) > 3000000.0) { delete x; return fail("device boundary too large for volume"); }
+
+  icStatusCMM st = icCmmStatOk;
+  CIccApplyXform* ap = x->GetNewApply(st);
+  if (!ap || st != icCmmStatOk) { delete ap; delete x; return fail("transform apply init failed"); }
+
+  // Sample the device 2-skeleton → human L*a*b*.
+  const std::vector<float> dev = boundaryDeviceSamples(N, S);
+  const int nPts = (int)(dev.size() / N);
+  std::vector<float> lab;
+  lab.reserve((std::size_t)nPts * 3);
+  std::vector<icFloatNumber> src(N, 0.0f), dst(dstCh, 0.0f);
+  for (int i = 0; i < nPts; ++i) {
+    for (int c = 0; c < N; ++c) src[c] = (icFloatNumber)dev[(std::size_t)i * N + c];
+    x->Apply(ap, dst.data(), src.data());
+    icFloatNumber v[3] = { dst[0], dst[1], dst[2] };
+    if (dstSp == icSigLabData) {
+      icLabFromPcs(v);                                 // internal PCS Lab → human L*a*b*
+    } else {
+      icXyzFromPcs(v);                                 // internal PCS XYZ → human XYZ (D50)
+      icFloatNumber labv[3] = { 0, 0, 0 };
+      icXYZtoLab(labv, v, nullptr);                    // nullptr white → D50
+      v[0] = labv[0]; v[1] = labv[1]; v[2] = labv[2];
+    }
+    if (std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2])) {
+      lab.push_back((float)v[0]); lab.push_back((float)v[1]); lab.push_back((float)v[2]);
+    }
+  }
+  delete ap;
+  delete x;
+
+  if (lab.size() < 9) return fail("no finite boundary samples");
+
+  long long cells = 0;
+  r.volume         = voxelEnclosedVolume(lab, vs, dl, cells);
+  r.voxels         = cells;
+  r.samplesPerAxis = S;
+  r.voxelSize      = vs;
+  r.nColorants     = N;
+  r.ok             = true;
+  return r;
+}
+
+// ── B2A round-trip accuracy ───────────────────────────────────────────────────
+RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
+                            int samplesPerAxis) {
+  RoundTripResult r;
+  auto fail = [&](const std::string& why) -> RoundTripResult { r.ok = false; r.error = why; return r; };
+  if (!pIcc) return fail("null profile");
+
+  // Matching AToB / BToA tags for the intent (intent also drives PCS white handling).
+  icTagSignature a2bSig, b2aSig;
+  switch (intent) {
+    case icPerceptual: a2bSig = icSigAToB0Tag; b2aSig = icSigBToA0Tag; break;
+    case icSaturation: a2bSig = icSigAToB2Tag; b2aSig = icSigBToA2Tag; break;
+    default:           a2bSig = icSigAToB1Tag; b2aSig = icSigBToA1Tag; break;  // relative + absolute
+  }
+  CIccTag* a2bTag = pIcc->FindTag(a2bSig);
+  CIccTag* b2aTag = pIcc->FindTag(b2aSig);
+  if (!a2bTag) return fail("AToB tag not present");
+  if (!b2aTag) return fail("BToA tag not present");
+
+  CIccXform* xA = CIccXform::Create(pIcc, a2bTag, /*bInput=*/true,  intent, icInterpLinear);
+  CIccXform* xB = CIccXform::Create(pIcc, b2aTag, /*bInput=*/false, intent, icInterpLinear);
+  if (!xA || !xB) { delete xA; delete xB; return fail("could not build transforms"); }
+  xA->ShareProfile(); xB->ShareProfile();
+  if (xA->Begin() != icCmmStatOk || xB->Begin() != icCmmStatOk) { delete xA; delete xB; return fail("transform Begin failed"); }
+
+  const icColorSpaceSignature devSp = xA->GetSrcSpace();
+  const icColorSpaceSignature pcsSp = xA->GetDstSpace();
+  const int N    = xA->GetNumSrcSamples();     // device channels
+  const int nPcs = xA->GetNumDstSamples();     // 3
+  if (isPcsSpace(devSp))                                { delete xA; delete xB; return fail("AToB input is not a device space"); }
+  if (pcsSp != icSigLabData && pcsSp != icSigXYZData)   { delete xA; delete xB; return fail("PCS is not Lab/XYZ"); }
+  if (N < 1 || N > kMaxInkChannels)                     { delete xA; delete xB; return fail("unsupported device channel count"); }
+  if (nPcs < 3)                                         { delete xA; delete xB; return fail("PCS has < 3 channels"); }
+  if (xB->GetNumSrcSamples() < 3 || xB->GetNumDstSamples() != N) { delete xA; delete xB; return fail("BToA transform shape mismatch"); }
+
+  int S = samplesPerAxis > 0 ? samplesPerAxis : roundTripSteps(N);
+  if (S < 2) S = 2;
+  double total = std::pow((double)(S + 1), N);
+  if (total > 3000000.0) { delete xA; delete xB; return fail("seed grid too large"); }
+
+  icStatusCMM st = icCmmStatOk;
+  CIccApplyXform* apA = xA->GetNewApply(st);
+  CIccApplyXform* apB = (st == icCmmStatOk) ? xB->GetNewApply(st) : nullptr;
+  if (!apA || !apB || st != icCmmStatOk) { delete apA; delete apB; delete xA; delete xB; return fail("transform apply init failed"); }
+
+  // Seed in-gamut Lab from a device interior grid via A2B, then round-trip each.
+  std::vector<double> des;
+  des.reserve((size_t)total);
+  std::vector<icFloatNumber> dev(N, 0.0f), pcs1(nPcs, 0.0f), dev2(N, 0.0f), pcs2(nPcs, 0.0f);
+  std::vector<int> idx(N, 0);
+  for (;;) {
+    for (int c = 0; c < N; ++c) dev[c] = (icFloatNumber)idx[c] / S;   // device 0..1
+    xA->Apply(apA, pcs1.data(), dev.data());     // device → PCS (Lab₁)
+    xB->Apply(apB, dev2.data(), pcs1.data());    // Lab₁ → device
+    xA->Apply(apA, pcs2.data(), dev2.data());    // device → PCS (Lab₂)
+    icFloatNumber lab1[3], lab2[3];
+    if (pcsToLabFull(pcs1.data(), pcsSp, lab1) && pcsToLabFull(pcs2.data(), pcsSp, lab2)) {
+      const double de = deltaEab(lab1, lab2);
+      if (std::isfinite(de)) des.push_back(de);
+    }
+    int d = 0;
+    for (; d < N; ++d) { if (++idx[d] <= S) break; idx[d] = 0; }
+    if (d == N) break;
+  }
+  delete apA; delete apB; delete xA; delete xB;
+
+  if (des.empty()) return fail("no finite round-trip samples");
+  std::sort(des.begin(), des.end());
+  double sum = 0.0; for (double d : des) sum += d;
+  const double mean = sum / des.size();
+  double var = 0.0; for (double d : des) var += (d - mean) * (d - mean);
+  var /= des.size();
+  const std::size_t p90i = (std::size_t)std::floor(0.90 * (des.size() - 1));
+
+  r.ok = true;
+  r.n = (int)des.size();
+  r.meanDE = mean;
+  r.p90DE = des[p90i];
+  r.maxDE = des.back();
+  r.stdDE = std::sqrt(var);
+  r.nColorants = N;
+  return r;
 }
 
 // ── diagnostic output policy (see IccVizModel.hpp) ────────────────────────────

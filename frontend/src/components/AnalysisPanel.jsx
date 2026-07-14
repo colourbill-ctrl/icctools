@@ -1,6 +1,6 @@
 // (c) 2026 William Li
 import { useEffect, useRef, useState } from 'react'
-import { enumerateVisualizations, renderGraph, tagEvalInfo } from '../lib/vizPlot.js'
+import { enumerateVisualizations, renderGraph, tagEvalInfo, gamutVolume, roundTripDE } from '../lib/vizPlot.js'
 import { channelColor } from './viz/colors.js'
 import { labToRgb } from '../lib/rasterDecode.js'
 import Collapsible from './viz/Collapsible.jsx'
@@ -156,6 +156,85 @@ function neutralTraceColor(spaceSig, series, idx, count) {
   return channelColor(spaceSig, idx, count)
 }
 
+// ── Profile Statistics ────────────────────────────────────────────────────────
+// Whole-profile metrics per rendering intent: gamut volume (device→PCS) and B2A
+// round-trip accuracy. Computed lazily (8 WASM calls, ~1-2s) and cached per
+// profile so re-opening the section / tab is instant. Intents whose tags are
+// absent are skipped (the engine returns an error we swallow).
+const STATS_INTENTS = [
+  { intent: 0, tag: 'A2B0', key: 'intent_perceptual', fallback: 'Perceptual' },
+  { intent: 1, tag: 'A2B1', key: 'intent_relative',   fallback: 'Relative Colorimetric' },
+  { intent: 2, tag: 'A2B2', key: 'intent_saturation', fallback: 'Saturation' },
+  { intent: 3, tag: 'A2B1', key: 'intent_absolute',   fallback: 'Absolute Colorimetric' },
+]
+const statsCache = new WeakMap()   // bytes -> rows[]
+
+function ProfileStatsSection({ bytes, t }) {
+  const [state, setState] = useState(() => {
+    const cached = statsCache.get(bytes)
+    return cached ? { loading: false, rows: cached } : { loading: true, rows: [] }
+  })
+
+  useEffect(() => {
+    const cached = statsCache.get(bytes)
+    if (cached) { setState({ loading: false, rows: cached }); return }
+    let cancelled = false
+    setState({ loading: true, rows: [] })
+    ;(async () => {
+      const rows = []
+      for (const it of STATS_INTENTS) {
+        let vol = null, rt = null
+        try { vol = (await gamutVolume(bytes, it.tag, it.intent)).volume } catch { /* AToB tag absent */ }
+        try { rt = await roundTripDE(bytes, it.intent) } catch { /* AToB/BToA tags absent */ }
+        if (vol != null || rt != null) rows.push({ key: it.key, fallback: it.fallback, vol, rt })
+      }
+      if (cancelled) return
+      statsCache.set(bytes, rows)
+      setState({ loading: false, rows })
+    })()
+    return () => { cancelled = true }
+  }, [bytes])
+
+  const fmtVol = (v) => (v == null ? '—' : Math.round(v).toLocaleString())
+  const fmtRt = (rt) => (rt == null ? '—' : `${rt.meanDE.toFixed(2)} · ${rt.p90DE.toFixed(2)} · ${rt.maxDE.toFixed(2)}`)
+
+  return (
+    <Collapsible title={t('analysis_stats_heading') || 'Profile Statistics'} defaultOpen>
+      <p className={styles.sectionIntro}>
+        {t('analysis_stats_intro') ||
+          'Whole-profile metrics per rendering intent: the gamut volume enclosed by the device→PCS transform (ΔE*ab³), and the B2A round-trip accuracy — ΔE*ab of a Lab → device → Lab round trip through the profile.'}
+      </p>
+      {state.loading ? (
+        <div className={styles.loading}><span className={styles.spinner} /> {t('analysis_loading') || 'Analysing…'}</div>
+      ) : !state.rows.length ? (
+        <div className={styles.notApplicable}>
+          {t('analysis_stats_na') ||
+            'No device↔PCS CLUTs in this profile — profile statistics do not apply (e.g. a matrix/TRC display profile).'}
+        </div>
+      ) : (
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th>{t('stats_intent') || 'Rendering intent'}</th>
+              <th>{t('stats_gamut_volume') || 'Gamut volume (ΔE³)'}</th>
+              <th>{t('stats_roundtrip') || 'Round-trip ΔE (mean · P90 · max)'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {state.rows.map((r) => (
+              <tr key={r.key}>
+                <td>{t(r.key) || r.fallback}</td>
+                <td className={styles.num}>{fmtVol(r.vol)}</td>
+                <td className={styles.mono}>{fmtRt(r.rt)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Collapsible>
+  )
+}
+
 function NeutralSection({ bytes, profileClass, tables, t }) {
   // Output (printer) profiles only — others get a localized error.
   const isOutput = String(profileClass || '').toLowerCase().includes('output')
@@ -282,6 +361,7 @@ export default function AnalysisPanel({ bytes, profileClass }) {
     <div className={styles.panel}>
       <h2 className={styles.panelTitle}>{t('analysis_title') || 'Analysis'}</h2>
       <p className={styles.intro}>{t('analysis_intro') || 'Profile-wide quality analyses derived from the device→PCS transform.'}</p>
+      <ProfileStatsSection bytes={bytes} t={t} />
       <NeutralSection bytes={bytes} profileClass={profileClass} tables={neutralTags} t={t} />
       <ReversalSection
         bytes={bytes} tags={tags} selTag={selTag} setSelTag={setSelTag}
