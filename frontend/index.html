@@ -37,6 +37,31 @@
     -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.google-analytics.com; connect-src 'self' blob: https:; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
 
+    <!--
+      Anti-clickjacking. NOTE: the `frame-ancestors 'none'` in the CSP above is
+      INERT — per spec that directive (like report-uri/sandbox) is only honored
+      in an HTTP RESPONSE header, and this CSP is delivered via <meta>. The prod
+      subpath (/var/www/profiletool/, served by nginx outside chardata's helmet)
+      ships no X-Frame-Options either, so framing is otherwise unblocked. The
+      real fix is an HTTP header on the nginx `location /profiletool/` block
+      (X-Frame-Options: DENY  +  a header-delivered CSP with frame-ancestors);
+      this inline guard is the defence that ships without server access.
+
+      It hides the document by default and only reveals it when we are the top
+      window; if we're framed it attempts to bust out. A sandboxed iframe that
+      neutralizes the bust-out still can't reveal the page — it stays display:none
+      — so the clickjack target is never visible. The legit chardata handoff is a
+      window.open popup (self === top), so this never interferes with it.
+
+      The guard lives in public/noclickjack.js (a classic, same-origin script) —
+      NOT inline — because this page's CSP deliberately omits 'unsafe-inline' from
+      script-src (the inline-script ban, see comment above). Loaded synchronously
+      in <head> so it runs before the body is parsed/painted; served from public/
+      so Vite copies it verbatim (no bundling/minify that would perturb it).
+    -->
+    <style id="_noclickjack">html{display:none !important}</style>
+    <script src="%BASE_URL%noclickjack.js"></script>
+
     <!-- Primary SEO -->
     <title>ICC Profile Tool — Inspect, Validate &amp; Edit ICC Profiles Online</title>
     <meta name="description" content="Free, browser-based ICC profile viewer, inspector and editor. Open any .icc or .icm profile to read its header and every tag, see tone curves, CLUTs and gamut, evaluate transforms, and round-trip edit — all locally, no upload." />
