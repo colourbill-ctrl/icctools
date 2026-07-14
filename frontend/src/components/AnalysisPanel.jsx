@@ -196,7 +196,7 @@ function ProfileStatsSection({ bytes, t }) {
   }, [bytes])
 
   const fmtVol = (v) => (v == null ? '—' : Math.round(v).toLocaleString())
-  const fmtRt = (rt) => (rt == null ? '—' : `${rt.meanDE.toFixed(2)} · ${rt.p90DE.toFixed(2)} · ${rt.maxDE.toFixed(2)}`)
+  const fmtRt1 = (rt, key) => (rt == null ? '—' : rt[key].toFixed(2))
 
   return (
     <Collapsible title={t('analysis_stats_heading') || 'Profile Statistics'} defaultOpen>
@@ -215,17 +215,24 @@ function ProfileStatsSection({ bytes, t }) {
         <table className={styles.table}>
           <thead>
             <tr>
-              <th>{t('stats_intent') || 'Rendering intent'}</th>
-              <th>{t('stats_gamut_volume') || 'Gamut volume (ΔE³)'}</th>
-              <th>{t('stats_roundtrip') || 'Round-trip ΔE (mean · P90 · max)'}</th>
+              <th rowSpan={2}>{t('stats_intent') || 'Rendering intent'}</th>
+              <th rowSpan={2} className={styles.statNum}>{t('stats_gamut_volume') || 'Gamut volume (ΔE³)'}</th>
+              <th colSpan={3} style={{ textAlign: 'center' }}>{t('stats_roundtrip') || 'Round-trip ΔE'}</th>
+            </tr>
+            <tr>
+              <th className={styles.statNum}>{t('stats_mean') || 'mean'}</th>
+              <th className={styles.statNum}>{t('stats_p90') || 'P90'}</th>
+              <th className={styles.statNum}>{t('stats_max') || 'max'}</th>
             </tr>
           </thead>
           <tbody>
             {state.rows.map((r) => (
               <tr key={r.key}>
                 <td>{t(r.key) || r.fallback}</td>
-                <td className={styles.num}>{fmtVol(r.vol)}</td>
-                <td className={styles.mono}>{fmtRt(r.rt)}</td>
+                <td className={styles.statNum}>{fmtVol(r.vol)}</td>
+                <td className={styles.statNum}>{fmtRt1(r.rt, 'meanDE')}</td>
+                <td className={styles.statNum}>{fmtRt1(r.rt, 'p90DE')}</td>
+                <td className={styles.statNum}>{fmtRt1(r.rt, 'maxDE')}</td>
               </tr>
             ))}
           </tbody>

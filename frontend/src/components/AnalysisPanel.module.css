@@ -160,6 +160,11 @@
 }
 
 .num { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* Right-aligned, fixed-width digits so numbers line up on the decimal point
+   under their column label (Profile Statistics table). */
+.statNum { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.table th.statNum { text-align: right; }
 .mono { font-family: var(--font-mono); font-size: 0.78rem; white-space: nowrap; }
 
 /* Channel cell stays on one line; the ink-vector cell WRAPS so wide nCLR vectors
