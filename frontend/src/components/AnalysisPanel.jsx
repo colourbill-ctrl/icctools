@@ -196,7 +196,20 @@ function ProfileStatsSection({ bytes, t }) {
   }, [bytes])
 
   const fmtVol = (v) => (v == null ? '—' : Math.round(v).toLocaleString())
-  const fmtRt1 = (rt, key) => (rt == null ? '—' : rt[key].toFixed(2))
+  // Pad each round-trip column to a common width with figure spaces (U+2007 —
+  // digit-width under tabular-nums) so the values stay decimal-aligned even
+  // though the column is centre-aligned under its label.
+  const RT = [
+    { key: 'meanDE', label: t('stats_mean') || 'mean' },
+    { key: 'p90DE',  label: t('stats_p90')  || 'P90' },
+    { key: 'maxDE',  label: t('stats_max')  || 'max' },
+  ]
+  const rtPad = {}
+  for (const { key } of RT) {
+    const strs = state.rows.map((r) => (r.rt == null ? '—' : r.rt[key].toFixed(2)))
+    const w = strs.reduce((m, s) => Math.max(m, s.length), 0)
+    rtPad[key] = strs.map((s) => ' '.repeat(w - s.length) + s)
+  }
 
   return (
     <Collapsible title={t('analysis_stats_heading') || 'Profile Statistics'} defaultOpen>
@@ -220,19 +233,19 @@ function ProfileStatsSection({ bytes, t }) {
               <th colSpan={3} style={{ textAlign: 'center' }}>{t('stats_roundtrip') || 'Round-trip ΔE'}</th>
             </tr>
             <tr>
-              <th className={styles.statNum}>{t('stats_mean') || 'mean'}</th>
-              <th className={styles.statNum}>{t('stats_p90') || 'P90'}</th>
-              <th className={styles.statNum}>{t('stats_max') || 'max'}</th>
+              {RT.map(({ key, label }) => (
+                <th key={key} className={styles.statNumC}>{label}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {state.rows.map((r) => (
+            {state.rows.map((r, i) => (
               <tr key={r.key}>
                 <td>{t(r.key) || r.fallback}</td>
                 <td className={styles.statNum}>{fmtVol(r.vol)}</td>
-                <td className={styles.statNum}>{fmtRt1(r.rt, 'meanDE')}</td>
-                <td className={styles.statNum}>{fmtRt1(r.rt, 'p90DE')}</td>
-                <td className={styles.statNum}>{fmtRt1(r.rt, 'maxDE')}</td>
+                {RT.map(({ key }) => (
+                  <td key={key} className={styles.statNumC}>{rtPad[key][i]}</td>
+                ))}
               </tr>
             ))}
           </tbody>

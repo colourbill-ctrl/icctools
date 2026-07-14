@@ -161,10 +161,14 @@
 
 .num { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
-/* Right-aligned, fixed-width digits so numbers line up on the decimal point
-   under their column label (Profile Statistics table). */
-.statNum { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.table th.statNum { text-align: right; }
+/* Profile Statistics numeric cells. text-align lives on the `.table th/td`
+   overrides so it beats the base `.table th/td { text-align: left }`, which
+   otherwise wins on specificity and left-aligns the data. Gamut volume is
+   right-aligned to its data; mean/P90/max are centre-aligned under their label,
+   with values figure-space-padded so they stay decimal-aligned when centred. */
+.statNum, .statNumC { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.table th.statNum,  .table td.statNum  { text-align: right; }
+.table th.statNumC, .table td.statNumC { text-align: center; }
 .mono { font-family: var(--font-mono); font-size: 0.78rem; white-space: nowrap; }
 
 /* Channel cell stays on one line; the ink-vector cell WRAPS so wide nCLR vectors
