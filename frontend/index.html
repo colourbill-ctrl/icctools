@@ -35,17 +35,17 @@
       that exfil path (defence-in-depth alongside the no-innerHTML invariant — see
       hooks/pre-commit, which rejects any innerHTML sink in frontend/src).
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.google-analytics.com; connect-src 'self' blob: https:; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.google-analytics.com; connect-src 'self' blob: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'" />
 
     <!--
-      Anti-clickjacking. NOTE: the `frame-ancestors 'none'` in the CSP above is
-      INERT — per spec that directive (like report-uri/sandbox) is only honored
-      in an HTTP RESPONSE header, and this CSP is delivered via <meta>. The prod
-      subpath (/var/www/profiletool/, served by nginx outside chardata's helmet)
-      ships no X-Frame-Options either, so framing is otherwise unblocked. The
-      real fix is an HTTP header on the nginx `location /profiletool/` block
-      (X-Frame-Options: DENY  +  a header-delivered CSP with frame-ancestors);
-      this inline guard is the defence that ships without server access.
+      Anti-clickjacking. `frame-ancestors` is deliberately NOT in the <meta> CSP
+      above: per spec that directive (like report-uri/sandbox) is honored ONLY in
+      an HTTP RESPONSE header, so in <meta> it does nothing except make the browser
+      log a "frame-ancestors is ignored when delivered via <meta>" warning. It is
+      delivered as a real header instead — the nginx `location /profiletool/` block
+      sets `X-Frame-Options: DENY` + `Content-Security-Policy: frame-ancestors
+      'none'` (applied 2026-07-14). The guard below is the in-app belt-and-braces
+      that also protects the Vite dev server (no nginx) and any origin misconfig.
 
       It hides the document by default and only reveals it when we are the top
       window; if we're framed it attempts to bust out. A sandboxed iframe that
