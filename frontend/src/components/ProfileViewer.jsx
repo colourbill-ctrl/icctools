@@ -13,8 +13,8 @@ const JsonPanel      = lazy(() => import('./JsonPanel.jsx'))
 // The Validation tab renders the Profile Assessment WG report; its WASM module
 // loads on tab open. (Tab key is still 'PAWG' — see lib/tabs.js.)
 const PawgPanel      = lazy(() => import('./PawgPanel.jsx'))
-// The Analysis tab hosts whole-profile quality analyses (L* tone reversal, …),
-// driven by the iccviz IccVizModel WASM module — loaded on tab open.
+// The Analysis tab hosts whole-profile quality analyses (profile statistics,
+// neutral-axis inking), driven by the iccviz IccVizModel WASM module — loaded on tab open.
 const AnalysisPanel  = lazy(() => import('./AnalysisPanel.jsx'))
 
 // Tab identity + URL-fragment aliases live in lib/tabs.js (TAB_DEFS).

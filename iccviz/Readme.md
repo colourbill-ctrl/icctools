@@ -71,7 +71,7 @@ parse is the expensive part, not enumeration).
 
 ```cpp
 enum class Kind   { Curve1D=1, ChromaticityXY=2, NamedColorsAB=3, NamedColorsXY=4,
-                    ClutImage=5, InkReversalL=7, NeutralAxisInking=8 };  // stable, append-only
+                    ClutImage=5, NeutralAxisInking=8 };  // stable, append-only (6,7 retired/reserved)
 enum class Output { Graph, Raster };
 enum class Role   { Primary, Hint };                  // profile data vs reference geometry
 enum class Shape  { Polyline, ClosedPath, Scatter };

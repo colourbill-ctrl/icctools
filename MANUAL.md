@@ -25,8 +25,9 @@ Everything runs client-side. Profile bytes never leave the browser tab.
    - [Header](#3-1-header)
    - [Tags](#3-2-tags)
    - [Validation](#3-3-validation)
-   - [XML](#3-4-xml)
-   - [JSON](#3-5-json)
+   - [Analysis](#3-4-analysis)
+   - [XML](#3-5-xml)
+   - [JSON](#3-6-json)
 4. [Round-trip editing](#4-round-trip-editing)
 5. [Launching from chardata](#5-launching-from-chardata)
 6. [Launching with a URL](#6-launching-with-a-url)
@@ -135,13 +136,30 @@ Each check is grouped under **Security**, **Conformance**, or **Quality**, and c
 
 The summary row at the top tallies each verdict as a coloured pill. **Click a pill to filter** the report below — a blue halo marks the categories currently shown, and pills with zero items are inactive. For example, switch off **Pass** and **N/A** to focus on just the Warns and Fails.
 
-### 3.4 XML
+### 3.4 Analysis
+
+Whole-profile quality analyses derived from the profile's colour transforms — computed by a dedicated WebAssembly module (the iccDEV visualization engine) that's fetched only when you first open this tab, and plotted in the app's own style. Each analysis is a collapsible section; one that doesn't apply to the loaded profile shows a short *not applicable* note instead (for example, a matrix/TRC display profile has no device↔PCS CLUTs to analyse).
+
+#### Profile Statistics
+
+Per rendering intent, two whole-profile metrics computed from the device↔PCS lookup tables:
+
+- **Gamut volume** — the volume (in ΔE\*ab³) enclosed by the device → PCS (`A2B`) transform, measured by voxelising the gamut boundary and counting the enclosed cells. A robust estimate of how much colour the profile can reproduce.
+- **Round-trip ΔE** — how accurately the `B2A` (PCS → device) table inverts the `A2B`: in-gamut Lab values are pushed Lab → device → Lab and the error is reported as **mean**, **P90**, and **max** ΔE\*ab.
+
+One row per intent (Perceptual, Relative Colorimetric, Saturation, Absolute Colorimetric); intents whose tags are absent are omitted.
+
+#### Neutral Axis Inking
+
+Sweeps the neutral axis (a\*=b\*=0) from white (L\*=100) down to black (L\*=0) through the profile's `B2A` (PCS → device) table and plots how much of each device colorant the profile lays down along the way — the classic GCR / neutral-build curve. One curve per device channel, colour-coded per colorant. **Output (printer) profiles only**; other profile classes show a note.
+
+### 3.5 XML
 
 Converts the profile to XML (via IccLibXML, the same writer the iccDEV `iccToXml` CLI uses) and shows it in a CodeMirror editor with syntax highlighting. Edit the XML and click **Convert to ICC** to round-trip back to binary; the viewer re-validates and the **Save ICC profile** button downloads the result.
 
 A **dirty** indicator shows when the editor text differs from the last converter output, so you can tell at a glance whether your edits have been applied. If conversion fails, IccLibXML's parse error is shown above the editor with the offending line / column.
 
-### 3.5 JSON
+### 3.6 JSON
 
 Same idea as the XML tab but using a JSON representation of the profile produced by the validator wrapper (`json-wrapper.cpp`). Edit, click **Convert to ICC**, save. The JSON form is more compact and easier to script against; the XML form is more familiar if you've used the iccDEV CLI tools.
 

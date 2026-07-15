@@ -266,10 +266,21 @@ body.dark .diag {
 <tr><td><strong>Not Run</strong></td><td>The check was skipped</td></tr>
 </tbody></table>
 <p>The summary row at the top tallies each verdict as a coloured pill. <strong>Click a pill to filter</strong> the report below — a blue halo marks the categories currently shown, and pills with zero items are inactive. For example, switch off <strong>Pass</strong> and <strong>N/A</strong> to focus on just the Warns and Fails.</p>
-<h3 id="3-4-xml">3.4 XML</h3>
+<h3 id="3-4-analysis">3.4 Analysis</h3>
+<p>Whole-profile quality analyses derived from the profile's colour transforms — computed by a dedicated WebAssembly module (the iccDEV visualization engine) that's fetched only when you first open this tab, and plotted in the app's own style. Each analysis is a collapsible section; one that doesn't apply to the loaded profile shows a short <em>not applicable</em> note instead (for example, a matrix/TRC display profile has no device↔PCS CLUTs to analyse).</p>
+<h4>Profile Statistics</h4>
+<p>Per rendering intent, two whole-profile metrics computed from the device↔PCS lookup tables:</p>
+<ul>
+<li><strong>Gamut volume</strong> — the volume (in ΔE*ab³) enclosed by the device → PCS (<code>A2B</code>) transform, measured by voxelising the gamut boundary and counting the enclosed cells. A robust estimate of how much colour the profile can reproduce.</li>
+<li><strong>Round-trip ΔE</strong> — how accurately the <code>B2A</code> (PCS → device) table inverts the <code>A2B</code>: in-gamut Lab values are pushed Lab → device → Lab and the error is reported as <strong>mean</strong>, <strong>P90</strong>, and <strong>max</strong> ΔE*ab.</li>
+</ul>
+<p>One row per intent (Perceptual, Relative Colorimetric, Saturation, Absolute Colorimetric); intents whose tags are absent are omitted.</p>
+<h4>Neutral Axis Inking</h4>
+<p>Sweeps the neutral axis (a*=b*=0) from white (L*=100) down to black (L*=0) through the profile's <code>B2A</code> (PCS → device) table and plots how much of each device colorant the profile lays down along the way — the classic GCR / neutral-build curve. One curve per device channel, colour-coded per colorant. <strong>Output (printer) profiles only</strong>; other profile classes show a note.</p>
+<h3 id="3-5-xml">3.5 XML</h3>
 <p>Converts the profile to XML (via IccLibXML, the same writer the iccDEV <code>iccToXml</code> CLI uses) and shows it in a CodeMirror editor with syntax highlighting. Edit the XML and click <strong>Convert to ICC</strong> to round-trip back to binary; the viewer re-validates and the <strong>Save ICC profile</strong> button downloads the result.</p>
 <p>A <strong>dirty</strong> indicator shows when the editor text differs from the last converter output, so you can tell at a glance whether your edits have been applied. If conversion fails, IccLibXML's parse error is shown above the editor with the offending line / column.</p>
-<h3 id="3-5-json">3.5 JSON</h3>
+<h3 id="3-6-json">3.6 JSON</h3>
 <p>Same idea as the XML tab but using a JSON representation of the profile produced by the validator wrapper (<code>json-wrapper.cpp</code>). Edit, click <strong>Convert to ICC</strong>, save. The JSON form is more compact and easier to script against; the XML form is more familiar if you've used the iccDEV CLI tools.</p>
 <hr>
 <h2 id="4-round-trip-editing">4. Round-trip editing</h2>
