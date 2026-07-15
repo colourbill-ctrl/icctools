@@ -21,6 +21,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>     // std::size_t
+#include <cstdint>     // std::uint32_t / std::uint64_t (used below; previously only transitive)
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -1185,6 +1187,13 @@ bool buildNeutralAxisGraph(CIccProfile* pIcc, icTagSignature sig, Graph& out,
   CIccApplyXform* apply = xform->GetNewApply(st);
   if (!apply || st != icCmmStatOk) { delete apply; delete xform; return skip("transform apply init failed"); }
 
+  // Apply reads GetNumSrcSamples()/writes GetNumDstSamples(); require they match the
+  // raw LUT channel counts so the src/dst buffers below (sized inCh/outCh) cannot be
+  // over-read/over-written by a multi-element transform (cf. iccDEV #1633).
+  if (xform->GetNumSrcSamples() != inCh || xform->GetNumDstSamples() != outCh) {
+    delete apply; delete xform; return skip("transform channel-count mismatch");
+  }
+
   // One series per device colorant; sample L* from 100 (white) down to 0 (black).
   std::vector<Series> series(outCh);
   for (int c = 0; c < outCh; ++c) {
@@ -1263,21 +1272,41 @@ bool buildNeutralAxisGraph(CIccProfile* pIcc, icTagSignature sig, Graph& out,
 // ── Gamut volume: boundary voxelisation + flood-fill (see IccVizModel.hpp) ────
 // Pure Lab-space geometry, ported verbatim from chardata's gamut-wasm
 // `gamutVolumeIcc` (the ICC-specific device→PCS boundary eval lives in the public
-// GamutVolume() below). Why this and not signed-tetra / convex hull / star-|tetra|
-// on the boundary: the device 2-skeleton tiles the gamut surface but self-overlaps
-// and isn't consistently wound, so those all mis-measure; voxel occupancy of the
+// GamutVolume() below). Why voxel occupancy and not signed-tetra / convex hull /
+// star-|tetra| on the boundary: the sampled device boundary self-overlaps and
+// isn't consistently wound, so those all mis-measure; voxel occupancy of the
 // enclosed solid is robust. Dilate seals sampling gaps against flood-fill leaks;
-// the matching erosion removes the dilation's outward bias.
+// the erosion removes MOST of the dilation's outward bias but not all of it — the
+// box (Chebyshev) dilation and the 6-neighbour (city-block) erosion cancel on
+// axis-aligned faces yet leave a residual outward bias at convex corners/edges,
+// so `volume` is a slight over-estimate there. Combined with the 2-skeleton
+// sampling caveat in boundaryDeviceSamples() (the true boundary is under-captured
+// for N≥4), treat the result as a robust ESTIMATE, not an exact measure.
+
+// Bounds for the untrusted / caller-supplied gamut-volume geometry (see the
+// GamutVolume() argument clamping and the cell ceiling below).
+const int           kMaxGamutDilate = 4;            // structuring-element radius clamp (DoS guard)
+const double        kMinVoxelSize   = 0.5;          // ΔE*ab floor: caps the Lab grid resolution
+const std::uint64_t kMaxVoxelCells  = 256000000ull; // total voxel ceiling (~256 MB; CWE-190/400)
 
 // Voxelise flat Lab boundary points (x3), dilate by `dilate`, flood-fill the
 // exterior, erode the dilation back, return the enclosed volume (ΔE*ab³). Fixed
-// generous Lab box so real gamuts sit strictly interior to it.
+// generous Lab box so real gamuts sit strictly interior to it; points outside the
+// box are dropped (not clamped onto its face). Returns -1 (and enclosedCells = -1)
+// if the grid would exceed kMaxVoxelCells.
 double voxelEnclosedVolume(const std::vector<float>& lab, double vs,
                            int dilate, long long& enclosedCells) {
   const double Lmin = -20, Lmax = 120, ABmin = -150, ABmax = 150;
   const int nL = std::max(1, (int)std::ceil((Lmax - Lmin) / vs));
   const int nA = std::max(1, (int)std::ceil((ABmax - ABmin) / vs));
   const int nB = nA;
+  // Reject an oversized/overflowing grid before allocating (a tiny caller voxelSize
+  // could otherwise wrap the size_t product on 32-bit targets — CWE-190). Signalled
+  // back through enclosedCells = -1 so GamutVolume() can fail cleanly.
+  const std::uint64_t cells64 = static_cast<std::uint64_t>(nL) *
+                                static_cast<std::uint64_t>(nA) *
+                                static_cast<std::uint64_t>(nB);
+  if (cells64 == 0 || cells64 > kMaxVoxelCells) { enclosedCells = -1; return -1.0; }
   auto IDX = [&](int l, int a, int b) -> std::size_t {
     return ((std::size_t)l * nA + a) * nB + b;
   };
@@ -1286,26 +1315,34 @@ double voxelEnclosedVolume(const std::vector<float>& lab, double vs,
 
   const int nPts = (int)(lab.size() / 3);
   for (int i = 0; i < nPts; ++i) {
-    const int li = (int)std::floor((lab[i*3]     - Lmin)  / vs);
-    const int ai = (int)std::floor((lab[i*3 + 1] - ABmin) / vs);
-    const int bi = (int)std::floor((lab[i*3 + 2] - ABmin) / vs);
+    // Bounded floor: drop points outside the Lab box rather than clamping their
+    // voxel onto the exterior face — a clamped solid voxel both clips the gamut to
+    // the box and can block a flood-fill seed on that face. Range-checking here also
+    // makes the float→int cast safe: GamutVolume filters only for finiteness, and a
+    // huge-but-finite coordinate is UB to cast (CWE-704).
+    const double lf = std::floor((lab[i*3]     - Lmin)  / vs);
+    const double af = std::floor((lab[i*3 + 1] - ABmin) / vs);
+    const double bf = std::floor((lab[i*3 + 2] - ABmin) / vs);
+    if (!(lf >= 0.0 && lf < nL) || !(af >= 0.0 && af < nA) || !(bf >= 0.0 && bf < nB))
+      continue;
+    const int li = (int)lf, ai = (int)af, bi = (int)bf;
     for (int dl = -dilate; dl <= dilate; ++dl)
       for (int da = -dilate; da <= dilate; ++da)
         for (int db = -dilate; db <= dilate; ++db)
           g[IDX(cl(li + dl, nL), cl(ai + da, nA), cl(bi + db, nB))] = 1;
   }
 
-  std::vector<int> st;
+  std::vector<std::size_t> st;   // linear voxel ids; size_t so a >INT_MAX grid can't truncate
   auto push = [&](int l, int a, int b) {
     const std::size_t id = IDX(l, a, b);
-    if (g[id] == 0) { g[id] = 2; st.push_back((int)id); }
+    if (g[id] == 0) { g[id] = 2; st.push_back(id); }
   };
   for (int a = 0; a < nA; ++a) for (int b = 0; b < nB; ++b) { push(0, a, b); push(nL - 1, a, b); }
   for (int l = 0; l < nL; ++l) for (int b = 0; b < nB; ++b) { push(l, 0, b); push(l, nA - 1, b); }
   for (int l = 0; l < nL; ++l) for (int a = 0; a < nA; ++a) { push(l, a, 0); push(l, a, nB - 1); }
   while (!st.empty()) {
-    const int id = st.back(); st.pop_back();
-    const int b = id % nB, a = (id / nB) % nA, l = (int)(id / ((std::size_t)nB * nA));
+    const std::size_t id = st.back(); st.pop_back();
+    const int b = (int)(id % nB), a = (int)((id / nB) % nA), l = (int)(id / ((std::size_t)nB * nA));
     if (l > 0)      push(l - 1, a, b);
     if (l < nL - 1) push(l + 1, a, b);
     if (a > 0)      push(l, a - 1, b);
@@ -1316,16 +1353,16 @@ double voxelEnclosedVolume(const std::vector<float>& lab, double vs,
 
   const std::size_t total = (std::size_t)nL * nA * nB;
   for (int pass = 0; pass < dilate; ++pass) {
-    std::vector<int> add;
+    std::vector<std::size_t> add;
     for (std::size_t id = 0; id < total; ++id) {
       if (g[id] == 2) continue;
       const int b = (int)(id % nB), a = (int)((id / nB) % nA), l = (int)(id / ((std::size_t)nB * nA));
       if ((l > 0      && g[IDX(l - 1, a, b)] == 2) || (l < nL - 1 && g[IDX(l + 1, a, b)] == 2) ||
           (a > 0      && g[IDX(l, a - 1, b)] == 2) || (a < nA - 1 && g[IDX(l, a + 1, b)] == 2) ||
           (b > 0      && g[IDX(l, a, b - 1)] == 2) || (b < nB - 1 && g[IDX(l, a, b + 1)] == 2))
-        add.push_back((int)id);
+        add.push_back(id);
     }
-    for (int id : add) g[id] = 2;
+    for (std::size_t id : add) g[id] = 2;
   }
   std::size_t ext = 0;
   for (std::size_t i = 0; i < total; ++i) if (g[i] == 2) ++ext;
@@ -1336,6 +1373,11 @@ double voxelEnclosedVolume(const std::vector<float>& lab, double vs,
 // Device-cube 2-skeleton (boundary-face) samples in 0..1 (IccProfLib device
 // convention): for each free-axis pair (di,dj) swept 0..S, all 2^(N-2) corner
 // combinations of the remaining axes. Flat buffer, N floats per point.
+//
+// NOTE: for N==3 the 2-skeleton IS the full cube surface, but for N>=4 the gamut
+// boundary also includes the interiors of the 3-faces (three free coordinates),
+// which this does not sample — so for CMYK+ the enclosed volume is biased low.
+// This is the sampling caveat referenced by voxelEnclosedVolume() above.
 std::vector<float> boundaryDeviceSamples(int N, int S) {
   std::vector<float> out;
   int fixed[kMaxInkChannels];
@@ -1639,18 +1681,23 @@ GamutVolumeResult GamutVolume(CIccProfile* pIcc, icTagSignature aToBTag,
   if (N < 1 || N > kMaxInkChannels)                     { delete x; return fail("unsupported device channel count"); }
   if (dstCh < 3)                                        { delete x; return fail("PCS output has < 3 channels"); }
 
-  // Sampling params: auto-pick any left at their sentinel (≤0).
+  // Sampling params: auto-pick any left at their sentinel (≤0), then bound the
+  // caller-supplied values so a crafted/typo argument can't drive a huge Lab grid
+  // or an unbounded dilate/erode (CWE-400/CWE-190). `!(vs > 0)` also rejects NaN.
   int S = samplesPerAxis, dl = dilate;
   double vs = voxelSize;
   {
     int aS, aDl; double aVs;
     gamutVolumeParams(N, aS, aVs, aDl);
     if ((S <= 0 || dl <= 0) && aS < 0) { delete x; return fail("too many device channels for volume"); }
-    if (S  <= 0) S  = aS;
-    if (vs <= 0) vs = aVs;
-    if (dl <= 0) dl = aDl;
+    if (S  <= 0)     S  = aS;
+    if (!(vs > 0.0)) vs = aVs;
+    if (dl <= 0)     dl = aDl;
   }
   if (S < 2) S = 2;
+  if (vs < kMinVoxelSize) vs = kMinVoxelSize;         // floor the Lab grid resolution
+  if (dl < 0) dl = 0;
+  if (dl > kMaxGamutDilate) dl = kMaxGamutDilate;     // clamp the structuring element
   // Hard ceiling on total boundary points (CWE-400 guard against a crafted profile).
   const double faces = (N * (N - 1) / 2.0) * std::pow(2.0, std::max(0, N - 2));
   if (faces * (double)(S + 1) * (S + 1) > 3000000.0) { delete x; return fail("device boundary too large for volume"); }
@@ -1684,10 +1731,15 @@ GamutVolumeResult GamutVolume(CIccProfile* pIcc, icTagSignature aToBTag,
   delete ap;
   delete x;
 
+  // Degeneracy floor: need >=3 finite boundary points to enclose any volume. NOTE
+  // a boundary that survives this but has collapsed toward a point/plane still
+  // yields a small, technically-ok volume with no distinct "degenerate" signal —
+  // a caller cannot tell "genuinely tiny gamut" from "sampling collapsed".
   if (lab.size() < 9) return fail("no finite boundary samples");
 
   long long cells = 0;
   r.volume         = voxelEnclosedVolume(lab, vs, dl, cells);
+  if (cells < 0) return fail("voxel grid too large for volume");   // x/ap already freed above
   r.voxels         = cells;
   r.samplesPerAxis = S;
   r.voxelSize      = vs;
@@ -1729,7 +1781,11 @@ RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
   if (pcsSp != icSigLabData && pcsSp != icSigXYZData)   { delete xA; delete xB; return fail("PCS is not Lab/XYZ"); }
   if (N < 1 || N > kMaxInkChannels)                     { delete xA; delete xB; return fail("unsupported device channel count"); }
   if (nPcs < 3)                                         { delete xA; delete xB; return fail("PCS has < 3 channels"); }
-  if (xB->GetNumSrcSamples() < 3 || xB->GetNumDstSamples() != N) { delete xA; delete xB; return fail("BToA transform shape mismatch"); }
+  // xB reads GetNumSrcSamples() floats from pcs1 (sized nPcs) and writes
+  // GetNumDstSamples() into dev2 (sized N); require an exact match on BOTH so Apply
+  // can never over-read pcs1 (a crafted B2A declaring >nPcs input channels would
+  // otherwise read past the PCS buffer) or over-write dev2.
+  if (xB->GetNumSrcSamples() != nPcs || xB->GetNumDstSamples() != N) { delete xA; delete xB; return fail("BToA transform shape mismatch"); }
 
   int S = samplesPerAxis > 0 ? samplesPerAxis : roundTripSteps(N);
   if (S < 2) S = 2;
