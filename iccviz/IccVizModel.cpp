@@ -837,24 +837,6 @@ bool isPcsSpace(icColorSpaceSignature s) {
   return s == icSigLabData || s == icSigXYZData;
 }
 
-// One transform output (internal PCS encoding) → human L*. Returns NaN for an
-// unsupported PCS or a non-finite result, which callers drop.
-float pcsToLstar(const icFloatNumber* dst, int outCh, icColorSpaceSignature pcs) {
-  if (outCh < 3) return kNaN;
-  icFloatNumber v[3] = { dst[0], dst[1], dst[2] };
-  if (pcs == icSigLabData) {
-    icLabFromPcs(v);                  // PCS-encoded Lab → human L*a*b*
-    return std::isfinite(v[0]) ? static_cast<float>(v[0]) : kNaN;
-  }
-  if (pcs == icSigXYZData) {
-    icXyzFromPcs(v);                  // PCS-encoded XYZ → human XYZ (D50)
-    icFloatNumber lab[3] = { 0, 0, 0 };
-    icXYZtoLab(lab, v, nullptr);      // nullptr white → D50 default
-    return std::isfinite(lab[0]) ? static_cast<float>(lab[0]) : kNaN;
-  }
-  return kNaN;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Neutral Axis Inking  (Kind::NeutralAxisInking)
 //
@@ -1152,7 +1134,7 @@ void gamutVolumeParams(int N, int& steps, double& vs, int& dilate) {
 
 // ── B2A round-trip helpers ────────────────────────────────────────────────────
 // Internal-PCS-encoded (Lab or XYZ) → human L*a*b*. Returns false for an
-// unsupported PCS. (pcsToLstar above returns only L*; here we need full Lab.)
+// unsupported PCS.
 bool pcsToLabFull(const icFloatNumber* pcs, icColorSpaceSignature sp, icFloatNumber out[3]) {
   icFloatNumber v[3] = { pcs[0], pcs[1], pcs[2] };
   if (sp == icSigLabData) { icLabFromPcs(v); out[0]=v[0]; out[1]=v[1]; out[2]=v[2]; return true; }
