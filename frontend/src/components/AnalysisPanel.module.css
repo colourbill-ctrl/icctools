@@ -103,6 +103,19 @@
 .table th.statNum,  .table td.statNum  { text-align: right; }
 .table th.statNumC, .table td.statNumC { text-align: center; }
 
+/* Degenerate-gamut flag: a ⚠ appended to the unreliable volume cell, plus a note
+   below the table. Uses --warning so it reads as caution, not error. */
+.warnMark { color: var(--warning); cursor: help; }
+.statWarning {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--surface-tint);
+  color: var(--warning);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
 /* ── status / loading / diagnostics ───────────────────────────────────────── */
 .status,
 .loading {

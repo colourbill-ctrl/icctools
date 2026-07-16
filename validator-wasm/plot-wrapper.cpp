@@ -411,7 +411,7 @@ std::string gamutVolumeImpl(const std::string& bytes, const std::string& tagSigS
   if (!v.ok) return json{{"error", v.error}}.dump();
   return json{{"volume", v.volume}, {"voxels", v.voxels},
               {"samplesPerAxis", v.samplesPerAxis}, {"voxelSize", v.voxelSize},
-              {"nColorants", v.nColorants}}.dump();
+              {"nColorants", v.nColorants}, {"degenerate", v.degenerate}}.dump();
 }
 
 // ── exception-safe boundary wrappers ─────────────────────────────────────────

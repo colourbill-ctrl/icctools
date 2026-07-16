@@ -67,10 +67,13 @@ function ProfileStatsSection({ bytes, t }) {
     ;(async () => {
       const rows = []
       for (const it of STATS_INTENTS) {
-        let vol = null, rt = null
-        try { vol = (await gamutVolume(bytes, it.tag, it.intent)).volume } catch { /* AToB tag absent */ }
+        let vol = null, degenerate = false, rt = null
+        try {
+          const g = await gamutVolume(bytes, it.tag, it.intent)
+          vol = g.volume; degenerate = !!g.degenerate   // iccviz flags a collapsed/unreliable gamut boundary
+        } catch { /* AToB tag absent */ }
         try { rt = await roundTripDE(bytes, it.intent) } catch { /* AToB/BToA tags absent */ }
-        if (vol != null || rt != null) rows.push({ key: it.key, fallback: it.fallback, vol, rt })
+        if (vol != null || rt != null) rows.push({ key: it.key, fallback: it.fallback, vol, degenerate, rt })
       }
       if (cancelled) return
       statsCache.set(bytes, rows)
@@ -94,6 +97,13 @@ function ProfileStatsSection({ bytes, t }) {
     const w = strs.reduce((m, s) => Math.max(m, s.length), 0)
     rtPad[key] = strs.map((s) => ' '.repeat(w - s.length) + s)
   }
+
+  // iccviz sets `degenerate` when a gamut boundary collapsed / was mostly
+  // non-finite, so that intent's volume is unreliable — flag it (⚠ on the cell +
+  // a note below) rather than presenting a bogus number as trustworthy.
+  const degenerateMsg = t('stats_gamut_degenerate') ||
+    'The gamut boundary collapsed or was mostly undefined, so this gamut volume is unreliable.'
+  const anyDegenerate = state.rows.some((r) => r.degenerate)
 
   return (
     <Collapsible title={t('analysis_stats_heading') || 'Profile Statistics'} defaultOpen>
@@ -126,7 +136,10 @@ function ProfileStatsSection({ bytes, t }) {
             {state.rows.map((r, i) => (
               <tr key={r.key}>
                 <td>{t(r.key) || r.fallback}</td>
-                <td className={styles.statNum}>{fmtVol(r.vol)}</td>
+                <td className={styles.statNum}>
+                  {fmtVol(r.vol)}
+                  {r.degenerate && <span className={styles.warnMark} title={degenerateMsg} aria-label={degenerateMsg}> ⚠</span>}
+                </td>
                 {RT.map(({ key }) => (
                   <td key={key} className={styles.statNumC}>{rtPad[key][i]}</td>
                 ))}
@@ -135,6 +148,7 @@ function ProfileStatsSection({ bytes, t }) {
           </tbody>
         </table>
       )}
+      {anyDegenerate && <div className={styles.statWarning}>⚠ {degenerateMsg}</div>}
     </Collapsible>
   )
 }
