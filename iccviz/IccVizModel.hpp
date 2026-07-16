@@ -218,24 +218,30 @@ RasterResult RenderRaster(CIccProfile* pIcc, const std::string& id, Verbosity v 
 
 // ── Gamut volume ─────────────────────────────────────────────────────────────
 // Volume (ΔE*ab³) enclosed by a profile's gamut, measured by boundary
-// voxelisation + flood-fill: sample the device-cube 2-skeleton through the
-// AToB transform → L*a*b*, voxelise, dilate to seal sampling gaps, flood-fill
+// voxelisation + flood-fill: sample the device-cube boundary (all facets) through
+// the AToB transform → L*a*b*, voxelise, dilate to seal sampling gaps, flood-fill
 // the exterior, erode the dilation back, count enclosed voxels. A scalar
 // metric — not a Graph/Raster — so it sits outside the Enumerate/Render path.
 //
-// Ported from chardata's lcms2 `gamutVolumeIcc`; here the device→PCS step uses
+// Adapted from chardata's lcms2 `gamutVolumeIcc`; here the device→PCS step uses
 // IccProfLib (CIccXform on `aToBTag`, device values 0..1, PCS→Lab decoded via
 // icLabFromPcs / icXyzFromPcs+icXYZtoLab). Pick (tag, intent) to select the
 // gamut: perceptual = AToB0/icPerceptual, relative = AToB1/icRelativeColorimetric,
 // saturation = AToB2/icSaturation, absolute = AToB1/icAbsoluteColorimetric.
+//
+// `volume` is a discrete-voxel estimate (resolution = voxelSize). Check
+// `degenerate`: when true the boundary sampling largely failed or collapsed, so
+// the number is unreliable and a caller cannot tell "genuinely tiny gamut" from
+// "sampling collapsed" — surface it as N/A rather than a real measurement.
 struct GamutVolumeResult {
   bool        ok             = false;
   std::string error;
   double      volume         = 0.0;  // ΔE*ab³ = enclosed voxels × voxelSize³
   long long   voxels         = 0;
-  int         samplesPerAxis = 0;    // device 2-skeleton boundary steps used
+  int         samplesPerAxis = 0;    // device-cube boundary steps per free axis
   double      voxelSize      = 0.0;  // Lab grid cell edge (ΔE*ab)
   int         nColorants     = 0;    // device channels
+  bool        degenerate     = false;// boundary collapsed / mostly non-finite: volume unreliable
 };
 
 // Compute the gamut volume for one device→PCS (AToB) tag at `intent`. Pass 0 for
