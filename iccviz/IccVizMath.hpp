@@ -85,7 +85,9 @@ struct XY {
   float y = 0.0f;
 };
 
-// 16-bit ICC XYZ (s15Fixed16 stored as integer/65535) → CIE xy chromaticity.
+// xyFromICCXYZ — project a 16-bit ICC XYZ (s15Fixed16 stored as integer/65535) to
+// CIE xy chromaticity. Separate from the float version because the integer source
+// can't be NaN/Inf, so it skips those checks; a near-zero sum returns (0,0).
 inline XY xyFromICCXYZ(const icXYZNumber* xyz) {
   // integers, so don't have to test for NaN or Inf
   float X = xyz->X / 65535.0f;
@@ -96,7 +98,9 @@ inline XY xyFromICCXYZ(const icXYZNumber* xyz) {
   return XY{X / sum, Y / sum};
 }
 
-// Float XYZ → CIE xy chromaticity.
+// xyFromXYZFloat — project a floating-point XYZ triple to CIE xy chromaticity; the
+// float twin of xyFromICCXYZ for values that come from a transform rather than a
+// stored tag. A near-zero (or non-positive) sum returns (0,0) to avoid dividing by ~0.
 inline XY xyFromXYZFloat(const icFloatNumber* xyz) {
   float X = xyz[0];
   float Y = xyz[1];
@@ -106,7 +110,10 @@ inline XY xyFromXYZFloat(const icFloatNumber* xyz) {
   return XY{X / sum, Y / sum};
 }
 
-// Planckian (blackbody) locus approximation in CIE xy.
+// approxPlanck — approximate the planckian (blackbody) locus in CIE xy for a colour
+// temperature `t` (Kelvin), used to draw the reference curve on the chromaticity
+// chart. Uses the Kang et al. piecewise polynomial fit rather than integrating the
+// Planck radiator, which is fast, table-free and accurate enough for a plotted guide.
 //   https://en.wikipedia.org/wiki/Planckian_locus
 //   Bongsoon Kang; Ohak Moon; Changhee Hong; Honam Lee; Bonghwan Cho;
 //   Youngsun Kim (December 2002). "Design of Advanced Color Temperature Control

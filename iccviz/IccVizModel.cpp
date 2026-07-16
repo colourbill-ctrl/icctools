@@ -40,6 +40,10 @@ const float kNaN = std::numeric_limits<float>::quiet_NaN();
 bool g_silent = false;
 std::string g_diagContext;
 
+// effectiveSilent — decide whether to suppress diagnostics for this call. An
+// explicit per-call Verbosity (Stderr/Silent) wins; Verbosity::Default defers to
+// the process-global g_silent switch. Centralised so every emit path shares one
+// precedence rule instead of re-deriving it.
 bool effectiveSilent(Verbosity v) {
   switch (v) {
     case Verbosity::Stderr: return false;
@@ -48,9 +52,10 @@ bool effectiveSilent(Verbosity v) {
   }
 }
 
-// Echo a result's diagnostics to stderr unless silenced. The message text already
-// carries the exact upstream wording (Skipping … / WARNING - … / ERROR - …); the
-// optional context reproduces iccProfileVisualize's leading "<filename>: ".
+// emitDiagnostics — echo a result's diagnostics to stderr unless silenced. The
+// message text already carries the exact upstream wording (Skipping … /
+// WARNING - … / ERROR - …); the optional context reproduces iccProfileVisualize's
+// leading "<filename>: " so library output can match the CLI byte-for-byte.
 void emitDiagnostics(const std::vector<Diagnostic>& diags, Verbosity v) {
   if (effectiveSilent(v)) return;
   for (const Diagnostic& d : diags) {
@@ -61,6 +66,9 @@ void emitDiagnostics(const std::vector<Diagnostic>& diags, Verbosity v) {
   }
 }
 
+// sigStr — format a 4-char ICC tag/space signature as its printable string (e.g.
+// 'A2B0'). Thin wrapper over IccProfLib's icGetSigStr with a local buffer, so the
+// many callers that build titles and descriptor ids don't each manage a buffer.
 std::string sigStr(icTagSignature sig) {
   char buf[64];
   return std::string(icGetSigStr(buf, sizeof buf, static_cast<icUInt32Number>(sig)));
@@ -87,6 +95,10 @@ const std::vector<int> locusLabelWavelengths =
   700
 };
 
+// channelName — human label for one channel of a device or PCS space (e.g.
+// "Cyan", "L*"), choosing the input or output space per `useInput`. Delegates to
+// IccProfLib's icColorIndexName so channel names match the rest of the toolchain
+// rather than being invented here.
 std::string channelName(int index, bool useInput, icColorSpaceSignature inSpace,
                         icColorSpaceSignature outSpace, int inCh, int outCh) {
   char buf[128];
@@ -95,6 +107,10 @@ std::string channelName(int index, bool useInput, icColorSpaceSignature inSpace,
   return std::string(buf);
 }
 
+// clipU8 — clamp a float sample into the 8-bit unsigned range when packing a CLUT
+// raster, mapping NaN→0 and +Inf→255. Written as explicit finite/range checks (not
+// a bare cast) so a malformed or non-finite CLUT value can never wrap or overflow
+// the output byte.
 unsigned char clipU8(icFloatNumber v) {
   if (std::isnan(v)) return 0;
   if (std::isinf(v)) return 255;
@@ -102,6 +118,8 @@ unsigned char clipU8(icFloatNumber v) {
   if (v > 255) return 255;
   return static_cast<unsigned char>(v);
 }
+// clipU16 — the 16-bit twin of clipU8: the same NaN→0 / +Inf→65535 / range clamping
+// for packing a 16-bit CLUT raster.
 unsigned short clipU16(icFloatNumber v) {
   if (std::isnan(v)) return 0;
   if (std::isinf(v)) return 65535;
@@ -110,6 +128,10 @@ unsigned short clipU16(icFloatNumber v) {
   return static_cast<unsigned short>(v);
 }
 
+// photometricFromSpace — map an ICC colour space to the TIFF PhotometricInterpretation
+// value the CLUT raster is tagged with (RGB=2, CMYK=5, CIELAB=8, Gray/Gamut=1,
+// N-ink → WhiteIsZero=0). One switch so the raster writer and any future exporter
+// agree on how each space is labelled.
 int photometricFromSpace(icColorSpaceSignature s) {
   switch (s) {
     case icSigRgbData: case icSigCmyData: case icSigXYZData: case icSigLuvData:
@@ -124,16 +146,22 @@ int photometricFromSpace(icColorSpaceSignature s) {
 
 // ── curve description + validation gate ──────────────────────────────────────
 
-// Validate a curve, returning the report text by reference. A status
-// > icValidateWarning means the curve is malformed (e.g. gamma 0, bad LUT
-// size). Callers no longer DROP failing curves: they enumerate them anyway and
-// surface this report as a diagnostic, so a malformed curve shows its reason
-// instead of the graph silently vanishing.
+// curveValidate — validate a curve, returning IccProfLib's report text by
+// reference. A status > icValidateWarning means the curve is malformed (e.g.
+// gamma 0, bad LUT size). Callers no longer DROP failing curves: they enumerate
+// them anyway and surface this report as a diagnostic, so a malformed curve shows
+// its reason instead of the graph silently vanishing.
 icValidateStatus curveValidate(CIccCurve* curve, const std::string& sigDesc,
                                std::string& report) {
   return curve->Validate(":" + sigDesc, report, nullptr);
 }
 
+// describeCurve — one-line human summary of a curve for the graph subtitle:
+// identity ("Y = X"), a single-entry gamma ("Y = X ^ g"), a sampled table
+// ("LookupTable[n]"), or IccProfLib's own Describe() text for richer types. The
+// non-CIccTagCurve path runs Validate() before Describe() so the formatter never
+// touches unvalidated, possibly-malformed data first (CWE-476); a bad curve is
+// still described (status is advisory), matching this module's don't-drop policy.
 std::string describeCurve(CIccCurve* curve) {
   if (auto* tc = dynamic_cast<CIccTagCurve*>(curve)) {
     auto size = tc->GetSize();
@@ -162,6 +190,12 @@ std::string describeCurve(CIccCurve* curve) {
 
 // ── producers ────────────────────────────────────────────────────────────────
 
+// buildCurveGraph — trace a tone/shaper curve as a polyline (input 0..1 → output
+// 0..1) plus a dashed identity reference line. The sample count adapts to the
+// curve — >=1000 for a smooth analytic curve, at least the LUT's own point count
+// so a fine sampled table is never under-drawn, and just 2 for a pure identity —
+// and every output is finiteness-guarded and clamped to [0,1] so a malformed curve
+// still yields a drawable, bounded series.
 Graph buildCurveGraph(CIccCurve* curve, const std::string& title) {
   Graph g;
   g.title = title;
@@ -204,6 +238,10 @@ Graph buildCurveGraph(CIccCurve* curve, const std::string& title) {
   return g;
 }
 
+// addPrimaryPoint — append one colorant/white-point XYZ tag to a chromaticity
+// series as a single xy point, skipping silently if the tag is absent or not an
+// XYZ tag. Factored out so the red/green/blue/white primaries are all projected to
+// xy and plotted identically on the CIE chart.
 void addPrimaryPoint(Graph& g, Series& s, CIccTag* tag, const char* label,
                      const char* colorHint) {
   auto* xyzTag = dynamic_cast<CIccTagXYZ*>(tag);
@@ -215,6 +253,12 @@ void addPrimaryPoint(Graph& g, Series& s, CIccTag* tag, const char* label,
   (void)g; (void)colorHint;   // both reserved for a future per-point colour hint
 }
 
+// buildChromaticityGraph — build the CIE 1931 xy chart for a profile: the spectral
+// locus, wavelength labels and planckian curve as reference Hints (single-sourced
+// from spectralLocus.hpp and IccVizMath's approxPlanck so the geometry lives in one
+// place), plus the profile's own media white point and, when the RGB colorants are
+// present, the primaries and gamut triangle as Primary data. Emits geometry only —
+// no display colours — so the caller renders it in its own look.
 Graph buildChromaticityGraph(CIccProfile* pIcc) {
   Graph g;
   g.title = "Chromaticity xy";
@@ -284,7 +328,8 @@ Graph buildChromaticityGraph(CIccProfile* pIcc) {
 
 struct NamedLab { std::string name; float L, a, b; };
 
-// Collect named/colorant colours as Lab + name. `diag` (when supplied) carries
+// collectNamedColors — collect a named/colorant table's colours as Lab + name.
+// `diag` (when supplied) carries
 // the granular skip reasons — including the IccProfLib validation `report`
 // string, which the data-first path would otherwise discard. Enumerate() probes
 // with diag==nullptr (silent skip); RenderGraph() pulls the reasons through.
@@ -501,6 +546,11 @@ bool collectNamedColors(CIccProfile* pIcc, CIccTag* tag, const std::string& sigD
   return false;  // unknown / unsupported named-colour tag type
 }
 
+// buildNamedAB — plot a set of named/colorant colours on a CIELAB a*b* chart:
+// constant-chroma reference circles and quadrant labels as Hints, the colours
+// themselves as a Primary scatter carrying L* in Vertex.aux (so the caller can
+// shade by lightness). a*b* is chosen (over xy) because named colours are stored
+// in Lab, so this view needs no chromaticity projection and preserves hue/chroma.
 Graph buildNamedAB(const std::vector<NamedLab>& colors, const std::string& title) {
   Graph g;
   g.title = title + " — a*b*";
@@ -538,6 +588,11 @@ Graph buildNamedAB(const std::vector<NamedLab>& colors, const std::string& title
   return g;
 }
 
+// buildNamedXY — the same named/colorant colours on the CIE 1931 xy chart. Reuses
+// buildChromaticityGraph's locus/planckian Hints (so the two named views share one
+// reference frame), then converts each Lab colour to XYZ under the profile's
+// illuminant and projects to xy. Offered alongside buildNamedAB so the caller can
+// show spot colours against the spectral horseshoe as well as in Lab a*b*.
 Graph buildNamedXY(CIccProfile* pIcc, const std::vector<NamedLab>& colors,
                    const std::string& title) {
   Graph g;
@@ -565,7 +620,8 @@ Graph buildNamedXY(CIccProfile* pIcc, const std::vector<NamedLab>& colors,
   return g;
 }
 
-// CLUT lattice → raster. The nD CLUT is flattened to a 2-D image: the first two
+// buildClutRaster — flatten a CLUT lattice to a 2-D raster. The nD CLUT becomes an
+// image: the first two
 // input dimensions form each tile, and the remaining dimensions are laid out as
 // a grid of tiles arranged toward a square.
 //
@@ -777,7 +833,8 @@ bool buildClutRaster(CIccTag* tag, const std::string& sigDesc, Raster& out,
   return true;
 }
 
-// Append LUT sub-curve descriptors in the A→B→M order output3DLUT uses.
+// enumerateLutCurves — append descriptors for a LUT's A/B/M sub-curves in the
+// A→B→M order output3DLUT uses, so the enumerated list matches the reference layout.
 void enumerateLutCurves(CIccProfile* pIcc, icTagSignature sig, CIccMBB* lut,
                         std::vector<Descriptor>& out) {
   std::string base = sigStr(sig);
@@ -819,6 +876,10 @@ void enumerateLutCurves(CIccProfile* pIcc, icTagSignature sig, CIccMBB* lut,
   (void)pIcc;
 }
 
+// lutCurveFor — fetch the idx-th A/B/M shaper curve of an mAB/mBA LUT, selected by
+// the group letter a Descriptor carries ('A','B','M'). Returns nullptr for an
+// unknown group or an absent curve array, so RenderGraph can resolve a curve
+// descriptor back to its curve without duplicating the group dispatch.
 CIccCurve* lutCurveFor(CIccMBB* lut, char grp, int idx) {
   CIccCurve** arr = grp == 'A' ? lut->GetCurvesA()
                   : grp == 'B' ? lut->GetCurvesB()
@@ -834,6 +895,10 @@ CIccCurve* lutCurveFor(CIccMBB* lut, char grp, int idx) {
 // Bound for the untrusted profile geometry: ICC device spaces top out at 15 (nCLR).
 const int kMaxInkChannels = 15;
 
+// isPcsSpace — true if a colour space is a PCS (Lab or XYZ). Used throughout the
+// sampling paths to tell a device side from a PCS side of a LUT (e.g. A2B is
+// device→PCS, B2A is PCS→device), so each path can reject a tag wired the wrong
+// way round before it samples.
 bool isPcsSpace(icColorSpaceSignature s) {
   return s == icSigLabData || s == icSigXYZData;
 }
@@ -849,7 +914,8 @@ bool isPcsSpace(icColorSpaceSignature s) {
 // ─────────────────────────────────────────────────────────────────────────────
 const int kNeutralSamples = 101;
 
-// The rendering intent a B2A tag embodies (…0 perceptual, …2 saturation, else
+// neutralIntentForSig — the rendering intent a B2A tag embodies (…0 perceptual,
+// …2 saturation, else
 // relative colorimetric) — used only as the Create() hint; the specific tag wins.
 icRenderingIntent neutralIntentForSig(icTagSignature sig) {
   switch (sig) {
@@ -859,7 +925,8 @@ icRenderingIntent neutralIntentForSig(icTagSignature sig) {
   }
 }
 
-// Neutral CIELAB (L*,0,0) → the B2A source-space input, written into src[] in the
+// neutralSrc — map a neutral CIELAB (L*,0,0) to the B2A source-space input, written
+// into src[] in the
 // internal PCS encoding the xform expects (Lab directly, or D50 XYZ for XYZ PCS).
 void neutralSrc(float L, icColorSpaceSignature pcs, icFloatNumber* src) {
   if (pcs == icSigXYZData) {
@@ -874,6 +941,13 @@ void neutralSrc(float L, icColorSpaceSignature pcs, icFloatNumber* src) {
   }
 }
 
+// buildNeutralAxisGraph — build the neutral-axis inking graph for one B2A tag: walk
+// the neutral axis L*=100→0 (a*=b*=0) through the PCS→device table and record each
+// colorant's amount, one polyline per channel. This is the GCR/ink-build curve, so
+// it must come from the B2A (PCS→device) direction; the function guards that the
+// tag really is PCS-in / device-out and that channel counts match before sampling,
+// since the tag and its geometry are untrusted profile data. Returns false with a
+// diagnostic on any guard failure.
 bool buildNeutralAxisGraph(CIccProfile* pIcc, icTagSignature sig, Graph& out,
                            std::vector<Diagnostic>* diag) {
   const std::string sigDesc = sigStr(sig);
@@ -1008,7 +1082,8 @@ const int           kMaxGamutDilate = 4;            // structuring-element radiu
 const double        kMinVoxelSize   = 0.5;          // ΔE*ab floor: caps the Lab grid resolution
 const std::uint64_t kMaxVoxelCells  = 256000000ull; // total voxel ceiling (~256 MB; CWE-190/400)
 
-// Voxelise flat Lab boundary points (x3), dilate by `dilate`, flood-fill the
+// voxelEnclosedVolume — voxelise flat Lab boundary points (x3), dilate by `dilate`,
+// flood-fill the
 // exterior, erode the dilation back, return the enclosed volume (ΔE*ab³). Fixed
 // generous Lab box so real gamuts sit strictly interior to it; points outside the
 // box are dropped (not clamped onto its face). Returns -1 (and enclosedCells = -1)
@@ -1104,7 +1179,8 @@ double voxelEnclosedVolume(const std::vector<float>& lab, double vs,
   return (double)enclosedCells * vs * vs * vs;
 }
 
-// Number of samples boundaryDeviceSamples(N, S) emits: the device N-cube has 2N
+// boundarySampleCount — number of samples boundaryDeviceSamples(N, S) emits: the
+// device N-cube has 2N
 // facets, each an (N-1)-cube grid-sampled at (S+1) points per free axis. (Shared
 // edges/faces between facets are double-counted, which voxelisation collapses.)
 double boundarySampleCount(int N, int S) {
@@ -1113,7 +1189,8 @@ double boundarySampleCount(int N, int S) {
   return 2.0 * N * std::pow((double)(S + 1), (double)e);
 }
 
-// Sample the BOUNDARY of the device N-cube in 0..1 (IccProfLib device convention):
+// boundaryDeviceSamples — sample the BOUNDARY of the device N-cube in 0..1
+// (IccProfLib device convention):
 // the union of its 2N facets — each obtained by fixing one coordinate to 0 or 1 and
 // grid-sampling the remaining N-1 coordinates at S+1 steps. Flat buffer, N floats
 // per point.
@@ -1146,7 +1223,8 @@ std::vector<float> boundaryDeviceSamples(int N, int S) {
   return out;
 }
 
-// Auto boundary-sampling params by colorant count — mirrors chardata gamut.js
+// gamutVolumeParams — auto-pick boundary-sampling params by colorant count; mirrors
+// chardata gamut.js
 // volumeParams. Returns steps = -1 when even the coarsest sampling would exceed
 // the boundary-point ceiling (a very-high-channel profile → volume unsupported).
 void gamutVolumeParams(int N, int& steps, double& vs, int& dilate) {
@@ -1166,19 +1244,26 @@ void gamutVolumeParams(int N, int& steps, double& vs, int& dilate) {
 }
 
 // ── B2A round-trip helpers ────────────────────────────────────────────────────
-// Internal-PCS-encoded (Lab or XYZ) → human L*a*b*. Returns false for an
-// unsupported PCS.
+// pcsToLabFull — decode a transform's internal-PCS-encoded output (Lab or XYZ) to
+// human L*a*b*, returning false for an unsupported PCS. The round trip compares in
+// L*a*b*, so both legs are brought to the same human Lab here rather than at each
+// call site.
 bool pcsToLabFull(const icFloatNumber* pcs, icColorSpaceSignature sp, icFloatNumber out[3]) {
   icFloatNumber v[3] = { pcs[0], pcs[1], pcs[2] };
   if (sp == icSigLabData) { icLabFromPcs(v); out[0]=v[0]; out[1]=v[1]; out[2]=v[2]; return true; }
   if (sp == icSigXYZData) { icXyzFromPcs(v); icXYZtoLab(out, v, nullptr); return true; }  // D50
   return false;
 }
+// deltaEab — plain Euclidean ΔE*ab (CIE76) between two L*a*b* triples; the per-point
+// error the round-trip metric aggregates. CIE76 (not ΔE2000) is deliberate: this is
+// a relative agreement check, so the simplest distance keeps the number interpretable.
 double deltaEab(const icFloatNumber a[3], const icFloatNumber b[3]) {
   const double dL=a[0]-b[0], da=a[1]-b[1], db=a[2]-b[2];
   return std::sqrt(dL*dL + da*da + db*db);
 }
-// Device interior-grid steps per axis, bounded to ~30k seed points total.
+// roundTripSteps — device interior-grid steps per axis, chosen so the full N-D seed
+// grid stays near ~30k points (bounded and clamped to [2,32]) regardless of channel
+// count, keeping the round trip fast without under-sampling low-channel devices.
 int roundTripSteps(int N) {
   if (N < 1) N = 1;
   int s = (int)std::floor(std::pow(30000.0, 1.0 / N)) - 1;
@@ -1189,6 +1274,12 @@ int roundTripSteps(int N) {
 
 // ── public API ───────────────────────────────────────────────────────────────
 
+// Enumerate — see IccVizModel.hpp for the contract. Implementation note: it probes
+// a FIXED, canonically-ordered signature list instead of iterating the profile's
+// tag list, which keeps the order deterministic and the walk cross-TU / WASM-safe
+// (it never crosses a module boundary into the std::list tag directory). Each
+// producer runs in "probe" mode (diag==nullptr) so a tag with nothing to show is
+// skipped silently rather than advertised.
 std::vector<Descriptor> Enumerate(CIccProfile* pIcc) {
   std::vector<Descriptor> out;
   if (!pIcc) return out;
@@ -1286,6 +1377,11 @@ std::vector<Descriptor> Enumerate(CIccProfile* pIcc) {
   return out;
 }
 
+// RenderGraph — see IccVizModel.hpp. Re-enumerates to resolve the descriptor id,
+// then dispatches to the matching producer (chromaticity / curve / named a*b* / xy
+// / neutral-axis). Re-enumerating rather than caching descriptors keeps the API
+// stateless and cheap (callers cache the parsed CIccProfile); diagnostics are
+// returned as data and also echoed to stderr per the Verbosity.
 GraphResult RenderGraph(CIccProfile* pIcc, const std::string& id, Verbosity v) {
   GraphResult res;
   if (!pIcc) { res.error = "null profile"; return res; }
@@ -1341,6 +1437,10 @@ GraphResult RenderGraph(CIccProfile* pIcc, const std::string& id, Verbosity v) {
   return res;
 }
 
+// RenderRaster — see IccVizModel.hpp. Resolves the raster descriptor id and builds
+// the CLUT lattice image via buildClutRaster, surfacing the specific skip/failure
+// reason as both an error string and a diagnostic. Only ClutImage descriptors carry
+// a raster; every other kind is a graph and goes through RenderGraph instead.
 RasterResult RenderRaster(CIccProfile* pIcc, const std::string& id, Verbosity v) {
   RasterResult res;
   if (!pIcc) { res.error = "null profile"; return res; }
@@ -1363,6 +1463,13 @@ RasterResult RenderRaster(CIccProfile* pIcc, const std::string& id, Verbosity v)
 }
 
 // ── Gamut volume ─────────────────────────────────────────────────────────────
+// GamutVolume — public entry: the ICC-specific half of the gamut-volume metric
+// (contract in IccVizModel.hpp). Builds the device→PCS transform for one AToB tag,
+// samples the device-cube boundary through it into L*a*b*, and hands the finite Lab
+// points to voxelEnclosedVolume. Every profile-derived and caller-supplied value
+// (channel count, sampling params) is bounded here first, since it drives large
+// allocations/loops on untrusted input; a collapsed/unreliable result is flagged
+// via GamutVolumeResult.degenerate rather than reported as a real measurement.
 GamutVolumeResult GamutVolume(CIccProfile* pIcc, icTagSignature aToBTag,
                               icRenderingIntent intent,
                               int samplesPerAxis, double voxelSize, int dilate) {
@@ -1461,6 +1568,12 @@ GamutVolumeResult GamutVolume(CIccProfile* pIcc, icTagSignature aToBTag,
 }
 
 // ── B2A round-trip accuracy ───────────────────────────────────────────────────
+// RoundTripDE — public entry (contract in IccVizModel.hpp). Seeds in-gamut L*a*b*
+// from a device interior grid via A2B, round-trips each Lab through B2A then A2B,
+// and aggregates ΔE*ab into mean / p90 / max / stddev. Seeding from the device cube
+// (not a raw Lab grid) guarantees the test points are wholly in-gamut, so the metric
+// reflects genuine B2A/A2B agreement rather than out-of-gamut clamping. Matching
+// AToB/BToA tags and channel counts are verified before sampling (untrusted input).
 RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
                             int samplesPerAxis) {
   RoundTripResult r;
@@ -1549,8 +1662,16 @@ RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
 }
 
 // ── diagnostic output policy (see IccVizModel.hpp) ────────────────────────────
+// SetSilent — set the process-global switch that suppresses the stderr echo of
+// diagnostics (the data is always still returned in each result). Global (not a
+// parameter) so a caller configures it once; defaults to not-silent so code that
+// never touches it behaves exactly like the CLI.
 void SetSilent(bool silent) { g_silent = silent; }
+// GetSilent — read that global switch.
 bool GetSilent() { return g_silent; }
+// SetDiagnosticContext — set the optional "<name>: " prefix prepended to each
+// stderr diagnostic line; the CLI sets the profile filename here so its output
+// matches iccProfileVisualize byte-for-byte.
 void SetDiagnosticContext(const std::string& name) { g_diagContext = name; }
 
 } // namespace iccviz

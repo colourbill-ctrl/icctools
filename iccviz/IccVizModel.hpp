@@ -199,22 +199,23 @@ enum class Verbosity {
 };
 
 void SetSilent(bool silent = true);                  // global; default state is not-silent
-bool GetSilent();
+bool GetSilent();                                    // read that global silent switch
 // Optional "<name>: " prefix prepended to each stderr line — the CLI sets the
 // profile filename here so its output matches iccProfileVisualize byte-for-byte.
 void SetDiagnosticContext(const std::string& name);
 
 // List every visualization available for the profile, in a stable canonical
 // order: chromaticity first, then per-tag in tag-table order — TRC curves, then
-// each LUT's A/B/M curves followed by its CLUT image, then named/colorant tables
-// as a*b* then xy.
+// each LUT's A/B/M curves followed by its CLUT image, then a neutral-axis inking
+// graph for each PCS→device BToA table, then named/colorant tables as a*b* then xy.
 std::vector<Descriptor> Enumerate(CIccProfile* pIcc);
 
-// Render one graph / raster by descriptor id. Re-enumerates to find the
-// descriptor (cheap; callers should cache the parsed profile). Diagnostics are
-// echoed to stderr per the Verbosity (default → the global SetSilent() switch).
-GraphResult  RenderGraph (CIccProfile* pIcc, const std::string& id, Verbosity v = Verbosity::Default);
-RasterResult RenderRaster(CIccProfile* pIcc, const std::string& id, Verbosity v = Verbosity::Default);
+// RenderGraph / RenderRaster — render one graph or raster by descriptor id.
+// Re-enumerates to find the descriptor (cheap; callers should cache the parsed
+// profile). Diagnostics are echoed to stderr per the Verbosity (default → the
+// global SetSilent() switch).
+GraphResult  RenderGraph (CIccProfile* pIcc, const std::string& id, Verbosity v = Verbosity::Default);  // graph kinds
+RasterResult RenderRaster(CIccProfile* pIcc, const std::string& id, Verbosity v = Verbosity::Default);  // ClutImage raster
 
 // ── Gamut volume ─────────────────────────────────────────────────────────────
 // Volume (ΔE*ab³) enclosed by a profile's gamut, measured by boundary
@@ -223,7 +224,7 @@ RasterResult RenderRaster(CIccProfile* pIcc, const std::string& id, Verbosity v 
 // the exterior, erode the dilation back, count enclosed voxels. A scalar
 // metric — not a Graph/Raster — so it sits outside the Enumerate/Render path.
 //
-// Adapted from chardata's lcms2 `gamutVolumeIcc`; here the device→PCS step uses
+// Adapted from chardata's gamut-wasm `gamutVolumeIcc`; here the device→PCS step uses
 // IccProfLib (CIccXform on `aToBTag`, device values 0..1, PCS→Lab decoded via
 // icLabFromPcs / icXyzFromPcs+icXYZtoLab). Pick (tag, intent) to select the
 // gamut: perceptual = AToB0/icPerceptual, relative = AToB1/icRelativeColorimetric,
@@ -255,11 +256,21 @@ GamutVolumeResult GamutVolume(CIccProfile* pIcc, icTagSignature aToBTag,
 // Round-trip of Lab through the profile: seed in-gamut L*a*b* by sampling the
 // device cube on an interior grid and pushing it through A2B, then run each
 // Lab₁ → device (B2A) → Lab₂ (A2B) and report ΔE*ab(Lab₁, Lab₂). Measures how
-// accurately the B2A (PCS→device) table inverts the A2B for that intent — the
-// headline accuracy metric in Harold Boll's doQCpfA. A scalar metric (outside
-// the Enumerate/Render path). Needs matching AToB/BToA tags for `intent`
-// (perceptual = A2B0/B2A0, relative & absolute = A2B1/B2A1, saturation =
-// A2B2/B2A2); `intent` also drives the PCS white handling (relative vs absolute).
+// accurately the B2A (PCS→device) table inverts the A2B for that intent — a
+// method suggested by Harold Boll. A scalar metric (outside the Enumerate/Render
+// path).
+//
+// Why seed from the device cube rather than sampling L*a*b* directly: every seed
+// is then the A2B image of a real device value, so the test points are wholly
+// IN-GAMUT and the round trip measures genuine B2A/A2B agreement. A directly
+// sampled L*a*b* grid would place many points outside the gamut, where B2A only
+// clamps them and reports a large, meaningless ΔE. Walking the device interior on
+// a regular grid also spreads the seeds reasonably evenly, in terms of spacing,
+// through the interior of the in-gamut region of L*a*b* space.
+//
+// Needs matching AToB/BToA tags for `intent` (perceptual = A2B0/B2A0, relative &
+// absolute = A2B1/B2A1, saturation = A2B2/B2A2); `intent` also drives the PCS
+// white handling (relative vs absolute).
 struct RoundTripResult {
   bool        ok         = false;
   std::string error;
