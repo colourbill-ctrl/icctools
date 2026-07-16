@@ -131,10 +131,10 @@ function diag_layout() {
 
   // Tab strip
   const TY = VY+28;
-  const tabs = [['Header', true], ['Tags', false], ['Validation', false], ['Raw Output', false], ['XML', false], ['JSON', false]];
+  const tabs = [['Header', true], ['Tags', false], ['Validation', false], ['Analysis', false], ['XML', false], ['JSON', false]];
   let tx = CX+30;
   for (const [label, active] of tabs) {
-    const tw = label === 'Header' ? 60 : label === 'Validation' || label === 'Raw Output' ? 78 : label === 'Tags' ? 70 : 50;
+    const tw = label === 'Header' ? 60 : label === 'Validation' || label === 'Analysis' ? 78 : label === 'Tags' ? 70 : 50;
     if (active) {
       b += `<line x1="${tx}" y1="${TY+30}" x2="${tx+tw}" y2="${TY+30}" stroke="var(--act)" stroke-width="3"/>`;
       b += T(tx + tw/2, TY+20, label, 'tA');
@@ -405,7 +405,7 @@ ${intro}
           <li><a href="#3-1-header">Header</a></li>
           <li><a href="#3-2-tags">Tags</a></li>
           <li><a href="#3-3-validation">Validation</a></li>
-          <li><a href="#3-4-raw-output">Raw Output</a></li>
+          <li><a href="#3-4-analysis">Analysis</a></li>
           <li><a href="#3-5-xml">XML</a></li>
           <li><a href="#3-6-json">JSON</a></li>
         </ol>
