@@ -50,8 +50,45 @@ wrap the canonical class; do NOT write a parallel engine (maintainers reject dup
 | **D — Transform chains** | Apply/CMM chains; depend on **IccLibConnect** (a 2nd library profiletool doesn't link) — dependency decision required, but **in scope** | IccApplyNamedCmm, IccApplySearch, IccApplyProfiles |
 | — *(out of scope)* | almost entirely non-IccProfLib container work | IccSpecSepToTiff |
 
-**Already covered** (no work): IccDumpProfile, IccPawgReport, IccToXml/FromXml, IccToJson/FromJson,
-IccProfileVisualize (superseded by iccviz).
+**Already covered** (no work — **all verified against tool source 2026-07-18**, see § Source audit):
+IccDumpProfile(+bigstack), IccPawgReport, IccToXml/FromXml, IccToJson/FromJson, IccProfilePlot,
+IccProfileVisualize/VisualizePlot. Two caveats from the audit: (1) ProfileVisualize/VisualizePlot
+parity is on visualization **content** — every Cox plot maps to an iccviz `Kind` — but the **PDF/TIFF
+*file* output is not reproduced** (we render in-browser); tracked as a deferred beyond-parity nicety,
+not a gap. (2) **IccDescribeSinkTest is NOT a user tool** (a CTest smoke test) → removed from the
+parity set; real user-module count **22 → 21**.
+
+### Source audit (2026-07-18)
+
+Every parity claim re-checked by reading the tool's actual `main()`/compute (not its name or
+`Usage()` string). The covered claims **hold at the capability level**; corrections found:
+
+| Claim | Correction |
+|---|---|
+| `iccProfilePlot` covered by iccviz | ✅ **same engine** — `Tools/CmdLine/IccProfilePlot/` is iccviz's upstream home (`IccVizModel.*` + `iccProfilePlot.cpp` JSON emitter). |
+| `iccProfileVisualize` "superseded by iccviz" | ✅ **content** parity (Cox's chromaticity/curve/named-color/CLUT plots all map to iccviz `Kind`s); ✗ **PDF/TIFF file** output not reproduced (deferred nicety). |
+| `iccProfileVisualizePlot` (was unresolved) | ✅ **resolved** = the Cox renderer built inside the iccviz dir (`IccProfilePlot/iccProfileVisualize.cpp`). Same content; not a distinct capability. |
+| `iccDescribeSinkTest` "≈ describeTag" | ✗ **not a tool** — CTest smoke test. Removed. |
+| `iccApplyToLink` "needs IccLibConnect" (Group D) | ✗ uses **`CIccCmm`, not IccLibConnect** — engine is construct-family (phase-1-capable). Stays **canvas phase for the chain-builder UX** (user-confirmed), not a library dep. The other three `Apply*` do pull IccConnect. |
+| N-profile **gamut compare** = "ProfileVisualize N-overlay" parity | ✗ **NOT parity** — `ProfileVisualize` is per-profile **batch** (loop → one output each), never an overlay. Gamut compare is a **beyond-parity chardata port** (see DL-PHASE1 + §3). |
+
+**Retraction:** the DL-PHASE1 arity survey was stamped *"verified from tool `Usage()`."* For the
+gamut-compare row that stamp was **false** — it was an inference from the `input_profiles` plural,
+contradicted by the tool's own `Usage` ("output … next to **each** input profile"), its loop body,
+and the strategy doc (`iccdev-wasm-analysis.md:143`, "no CLI equivalents" for gamut mesh/slice).
+Minor unsurfaced CLI flags (all cosmetic, capability parity intact): DumpProfile verbosity int +
+`--diag`; ToJson `-indent`/`-sort`; FromXml `-noid` + RelaxNG-schema validate; FromJson `-noid`.
+
+### Beyond-parity backlog
+
+Capabilities we're building (or may build) that **replace no iccDEV wasm module** — tracked here so
+they're never re-mistaken for parity work.
+
+| Item | Provenance | Status |
+|---|---|---|
+| **N-profile gamut compare** (3D mesh / 2D slice overlay) | chardata port; iccDEV has no gamut-boundary tool (its `ProfileVisualize` TODO `:2381` is unfilled) | **P1-late** — build (DL-PHASE1 + §3) |
+| **Static PDF/TIFF plot export** | the Cox `ProfileVisualize` *file* output; we render in-browser instead | **deferred** — not a gap; revisit only on demand |
+| *(GamutVolume scalar, NeutralAxisInking — already shipped)* | iccviz additions over iccDEV | done |
 
 ---
 
@@ -263,15 +300,17 @@ referenced from the group sections above. Categories: **IA** app-identity/nav ·
 **Q:** Phase 1 covers the existing iccDEV **wasm CLI-tool collection** (`iccdev/wasm/`,
 22 modules) WITHOUT the node graph (DL-CANVAS1 = later phase). Does the data-store
 selection UX need more than **profile-pair** selection?
-**Arity survey (verified from tool `Usage()`):**
+**Arity survey** *(⚠ originally stamped "verified from `Usage()`" — **corrected 2026-07-18**: the
+gamut-compare row below was an inference from the `input_profiles` plural, NOT verified. See § Source audit.)*:
 | Arity | Tools | Phase 1 |
 |---|---|---|
 | 0 prof — text/file → profile | FromCube, FromXml, FromJson | ✅ ingest |
 | 0 prof — image → extract/dump | TiffDump, PngDump, JpegDump | ✅ ingest (Group C) |
-| 1 prof | DumpProfile(+bigstack), ToJson, ToXml, RoundTrip, ProfilePlot, PawgReport, DescribeSinkTest | ✅ single |
+| 1 prof | DumpProfile(+bigstack), ToJson, ToXml, RoundTrip, ProfilePlot, PawgReport | ✅ single |
+| ~~test harness~~ | ~~DescribeSinkTest~~ — **not a user tool** (CTest smoke test); removed 2026-07-18 | — |
 | 1 prof + image seq | SpecSepToTiff | ✅ single + image |
 | 2 prof, **role-typed** | V5DspObsToV4Dsp (display + observer) | ✅ role-pair |
-| **N prof, unordered** (compare) | ProfileVisualize (gamut overlay) | ⚠ scope call |
+| **N prof, unordered** (compare) | ~~ProfileVisualize (gamut overlay)~~ — **CORRECTED 2026-07-18: no such iccDEV tool.** ProfileVisualize is per-profile **batch** (loop → one output each), never an overlay. Gamut compare is a **beyond-parity chardata port** | **beyond parity → P1-late** |
 | **N prof, ordered + intent + PCC + data** | ApplyNamedCmm, ApplyProfiles, ApplySearch, ApplyToLink | ⛔ **defer → DL-CANVAS1** |
 **Decision:** pair is *almost* enough — three caveats: (1) `ProfileVisualize` wants
 **unordered multi-select (N)**; (2) the one pair (`V5→V4`) is **role-typed** (2 slots,
@@ -280,13 +319,15 @@ image drop) that profile-selection doesn't cover. The **only** tools needing
 ordered-N + PCC + per-profile intent + data-file are the 4 `Apply*`/`ToLink` — i.e.
 exactly the node-graph set → cleanly deferred to DL-CANVAS1.
 **Phase-1 data-store UX:** pool with **N-multi-select (unordered)** — N=1 → single
-tools, N≥2 → `ProfileVisualize` compare, **role-slots** for the `V5→V4` pair; **two
+tools, N≥2 → **gamut compare** *(beyond parity — chardata port, P1-late)*, **role-slots** for the `V5→V4` pair; **two
 ingest affordances** (create-from-text/file → new pooled profile; image drop → extract
 embedded into pool); **defer** ordered-chain/PCC/data apply-link. Net: multi-select
 unordered + role-slots for one pair — a hair beyond "pair," far short of the graph.
-**Sub-call RESOLVED (user 2026-07-18): include `ProfileVisualize` multi-compare.** It
+**Sub-call RESOLVED (user 2026-07-18): a multi-select gamut-compare verb.** It
 fits a **"multi-select from list + verb (Plot Gamut)"** frame — adopted as the **general
-phase-1 interaction model**:
+phase-1 interaction model**. *(Correction 2026-07-18: "Plot Gamut" is a **beyond-parity
+chardata port**, NOT `ProfileVisualize` parity — that attribution was wrong; see § Source audit.
+The multi-select+verb model stands on its own; only the gamut engine's provenance changed.)*:
 - **Interaction = pool list + multi-select + verb bar** (file-manager / chardata
   select→action convention; node-graph-free). Verbs enable by selection arity:
   - **0 selected** → *ingest* verbs only: New from .cube / XML / JSON; Add from image
@@ -611,7 +652,7 @@ the pool + verb frame.
 | Dump / To JSON / To XML | 1 | validate / iccToJson / iccToXml | existing | tab / download |
 | Round-Trip (PRMG) | 1 | iccRoundTrip (CIccMinMaxEval + CIccPRMG) | **new** (DL-A1) | Profile Statistics method column |
 | Profile Plot | 1 | iccviz single | existing | Analysis plot |
-| Plot Gamut (compare) | 1..N | ProfileVisualize N-overlay | **new** | overlay plot |
+| Plot Gamut (compare) | 1..N | **chardata gamut port — beyond parity** (iccviz boundary mesh/slice + lcms2→`CIccCmm`) | **new · P1-late** | 3D mesh / 2D slice overlay |
 | PAWG Report | 1 | iccPawgReport | existing | report |
 | Make V4 Display | 2 (roles by class) | iccV5DspObsToV4Dsp | **new** | download + add-to-pool |
 | New from .cube | 0 | iccFromCube | **new** | add-to-pool + download |
@@ -621,8 +662,14 @@ the pool + verb frame.
 ### 3. New engine / WASM work
 - **iccRoundTrip PRMG** (DL-A1) — port `CIccMinMaxEval` + `CIccPRMG`; rides the existing
   `iccplot` module (no CMake change). Wrapper `roundTrip(bytes, intent, useMpe)`.
-- **ProfileVisualize N-overlay** — iccviz is single-profile today; N-profile gamut overlay
-  is new engine work → **P1-b**.
+- **Gamut compare (beyond parity — chardata port, NOT `ProfileVisualize`)** — no iccDEV tool
+  produces a gamut-boundary overlay; this is a chardata port we're doing anyway. Deferred to
+  **P1-late**, bundled with everything that *only* serves it: (a) extend **iccviz** to emit a
+  **boundary mesh + 2D slice** (today it emits only the `GamutVolume` scalar); (b) port chardata's
+  **3D-mesh / 2D-slice** renderers; (c) feed their device→PCS step from **IccProfLib** (iccviz A2B/CMM
+  sampling), **replacing chardata's lcms2** (`chardata-gamut.mjs`) — the heavy, gamut-only item, per the
+  P1-b engine note below. The existing `GamutVolume` scalar (Analysis) already uses this IccProfLib path
+  and stays.
 - **IccFromCube** — new engine; `kMaxCubeBytes` (~32 MB) cap; preserve `LUT_3D_SIZE∈[2,255]`
   bound; `CIccMemIO` byte-return.
 - **IccV5DspObsToV4Dsp** — new engine; 2 profiles in → 1 out; `CIccMemIO` byte-return;
@@ -642,7 +689,8 @@ native CLI + a smoketest case.
 3. **Add from image** (JS extract — Group C).
 4. **New from .cube** (producer).
 5. **Make V4 Display** (`V5→V4`).
-6. **Plot Gamut compare** (ProfileVisualize N-overlay).
+6. **Gamut compare** (**P1-late · beyond parity**): iccviz boundary mesh/slice + chardata 3D/2D
+   renderers + **lcms2→`CIccCmm`**. Last in phase 1 — heaviest, and the only item needing the CMM swap.
 
 *(`SpecSepToTiff` **deferred to the canvas phase** — P1-c: gathers N image nouns → an
 assembly node, a natural node-graph fit, not a phase-1 multi-select-verb fit.)*
