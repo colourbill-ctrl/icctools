@@ -1,0 +1,653 @@
+# profiletool ↔ iccDEV Tool-Parity Roadmap
+
+> **Branch / version line:** this roadmap drives the **2.x major-release line** — the
+> **Profile Pool workbench** rewrite (DL-IA1 opt 4) — on branch **`2.x`** (version
+> `2.0.0-dev.x`). **`main` stays the 1.x maintenance line.** Intent: possibly
+> fast-forward `main` → `2.x` once the 2.x form lands; interim 1.x fixes on `main` merge
+> forward into `2.x`. (Recorded 2026-07-18.)
+
+*Working plan. Goal: give profiletool functional parity with iccDEV's 17 CLI tools by
+extracting the IccProfLib compute each CLI wraps into a typed data API — NOT by
+compiling the CLI `main()`s to WASM (`callMain`/stdout scraping is explicitly out of scope).*
+
+**Provenance:** distilled from a 5-lens adversarial multi-agent review (33/36 findings survived
+independent verification) plus three user refinements. Where a claim was corrected by that review,
+it's marked ✅ *verified* or ⚠ *needs grounding*.
+
+**Related strategy doc:** `~/code/iccdev-wasm-analysis.md` (§ references below point at it).
+**Migration context:** profiletool's `iccviz/` is a *temporary* staging ground for code bound
+for iccDEV; once the iccviz upstream PR (iccDEV #1711) lands in main, profiletool consumes the
+iccDEV version and deprecates the local copy. Author all new engines to ride that path.
+
+---
+
+## Architecture — the seam every capability uses (iccviz, generalized)
+
+Three layers; only the middle one is throwaway glue:
+
+| Layer | Example in repo | Portable? | Destiny |
+|---|---|---|---|
+| **Engine / data API** | `iccviz/IccVizModel.{cpp,hpp}` (CLI form: `iccviz/iccProfilePlot.cpp`) | ✅ plain C++ over IccProfLib, returns structs; no Emscripten/embind | **→ upstream to iccDEV** |
+| **embind seam** | `validator-wasm/plot-wrapper.cpp` (`emscripten::val`↔JSON) | ❌ profiletool-only | stays downstream |
+| **React UI** | `frontend/src/components/AnalysisPanel.jsx` | ❌ | stays downstream |
+
+Rule for every capability: find the IccProfLib compute the CLI's `main()` drives → factor it into an
+`Icc*Model`-style engine returning data → thin embind seam → UI. Engine stays **locale-neutral**
+(emits signatures/enums/numbers, never display strings — localization is a downstream concern only).
+
+Before writing any engine, run the gate: **"does IccProfLib already ship this compute?"** If yes,
+wrap the canonical class; do NOT write a parallel engine (maintainers reject duplicates).
+
+---
+
+## Group definitions (corrected by the review)
+
+| Group | Defining trait | Capabilities |
+|---|---|---|
+| **A — Evaluate** | read-only metrics over already-linked IccProfLib compute; no profile construction; no new libs | Round-trip parity |
+| **B — Construct** | lift a tool `main()` that **builds/serializes a `CIccProfile`** (needs `CIccMemIO`/MEMFS refactor) | IccFromCube, IccV5DspObsToV4Dsp, IccApplyToLink |
+| **C — Inspect images** | **JS** container parse + reuse existing `validateProfile`; zero new C++ | IccTiffDump, IccPngDump, IccJpegDump |
+| **D — Transform chains** | Apply/CMM chains; depend on **IccLibConnect** (a 2nd library profiletool doesn't link) — dependency decision required, but **in scope** | IccApplyNamedCmm, IccApplySearch, IccApplyProfiles |
+| — *(out of scope)* | almost entirely non-IccProfLib container work | IccSpecSepToTiff |
+
+**Already covered** (no work): IccDumpProfile, IccPawgReport, IccToXml/FromXml, IccToJson/FromJson,
+IccProfileVisualize (superseded by iccviz).
+
+---
+
+## GROUP A — Round-Trip Parity  *(build-ready)*
+
+### Parity target
+Match `Tools/CmdLine/IccRoundTrip/iccRoundTrip.cpp` exactly (288 lines, ✅ read in full):
+- **Round Trip 1** — `ΔE*ab(deviceLab, lab1)`: min / mean / max + worst-error `L,a,b` (`maxLab1`).
+- **Round Trip 2** — `ΔE*ab(lab1, lab2)`: min / mean / max + `maxLab2`.
+- **PRMG Interoperability histogram** — counts & % at ΔE ≤ 1/2/3/5/10, plus total.
+- **Specified Gamut** — `CIccPRMG::m_bPrmgImplied`.
+- Knobs: **rendering intent** (0–3, default 1=relative), **use_mpe** (0=colorimetric default, 1=MPE).
+
+**Scope boundary (honors "round-trip is a family"):** Group A = *this* metric only — CIE76,
+device-cube-seeded, two-direction + PRMG. Other variants (ΔE2000, PCS-seeded, per-region) are a
+separate deferred round-trip-family exploration, NOT Group A.
+
+### Architecture
+- ✅ `CIccEvalCompare` (`IccProfLib/IccEval.h`) and `CIccPRMG` (`IccProfLib/IccPrmg.h`) both expose
+  **`EvaluateProfile(CIccProfile*, …)`** overloads — no filesystem needed.
+- ✅ `IccEval.cpp` + `IccPrmg.cpp` are **already in `ICCPROFLIB_SOURCES`** (`validator-wasm/CMakeLists.txt:25,27`)
+  → **no CMake change, no new module, no new deps.** Rides the existing `iccplot` module.
+- **Do NOT extend `iccviz::RoundTripDE`** — it's a *different* bespoke metric (single-direction,
+  in-gamut-seeded, mean/p90/max/std). Leave it alone.
+- **Only new C++** = the `CIccMinMaxEval : public CIccEvalCompare` accumulator (~40 lines), currently
+  trapped in the CLI's `.cpp` (`iccRoundTrip.cpp:83–150`). Replicate it.
+
+### Changes (file by file)
+1. **`validator-wasm/roundtrip-eval.hpp`** *(new, ~50 lines)* — verbatim port of `CIccMinMaxEval`.
+   Own file so it lifts cleanly upstream.
+2. **`validator-wasm/plot-wrapper.cpp`** — add `roundTripImpl(bytes, intent, useMpe)` beside the
+   existing `roundTripDEImpl` (~line 469): `parseCached(bytes)` → run `CIccMinMaxEval` +
+   `CIccPRMG` → serialize. Bind `emscripten::function("roundTrip", &roundTrip)` in
+   `EMSCRIPTEN_BINDINGS(iccplot)` (~line 490). Reuse existing `kMaxIccBytes` + try/catch pattern.
+3. **`validator-wasm/CMakeLists.txt`** — **no change** (confirmed).
+4. **`frontend/src/lib/vizPlot.js`** — add `roundTrip(bytes, intent, useMpe)` mirroring the existing
+   `roundTripDE` loader (JSON parse, `.error` throw).
+5. **`frontend/src/components/AnalysisPanel.jsx`** — new `<Collapsible title="Round-Trip (PRMG)">`
+   with an intent `<select>` (reuse pattern at ~:187) + a use-MPE checkbox; render RT1/RT2
+   (min/mean/max + worst-Lab) and the PRMG histogram. Existing per-tag mean/P90/max overview
+   (~:75,:90–92) stays as a lightweight summary — *sub-decision: keep as overview or retire.*
+6. **`frontend/src/i18n.jsx`** — new `analysis_rt_*` keys across **all 12 locales**, then
+   `node scripts/sync-translations.mjs` to refresh the 9 `Eng-*.xlsx`.
+7. **`MANUAL.md`** — Round-Trip subsection under Analysis; regenerate `help.html` (pre-commit hook).
+8. **Build/release** — `build-wasm.sh` rebuilds `iccplot` → `SHA256SUMS` → version bump + tag
+   (this IS a WASM-artifact release, not UI-only).
+
+### JSON contract
+```jsonc
+{
+  "intent": 1, "useMpe": false, "total": 30235,
+  "roundTrip1": { "minDE": 0.02, "meanDE": 1.13, "maxDE": 8.41, "maxLab": [21.3, 44.0, -50.7] },
+  "roundTrip2": { "minDE": 0.00, "meanDE": 0.31, "maxDE": 3.02, "maxLab": [96.1, -1.2, 3.4] },
+  "prmg": { "ok": true, "implied": true, "de1": 21044, "de2": 27310, "de3": 29001,
+            "de5": 30100, "de10": 30235, "total": 30235 },
+  "status": "ok"   // | "tooManySamples" | "error"
+}
+```
+
+### Security / robustness
+- Reuse existing **`kMaxIccBytes`** — no new entry-point cap needed.
+- ✅ **`icCmmStatTooManySamples`** (the #1405 wide-device-space guard, inside `EvaluateProfile`)
+  must surface as `status:"tooManySamples"` — a *skipped, non-error* state (mirror
+  `iccRoundTrip.cpp:231–233`). This is the one non-obvious status path.
+- Sampling bounded by IccProfLib granularity + the too-many-samples guard → no allocation to cap.
+
+### Definition of done
+A/B against the native `iccRoundTrip <profile> 1 0` on a real CMYK profile (e.g. `APTEC_PC11`):
+WASM JSON must match the CLI's min/mean/max (both directions) + the five PRMG buckets. Add a case to
+`validator-wasm/*smoketest.mjs`.
+
+### Effort
+Small: ~40-line accumulator + ~30-line wrapper; no new deps/module/CMake. Dominant cost = 12-locale
+i18n + xlsx regen + the WASM rebuild/SHA256/tag cycle. ~1–2 days eng + release.
+
+### Upstream contribution (the Group A PR)
+Promote `CIccMinMaxEval` out of the CLI into `IccProfLib` (beside `CIccEvalCompare`/in `IccEval`).
+Small, clean, non-duplicating — fits the migration ethos.
+
+---
+
+## GROUP B — Construct  *(planning depth; ⚠ needs source grounding before build)*
+
+Each lifts a tool `main()` that builds a `CIccProfile` from IccProfLib public API. ✅ The review
+confirmed all three build the profile entirely in `main()`, so a clean byte-returning engine is
+achievable, and lifting **is** the upstream contribution.
+
+**Shared prerequisite — MemIO refactor:** all three persist via `SaveIccProfile(path)` (and FromCube
+parses via `FILE*`), so a byte-returning engine needs a `CIccMemIO`/MEMFS shim. This is a real
+sub-task per capability, not free. ⚠ Verify the exact `CIccMemIO` API before building.
+
+### B1 — IccFromCube  *(do first in B — simplest)*
+- Input: `.cube` text → build `CIccProfile` DeviceLink → ICC bytes.
+- ⚠ **Preserve the `LUT_3D_SIZE ∈ [2,255]` bound** (`iccFromCube.cpp:166–173`) — it lives in tool
+  `main()` and a naive engine-lift drops it (255³×3×4 ≈ 190 MB against the 256 MB heap).
+- New entry-point cap: **`kMaxCubeBytes`** (~32 MB). Do NOT reuse the XML DTD/entity guard for `.cube`.
+- UI: mirrors the existing XML/JSON "from" converter (text in → ICC download).
+- Effort: small–moderate.
+
+### B2 — IccV5DspObsToV4Dsp
+- Input: v5 display profile + v5 observer profile → build v4 display profile → ICC bytes.
+- Two ICC files in, one out. ⚠ Read `Tools/CmdLine/IccV5DspObsToV4Dsp/*.cpp` (~129–326) for the
+  exact tag-construction logic. Related closed CLI patch: iccDEV #667.
+- Caps: per-input `kMaxIccBytes`.
+- Effort: moderate.
+
+### B3 — IccApplyToLink
+- Input: a profile chain + params → sample the transform into a CLUT → DeviceLink ICC **or** `.cube`.
+- Color engine = `CIccCmm` (IccProfLib, already linked); the sampling/serialization is the tool code.
+- ⚠ Heaviest of B; check whether the chain-config overlaps IccLibConnect (if so it drifts toward D).
+- Caps: `lut_size ∈ [2,255]`, precision bounds, per-profile `kMaxIccBytes`.
+- Effort: moderate–heavy.
+
+### Group B common
+- New embind verbs returning ICC bytes (base64 or typed array).
+- i18n + MANUAL + rebuild/SHA256/tag per capability.
+- Upstream: each engine lift is a candidate PR.
+
+---
+
+## GROUP C — Inspect images  *(planning depth; zero new C++)*
+
+Parse the image container in **JS**, extract the embedded ICC profile, feed the **existing**
+`validateProfile` → the profile flows into Header/Tags/Validation/Analysis. ✅ The review confirmed
+this reaches **embedded-ICC inspection parity** (not full container-metadata dumps) with **no new
+C++ and no libtiff/png/jpeg in the WASM** — which also avoids the §1.8 tool-layer overflow surface.
+
+⚠ **Difficulty is NOT uniform** (review-confirmed):
+| Sub | Container | Extraction | Effort |
+|---|---|---|---|
+| **C1 — TIFF** *(do first)* | IFD | single blob at tag 34675 — trivial read | small |
+| **C2 — PNG** | `iCCP` chunk | **zlib-deflate → needs inflate** in JS | small–moderate |
+| **C3 — JPEG** | `APP2` markers | **multi-marker reassembly** (seq/count/dupe/missing, ~60 lines) | moderate |
+
+Notes:
+- chardata already does this JS-side with UTIF (`public/lib/utif.js`) — reference, not a dependency.
+- ✅ The JPEG `acsp` raw-scan fallback was **removed** upstream (#1382) — don't reimplement it.
+- Scope = "drop an image, inspect its embedded profile." Container metadata dumps are a stretch goal.
+- UI: extend DropZone to accept image types; on embedded-ICC found, route bytes into the normal flow.
+- New JS caps: bound decompressed `iCCP` size (zip-bomb guard) before inflate.
+
+---
+
+## GROUP D — Transform chains  *(planning depth; heaviest; ⚠ dependency decision required)*
+
+The Apply family. **In scope** — heaviest bucket, sequenced last, but not deferred. The review
+(✅ verified) established the split: the innermost color kernel (`CIccCmm::Apply` /
+`CIccNamedColorCmm`) is in IccProfLib and **already linked**, but the chain-**building** machinery the
+CLIs actually drive — `CIccConnectCmm::CreateStandard/CreateSearch/CreateNamed` + the config classes
+(`CIccCfgProfileSequence`/`CIccCfgDataApply`/`CIccCfgSearchApply`/`CIccCfgImageApply`) — lives in
+**IccLibConnect** (`IccConnect/IccLibConnect/{IccConnect.cpp,IccCmmConfig.h}`), which profiletool does
+NOT link today (`grep IccConnect validator-wasm/` is empty).
+
+### The dependency decision (blocks D; make before starting)
+- **(a) Scope down** — build the facade over plain `CIccCmm`/`CIccNamedColorCmm` chain-building only
+  (those `.cpp` are already in `ICCPROFLIB_SOURCES`); declare the `-ENV`/`-PCC`/`-INIT` + IT8/CGATS/JSON
+  config surface a **non-goal**. Cheapest; loses config fidelity.
+- **(b) Add IccLibConnect** — add `IccCmmConfig.cpp`, `IccConnect.cpp`, `IccJsonUtil.cpp` (+ nlohmann-json
+  config parsing + MEMFS data staging) to the mirrored source manifest. Full fidelity; this is exactly
+  the hand-mirrored-source fragility §2.5 warns about.
+
+### D1 — IccApplyNamedCmm / D2 — IccApplySearch
+- Input: profile-chain config + text color values (encoding per the CLI's text-data table:
+  0 Lab/XYZ, 1 %, 2 unit-float, 3 raw-float, 4 8-bit, 5 16-bit, 6 16-bit v2) → transformed values out.
+- Search variant = inverse (`CreateSearch` / `CIccCmmSearch`, `IccCmmSearch.cpp` already in manifest).
+- UI: a **chain-builder** (N profiles, per-profile intent) + a color-input surface. This UI is the big lift.
+
+### D3 — IccApplyProfiles
+- Apply a chain to a **TIFF image**. Per the Group C philosophy: color kernel = engine (D1-style);
+  TIFF decode/encode = **JS** (do NOT pull `TiffImg.cpp`/libtiff into wasm — that's the §1.8 overflow surface).
+- ⚠ Must port the tool-layer checked helpers `GetFloatRowByteCount`/`AddPixelBufSlack`
+  (`iccApplyProfiles.cpp:98,131`) into the engine — they're Class-C "already hardened" but live in
+  CmdLine, so a JS-container split does not carry them into wasm.
+
+### Group D common
+- New entry-point caps: per-member `kMaxIccBytes`, chain-length cap, **checked-multiply on
+  `points × channels`** before allocating outputs.
+- ⚠ Needs source grounding: read `Tools/CmdLine/IccApplyNamedCmm|IccApplySearch|IccApplyProfiles/*.cpp`
+  and the IccLibConnect config classes before building. Related closed research: iccDEV #1323, #1000.
+- Effort: **heavy** (color kernel is proven; cost is the dependency decision + the chain-builder UI + config surface).
+
+## Cross-cutting checklist (every capability with new chrome)
+
+- [ ] Engine stays locale-neutral (signatures/enums/numbers only).
+- [ ] New WASM entry point → its own byte cap (mirror `kMaxIccBytes`); new text parser → its own guard.
+- [ ] Ported tool-layer checked-arithmetic helpers where data crosses JS→wasm (B/C).
+- [ ] i18n keys across **12 locales** + `sync-translations.mjs` (9 xlsx).
+- [ ] `MANUAL.md` update → regenerate `help.html`.
+- [ ] Any `*-wrapper.cpp`/engine change = full WASM rebuild → `SHA256SUMS` → version bump → tag release.
+- [ ] A/B verify vs the native CLI on a real profile/image; add a smoketest case.
+- [ ] Upstream: is the engine a PR candidate? (Group A/B yes; Group C is JS, downstream-only.)
+
+## Sequencing
+
+Review recommendation (lowest integration-tax first): **C1 TIFF → C2/C3 → Group A → Group B → Group D**,
+because even a minimal Group A "widen the return" crosses the C++/wasm/SHA256/tag boundary and drags
+12-locale strings, whereas C1 is truly zero-new-C++. Group D is last (heaviest) but **in scope**.
+*User directive: produce/deliver plans starting with Group A.* (Delivery order ≠ mandated build order —
+reconcile before starting implementation.)
+
+## Decision Log
+
+*Every planning decision, tracked by stable ID. `RESOLVED` entries carry the call +
+date; `OPEN` entries carry the options so input can be dropped in by ID. IDs are
+referenced from the group sections above. Categories: **IA** app-identity/nav ·
+**A/B/C/D-UX** per-group user-experience · **ARCH** build/dependency.*
+
+### DL-PHASE1 — Phase-1 scope & selection UX (base wasm set, no canvas) · ✅ RESOLVED 2026-07-18
+**Q:** Phase 1 covers the existing iccDEV **wasm CLI-tool collection** (`iccdev/wasm/`,
+22 modules) WITHOUT the node graph (DL-CANVAS1 = later phase). Does the data-store
+selection UX need more than **profile-pair** selection?
+**Arity survey (verified from tool `Usage()`):**
+| Arity | Tools | Phase 1 |
+|---|---|---|
+| 0 prof — text/file → profile | FromCube, FromXml, FromJson | ✅ ingest |
+| 0 prof — image → extract/dump | TiffDump, PngDump, JpegDump | ✅ ingest (Group C) |
+| 1 prof | DumpProfile(+bigstack), ToJson, ToXml, RoundTrip, ProfilePlot, PawgReport, DescribeSinkTest | ✅ single |
+| 1 prof + image seq | SpecSepToTiff | ✅ single + image |
+| 2 prof, **role-typed** | V5DspObsToV4Dsp (display + observer) | ✅ role-pair |
+| **N prof, unordered** (compare) | ProfileVisualize (gamut overlay) | ⚠ scope call |
+| **N prof, ordered + intent + PCC + data** | ApplyNamedCmm, ApplyProfiles, ApplySearch, ApplyToLink | ⛔ **defer → DL-CANVAS1** |
+**Decision:** pair is *almost* enough — three caveats: (1) `ProfileVisualize` wants
+**unordered multi-select (N)**; (2) the one pair (`V5→V4`) is **role-typed** (2 slots,
+not symmetric 2-select); (3) a separate **companion-data axis** (text/file producers,
+image drop) that profile-selection doesn't cover. The **only** tools needing
+ordered-N + PCC + per-profile intent + data-file are the 4 `Apply*`/`ToLink` — i.e.
+exactly the node-graph set → cleanly deferred to DL-CANVAS1.
+**Phase-1 data-store UX:** pool with **N-multi-select (unordered)** — N=1 → single
+tools, N≥2 → `ProfileVisualize` compare, **role-slots** for the `V5→V4` pair; **two
+ingest affordances** (create-from-text/file → new pooled profile; image drop → extract
+embedded into pool); **defer** ordered-chain/PCC/data apply-link. Net: multi-select
+unordered + role-slots for one pair — a hair beyond "pair," far short of the graph.
+**Sub-call RESOLVED (user 2026-07-18): include `ProfileVisualize` multi-compare.** It
+fits a **"multi-select from list + verb (Plot Gamut)"** frame — adopted as the **general
+phase-1 interaction model**:
+- **Interaction = pool list + multi-select + verb bar** (file-manager / chardata
+  select→action convention; node-graph-free). Verbs enable by selection arity:
+  - **0 selected** → *ingest* verbs only: New from .cube / XML / JSON; Add from image
+    (extract embedded → pool).
+  - **1 selected** → Inspect · Dump · To JSON · To XML · Round-Trip · Profile Plot ·
+    PAWG · **Plot Gamut**.
+  - **2 selected** → **Plot Gamut** (compare) · **Make V4 Display** (`V5→V4`).
+  - **N>2 selected** → **Plot Gamut** (compare overlay).
+- **Role-pair (`V5→V4`) needs no manual role UI:** the tool's contract distinguishes the
+  two by class — `argv[1]` = V5 **RGB display** (`mntr`), `argv[2]` = V5 **observer**
+  (`spac` ColorSpace-class PCC). Roles are **auto-inferred** from the selected pair
+  (confirm; error on ambiguous, e.g. two displays). The one asymmetric case collapses
+  back into plain multi-select + verb.
+**Input:**
+
+### DL-A1 — Round-trip surfacing & controls · ✅ RESOLVED 2026-07-17
+**Q:** Where does the canonical `iccRoundTrip` (PRMG) metric live, and how does it
+relate to the existing bespoke `roundTripDE` overview? *(orig open-decision #1)*
+**Decision:** Integrate into the **existing Profile Statistics table** (Analysis tab)
+— **not** a separate PRMG card. Rendering intent stays the row axis (one row per
+intent, unchanged). The two round-trip metrics become selectable **methods** behind a
+single **"Round-trip method" listbox**; the *existing 3 round-trip columns are reused
+and re-skinned* per method (no new column):
+- **In-gamut ΔE (iccviz `roundTripDE`)** — columns `mean | P90 | max` (today's behavior)
+- **PRMG (`iccRoundTrip`)** — columns `RT1 | RT2 | ≤ΔE1 %`; a per-row `›` **expander**
+  reveals the full `ΔE≤1/2/3/5/10` histogram + worst-Lab + specified-gamut flag
+- **use-MPE** checkbox (PRMG method only)
+- **Recompute:** live on control change; memoize per `(profile, method, use-MPE)`.
+- Listbox is built to grow (future ΔE2000 / PCS-seeded "family" styles).
+**Rationale:** avoids two unreconciled "round-trip" numbers; the metric's rich part
+(histogram/worst-Lab) hides behind the expander so the table width is unchanged. The
+user's refinement — *"we already have 3 columns, so we really just need the method
+control"* — means the **only new chrome is the method listbox + use-MPE checkbox**.
+**Supersedes:** GROUP A → *Changes* item 5 (the "new Collapsible / intent select"
+plan) — there is no new collapsible and no intent `<select>` (intent = row axis).
+Build target = extend `ProfileStatsSection` in `AnalysisPanel.jsx`. Folds in the
+former A-2 (controls) and A-3 (PRMG presentation).
+
+### DL-IA1 — App identity: inspector vs generator/transformer · ✅ RESOLVED 2026-07-18 (Option 4, staged)
+**Q:** profiletool is inspect-only today (drop profile → Header/Tags/Validation/
+Analysis). Group A fits (Analysis card) and Group C fits (image → embedded profile →
+same flow), but **Groups B (emit ICC) & D (interactive transform) change what the app
+is**. How do they fit? *(gates all B/D-UX decisions)*
+**Options:** (1) keep inspect-only — A+C land here, B+D declared out of scope;
+(2) add a second top-level "Tools"/"Convert" area for B (and later D), inspector stays
+default; (3) full IA restructure into Inspect/Construct/Transform peers; **(4) Profile
+Pool / workbench** *(user-proposed 2026-07-18)* — top level becomes a *collection* of
+ICC profiles (auto-classified by class/colorspace/version/PCS — free from existing
+header output — + user classifications TBD), backed by an in-browser profile **data
+store**. Select **one** → today's tabbed single-profile view + single-profile
+near-future (extract-from-image, apply-to-image). Select **≥2** → link production &
+other multi-profile activity; the selection *is* the chain input. B/C/D stop being
+homing problems: C *adds to* the pool, B *produces into* it, B2/D *operate on
+selections* — so **DL-B2 "close the loop" becomes automatic** and **DL-D1's
+chain-builder collapses into** pool multi-selection + per-profile order/intent.
+Heaviest + most capable; a superset of (3) organized around a collection/selection
+rather than verb-areas. Introduces three new axes → **DL-STORE1** (persistence),
+**DL-IMG1** (images transient), **DL-SCOPE1** (characterization boundary).
+**DECISION (user 2026-07-18): Option 4, staged.**
+- **Phase 1** — Profile Pool + single-profile inspect + **multi-select-from-list + verb**
+  over the base wasm CLI-tool set (DL-PHASE1); **no node graph**; store =
+  filesystem-ephemeral (DL-STORE1).
+- **Canvas phase** — connectivity node graph (DL-CANVAS1) for linking / ICS / the 4
+  `Apply*`·`ToLink` chain tools; same filesystem-ephemeral store (workflows = saved
+  `.json`).
+Options 1–3 (mine) were superseded; Option 4 is the user's Profile Pool proposal.
+**Input:** RESOLVED — Option 4, staged.
+
+### DL-STORE1 — Data store model · ✅ RESOLVED 2026-07-18
+**Decision (user):** **ephemeral session pool; the local filesystem IS the store**
+(chardata model). The app **persists nothing** between sessions → strong
+*data-doesn't-leave* AND no local linger. **No IndexedDB — ever, including the canvas
+phase.** (Supersedes the earlier "IndexedDB deferred to canvas" option.)
+- **Durability is delegated to the user's own folder** — encourage "keep all your
+  profiles in one place"; the pool is a *loaded working set*, not an app-managed library.
+  Reload clears the pool; re-browse to reload (source of truth = their folder on disk).
+- **Population — phase 1 = chardata parity:** multi-file `<input multiple>` + drag-drop
+  (`dataTransfer.files` → `addFileToList`), matching chardata `public/index.html`.
+  **DEFERRED to POST-phase-1** (user-proposed 2026-07-18, NOT in chardata today; *don't
+  forget*): **folder + folder-and-subfolder (recursive) load** — `showDirectoryPicker`
+  (Chromium) recursive walk of the dir handle's `.values()`, `<input webkitdirectory>`
+  fallback. chardata uses `showDirectoryPicker` only for export/readwrite, not recursive
+  profile loading → genuinely new.
+- **Pool internals:** in-memory list of loaded entries (bytes + derived metadata),
+  chardata "file-card" style; key on `profileId`/content hash → dedup free;
+  auto-classification (class/colour space/version/PCS) free from `validateProfile` output.
+- **Produce/save verbs** (FromCube/Xml/Json, Make-V4, later link production) =
+  user-initiated **file download/save to disk**, not app persistence.
+- **Privacy/quota concerns evaporate** — no IndexedDB ⇒ no on-disk linger, no clear-all
+  obligation, no quota/eviction handling. The only "store" is the user's own filesystem.
+**Workflow entity (canvas phase) persists the SAME way** (per DL-ICS1/DL-CANVAS1): a
+saved workflow = a `.json` file the user saves to their folder and loads back via browse
+— **not** a DB. Bundled demos (e.g. `Testing/ICS`) ship as loadable `.json`. The store
+never holds a workflow between sessions.
+**Input:**
+
+### DL-IMG1 — Image ops are transactional; store holds profiles only · ✅ RESOLVED 2026-07-18
+**Decision (user):** the pool holds **profiles only**. Extract-from-image *adds a
+profile* to the pool; apply-to-image is a **stateless transaction** (image in → image
+out via user download, neither persisted). Consistent with DL-STORE1 (app persists
+nothing; produced files are user downloads).
+**Input:** RESOLVED — profiles-only, images transient.
+
+### DL-SCOPE1 — Characterization data as a primitive: avoid (weak principle) · ✅ RESOLVED 2026-07-18
+**Q:** *Weak* principle (deliberate lean, not absolute): avoid characterization datasets
+(CGATS/IT8/.ti3, spectral/CxF) as a **data primitive** / a
+profile-*creation-from-measurement* workflow — that's profile-vendor + **chardata**
+territory. Keep profiletool in **iccDEV territory** (profiles in → profiles/transforms
+out) as a free open tool. **Nuance:** we *already* ingest CGATS for the PAWG report, so
+the line is **not** "never read measurement data" — it's "don't build
+profile-*fitting/creation-from-measurement* as a core primitive"; bounded tool-specific
+measurement inputs (PAWG's CGATS, a `.cube` LUT) are fine as iccDEV-tool inputs. The one
+candidate exception raised (profile absolute-colorimetry → data fit) is **chardata's
+today** → stays out. Task: pin the precise line + the bounded-exception list.
+**Input:** RESOLVED (user 2026-07-18) — adopt the boundary as stated: stay in iccDEV
+territory (profiles in → profiles/transforms out); bounded tool-specific measurement
+inputs OK (PAWG CGATS, `.cube` LUT); no profile-creation-from-measurement primitive.
+
+### DL-ICS1 — iccMAX ICS / multi-part interchange workflows · 🔲 OPEN *(requirement, verified 2026-07-18)*
+**Requirement:** the architecture must hold iccMAX **ICS (Interchange Color Space) demo
+workflows** (`iccdev/Testing/ICS/`) and, by extension, the wider `Testing/` iccMAX
+families (Calc, Display, Encoding, Named, PCC, SpecRef, HDR, mcs, Overprint, hybrid).
+**Verified:** an ICS workflow *is* a multi-part profile chain — `spac`/`mntr` profiles,
+`Part1→Part2[→Part3]`, connecting through an interchange PCS (Lab/XYZ/spectral) under a
+stated illuminant/observer (e.g. `Lab_float-D65_2deg-Part1` → `-IllumA_2deg-Part2` =
+D65→Illuminant-A adaptation; `Rec2100HlgFull-Part1/2/3` = 3-part HDR + EOTF companion).
+→ It is an **instance of the pool's "select ≥2 → apply-chain / link production"**
+activity (Group D), so **DL-IA1 opt 4 holds it as a framing arc** (single-vs-group axis
+covers the whole family). **Build bonus:** the full iccMAX apply stack is already linked
+(see DL-ARCH2 update) — executing MPE/spectral/calc/PCC chains is a *binding* problem,
+not a new engine.
+**Gaps (architecture must satisfy):**
+1. **Order + typed roles** in the "select ≥2" model (source / interchange-PCC /
+   destination), not a flat set. → refines **DL-D1**.
+2. **ICS-aware chain semantics + connection validation** — surface interchange space +
+   viewing conditions; validate Part1 output space/conditions match Part2 input. *New
+   layer*, not covered by generic chain-apply.
+3. **Bound apply/link entry point** — the only real code gap (kernel already linked). →
+   **DL-ARCH2**.
+4. **"Workflow" store entity** — named recipe over pooled profiles. → **DL-STORE1**.
+5. **Bundled demo content** (ship `Testing/ICS` as loadable examples) + confirm no
+   measurement-data primitive (EOTF/InvEOTF are transfer-function reference, transform
+   lives in the profiles). → consistent with **DL-SCOPE1**.
+**Mapping (DL-CANVAS1):** gaps 1–2 → canvas **edges** (order/roles) + typed
+**color-space ports** (connection validation); gap 4 → **SerializedWorkflow**.
+**Input:**
+
+### DL-CANVAS1 — Connectivity canvas (node-graph) as the linking mechanism · 🕓 LATER PHASE *(design sourced 2026-07-18; deferred per user — phase 1 = DL-PHASE1)*
+**Decision to adopt:** use a **node-graph "connectivity canvas"** — nouns (profiles /
+images / color-value sets, drawn from the pool) wired through engine nodes (apply /
+link / extract / metric) to sinks — as the concrete realization of DL-IA1 opt 4's
+"select ≥2 → multi-profile activity." Also covers **single-image processing** (a linear
+Image→Apply→Output graph) and **ICS multi-part** (a topo-ordered apply chain), per user
+2026-07-18.
+**Design source (verified):** `~/code/pflt/apps/pfgraph` (+ framework-free core
+`~/code/pflt/packages/workflow-runtime`). Reusable pieces:
+- **Registry** (`registerNodeKind`) — single source of truth; canvas, library,
+  validation, executor all read it. Add a capability = register one node.
+- **`NodeKindSpec = RuntimeNodeSpec (framework-free run()) + React UI`.** The executor
+  reads only the runtime half → the *same* `run()` drives canvas + a future headless
+  worker/CLI. **Swap seam for profiletool: `ctx.api` = in-browser WASM engine facade**
+  (pflt's is a server client; the executor/node contract is identical).
+- **Node families** `data | engine | decision`: data = nouns (ProfileSource from pool,
+  ImageSource, ColorValuesSource; sinks ProfileOutput→pool, ImageOutput download);
+  engine = ApplyProfile / BuildLink / ExtractFromImage / IccFromCube / V5→V4 /
+  Gamut·RoundTrip; **Matlab/external API = more `data` nodes** (future req, no arch
+  change).
+- **Typed ports + `canConnect`/`portTypesCompatible`** (`canvas/validation.ts`) →
+  encode color space + PCS + illuminant/observer as `PortType`; edge validity = ICS
+  space/conditions matching.
+- **`SerializedWorkflow {version, nodes[], edges[]}`** (zod, versioned, additive;
+  `workflow/schema.ts`) = the **workflow store entity** (DL-STORE1/DL-ICS1 gap 4);
+  bundled ICS demos ship as these. autosave/serialize ready-made.
+- **`runPipeline`** (`executor.ts`, topo-sort → `run()` each node) = the apply-chain
+  executor.
+**Subsumes DL-D1** (the canvas *is* the chain-builder, more general). **Realizes**
+DL-STORE1's workflow entity + DL-ICS1 gaps 1/2/4. **Also the home for image-noun
+gathering** — `SpecSepToTiff` (N spectral image separations → assembly node → TIFF, P1-c)
+is the image analogue of ICS profile-chain gathering.
+**Adaptation gaps (NOT a drop-in — profiletool constraints):**
+- **a. No-server.** pfgraph is multi-tenant + server-backed (`auth/`, `api/client`,
+  Job/Ticket/Volume nodes, headless worker). Pull canvas/registry/node-spec/ports/
+  serialize/validate/executor; **drop** all auth/tenant/job/server nodes; `ctx.api` →
+  WASM; data nodes → in-browser pool. Preserves *no-server / no-data-leaves*.
+- **b. `@xyflow/react`** (React Flow) — client-side, CSP-compatible (`script-src
+  'self'`), but a substantial new dep + bundle cost; must be skinned to the chardata
+  visual identity.
+- **c. TS → JS.** pfgraph is TS + zod; profiletool frontend is JS/JSX. Patterns port;
+  literal code + zod schemas need re-expression (or introduce TS to profiletool).
+- **d. Staging.** Free-form canvas = large surface vs today's validator. It's the
+  *destination* for the linking/ICS half — stage: pool + single-profile inspect first,
+  maybe a simple linear apply before the full canvas. Canvas earns its weight once
+  linking/ICS are live.
+- **e. Shared-core option.** `@pflt/workflow-runtime` (RuntimeNodeSpec/PortType/
+  runPipeline/registry) is framework-free — fork-and-port vs vendor/share. Likely port
+  the pattern (lang/constraint mismatch), but the seam exists.
+**Input:**
+
+### DL-C1 — Image drop affordance · 🔲 OPEN
+**Q:** DropZone starts accepting TIFF/PNG/JPEG (Group C). Same silent drop target, or
+a visible hint that images-with-embedded-profiles are accepted?
+**Input:**
+
+### DL-C2 — Image failure / multiplicity messaging · 🔲 OPEN
+**Q:** What does the user see when an image has **no** embedded profile (non-error
+"nothing to inspect" state), and when a JPEG carries a **multi-marker** profile
+(reassembled) vs inconsistent/missing markers?
+**Input:**
+
+### DL-B1 — Construct input affordances · 🔲 OPEN *(only if DL-IA1 ≠ opt 1)*
+**Q:** `.cube` text (B1) — paste-box vs file-upload? B2 needs **two** ICC inputs —
+dual-drop UX?
+**Input:**
+
+### DL-B2 — Construct: close the loop · 🔲 OPEN *(only if DL-IA1 ≠ opt 1)*
+**Q:** After building an ICC, auto-feed it into the inspector (validate what you built)
+or just offer a download? *(Under DL-IA1 opt 4 this is automatic — constructed profiles
+land in the pool, inherently inspectable.)*
+**Input:**
+
+### DL-D1 — Chain-builder depth · 🔲 OPEN *(only if DL-IA1 ≠ opt 1)*
+**Q:** D's N-profile + per-profile-intent builder is the big UX lift. Full interactive
+builder, or a minimal fixed 2-profile form for a first cut? *(Under DL-IA1 opt 4 the
+builder collapses into pool multi-selection + per-profile order/intent — much of the
+lift is absorbed by the selection model.)*
+**Superseded by DL-CANVAS1** — the connectivity canvas (node graph) *is* the
+chain-builder: edges express order, typed color-space ports express the per-connection
+constraint. This entry is now the "how deep is the first canvas cut" staging question.
+**Input:**
+
+### DL-D2 — Color-input encoding exposure · 🔲 OPEN *(only if DL-IA1 ≠ opt 1)*
+**Q:** Expose the CLI's full 0–6 encoding table, or the common subset (Lab/XYZ, %,
+8/16-bit)?
+**Input:**
+
+### DL-ARCH1 — B3 ApplyToLink: pulls IccLibConnect? · 🔲 OPEN (factual — resolvable by source read)
+**Q:** Does B3's chain-config pull in IccLibConnect? If yes → reclassify to Group D.
+*(orig open-decision #2)* Settle by reading `iccApplyToLink.cpp` — I can resolve this
+without user input.
+**Input:**
+
+### DL-ARCH2 — Group D dependency scope · 🔲 OPEN
+**Q:** Scope down to plain `CIccCmm`/`CIccNamedColorCmm` (cheap; loses `-ENV`/`-PCC`/
+config fidelity) **or** add IccLibConnect to the mirrored source manifest (full
+fidelity; the hand-mirrored-source fragility, §2.5). *(orig open-decision #3; decide
+before any D build)*
+**Update (2026-07-18, verified):** the WASM build **already links the full iccMAX apply
+stack** — `IccMpeBasic/Calc/Spectral/ACS`, `IccTagMPE`, `IccArrayBasic`,
+`IccStructBasic`, `IccSolve`, `IccSparseMatrix`, `IccPcc`, `IccCAM`, `IccCmm`,
+`IccCmmSearch` (`validator-wasm/CMakeLists.txt`). So the **color kernel** for
+MPE/spectral/PCC chains is present; "scope down to plain CIccCmm" is moot. The residual
+ARCH2 question narrows to the **chain-config surface** (IccLibConnect) only — the
+transform engine is not the gap. The gap is a bound **apply/link entry point** (see
+DL-ICS1).
+**Input:**
+
+### DL-ARCH3 — Pin iccDEV as a submodule · 🔲 OPEN
+**Q:** Pin iccDEV as a git submodule (§2.5) vs the current unpinned `ICCDEV_ROOT`
+path. *(orig open-decision #4)* Note: a pin also makes the **iccviz sync-back** (Track
+1) reproducible, so this spans both parity tracks.
+**Input:**
+
+## Related iccDEV issues
+- **#1711** (OPEN, active) — bring GamutVolume/RoundTripDE/neutral-axis to the IccProfilePlot iccviz
+  engine. The upstream track for our migration; directly touches Group A round-trip.
+- **#197 / #203 / #1090 / #826 / #435** — the CLI-tools-as-WASM (`callMain`/npm) effort we are
+  deliberately NOT replicating. #203 (toolchain merge, "may be forked, Q1/2026") is the open
+  upstream-strategy question `iccdev-wasm-analysis.md` feeds.
+- **#667** — closed iccV5DspObsToV4Dsp CLI patch (reference for B2).
+
+## Phase 1 — Build Spec (synthesis of locked decisions)
+
+Locked: **DL-IA1** opt 4 (pool workbench, staged) · **DL-STORE1** (filesystem-ephemeral,
+no DB) · **DL-PHASE1** (multi-select + verb, no node graph) · **DL-IMG1** (profiles-only)
+· **DL-SCOPE1** · **DL-A1** (round-trip in Profile Statistics). **Goal:** cover the iccDEV
+`wasm/` CLI-tool set — *minus* the 4 `Apply*`/`ToLink` chain tools (→ canvas phase) — via
+the pool + verb frame.
+
+### 1. The pool shell (new IA — three-zone chardata layout; P1-a RESOLVED 2026-07-18)
+- **Left — info pane = the data-store list view** (the pool). **Collapsible + resizable**;
+  it is **the drag-and-drop target** + browse-load entry. Growing/hiding it shrinks/grows
+  the main canvas. Load: multi-file `<input multiple>` + drag-drop → in-memory pool, dedup
+  by `profileId`/content hash *(folder/subfolder load deferred post-phase-1, DL-STORE1)*.
+  Rows = filename + auto-classification badges (class, colour space, PCS, version, size)
+  from `validateProfile`; multi-select (click · shift/ctrl-range · select-all).
+- **Centre — main canvas switches by selection count:**
+  - 0 selected → empty / browse prompt.
+  - **1 selected → today's profiletool renders here** (`ProfileViewer`:
+    Header/Tags/Validation/Analysis/XML/JSON + its save toolbar) = single-profile actions.
+  - **N selected → a distinct multi-profile canvas** = compare/link actions (phase 1:
+    Plot Gamut compare, Make V4 Display).
+- **Right — settings pane** unchanged from today (`SettingsBlade` overlay); `GuidePanel`
+  unchanged.
+- **Verb placement** follows the canvas mode: single-mode verbs = `ProfileViewer`'s own
+  tabs/toolbar; multi-mode verbs = the compare/link canvas; **ingest/create verbs**
+  (from cube/xml/json, add-from-image) live in the **info pane** (the load/create area).
+- **Cross-cutting: the gamut view is SHARED across both modes** — single = this profile's
+  gamut, multi = N-profile overlay → the gamut component must be **selection-mode-agnostic
+  (1..N)**. Ties to P1-b.
+- Today's `DropZone` is absorbed into the info pane's empty-state + drop target.
+
+### 2. Verbs → engines → output
+| Verb | Arity | Engine | New? | Output |
+|---|---|---|---|---|
+| Inspect | 1 | validateProfile + describeTag | existing | ProfileViewer tabs |
+| Dump / To JSON / To XML | 1 | validate / iccToJson / iccToXml | existing | tab / download |
+| Round-Trip (PRMG) | 1 | iccRoundTrip (CIccMinMaxEval + CIccPRMG) | **new** (DL-A1) | Profile Statistics method column |
+| Profile Plot | 1 | iccviz single | existing | Analysis plot |
+| Plot Gamut (compare) | 1..N | ProfileVisualize N-overlay | **new** | overlay plot |
+| PAWG Report | 1 | iccPawgReport | existing | report |
+| Make V4 Display | 2 (roles by class) | iccV5DspObsToV4Dsp | **new** | download + add-to-pool |
+| New from .cube | 0 | iccFromCube | **new** | add-to-pool + download |
+| New from XML / JSON | 0 | iccFromXml / iccFromJson | existing | add-to-pool + download |
+| Add from image | 0 | **JS** extract (TIFF/PNG/JPEG) | **new (JS only)** | add-to-pool |
+
+### 3. New engine / WASM work
+- **iccRoundTrip PRMG** (DL-A1) — port `CIccMinMaxEval` + `CIccPRMG`; rides the existing
+  `iccplot` module (no CMake change). Wrapper `roundTrip(bytes, intent, useMpe)`.
+- **ProfileVisualize N-overlay** — iccviz is single-profile today; N-profile gamut overlay
+  is new engine work → **P1-b**.
+- **IccFromCube** — new engine; `kMaxCubeBytes` (~32 MB) cap; preserve `LUT_3D_SIZE∈[2,255]`
+  bound; `CIccMemIO` byte-return.
+- **IccV5DspObsToV4Dsp** — new engine; 2 profiles in → 1 out; `CIccMemIO` byte-return;
+  role auto-detect by class (`mntr`/RGB display vs `spac` PCC observer).
+- **Image extract** — JS only, no C++: TIFF tag 34675; PNG `iCCP` (inflate + zip-bomb
+  guard); JPEG `APP2` multi-marker reassembly (Group C).
+
+### 4. Cross-cutting (per the checklist)
+Per-verb WASM entry-point byte caps; 12-locale i18n + `sync-translations.mjs`; MANUAL →
+`help.html`; WASM rebuild → SHA256SUMS → version bump → tag per engine change; A/B vs the
+native CLI + a smoketest case.
+
+### 5. Recommended phase-1 sequencing
+1. **Pool shell** wrapping **existing** verbs only (Inspect/Dump/JSON/XML/PAWG/single-plot)
+   — pure UX, **zero new C++**. Ships the workbench.
+2. **Round-Trip** (DL-A1, Profile Statistics method control).
+3. **Add from image** (JS extract — Group C).
+4. **New from .cube** (producer).
+5. **Make V4 Display** (`V5→V4`).
+6. **Plot Gamut compare** (ProfileVisualize N-overlay).
+
+*(`SpecSepToTiff` **deferred to the canvas phase** — P1-c: gathers N image nouns → an
+assembly node, a natural node-graph fit, not a phase-1 multi-select-verb fit.)*
+
+### Open phase-1 sub-decisions (surfaced by this spec)
+- **P1-a** ✅ RESOLVED — **three-zone chardata layout** (left collapsible/resizable info
+  pane = pool list + drop target; centre main canvas switches single↔multi by selection;
+  right settings overlay unchanged). See §1.
+- **P1-b** — 🕓 **DECISION DEFERRED but STAYS WITHIN PHASE 1** (user). Gamut view is
+  **cross-cutting** (single + multi → a mode-agnostic 1..N component). User prefers
+  chardata's **3D gamut plot + 2D gamut slice** forms over today's iccviz plots. Still
+  open: extend iccviz vs a new plot engine; upstream-migration fit
+  ([[iccviz-upstream-migration-plan]]); chardata-viz adoption. Decide at build time — NOT
+  pushed to the canvas phase.
+- **P1-c** ✅ RESOLVED — **DEFER to the CANVAS phase (not dropped).** `SpecSepToTiff` is a
+  **spectral-imaging assembly tool** (concatenates N single-wavelength TIFFs → one
+  multi-sample TIFF, optional profile embed). It **gathers N image nouns**, which fits the
+  node canvas naturally (N image-source nouns → assembly engine node → TIFF sink, optional
+  profile input) — same "gather many nouns" shape as ICS profile chains. Not a phase-1
+  multi-select-verb fit; not out of scope. TIFF-write impl TBD at canvas time (JS-side per
+  Group C, or the compiled tool).
+- **P1-d** ✅ RESOLVED — **info-pane type-sniff.** The single info-pane drop/browse target
+  sniffs file type: ICC profiles load directly into the pool; images (TIFF/PNG/JPEG) →
+  extract embedded profile → pool. No distinct entry point.
