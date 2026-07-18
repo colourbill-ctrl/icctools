@@ -1,0 +1,93 @@
+/* Centre canvas — 3 tabs + per-tab accumulator + panel. Shared tokens (index.css)
+   → dark mode for free. */
+
+.canvas {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--page-bg);
+}
+
+.tabBar {
+  display: flex;
+  gap: 2px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex: 0 0 auto;
+}
+.tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 12px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.tab:hover { color: var(--accent); }
+.tabActive { color: var(--accent); border-bottom-color: var(--accent); }
+.tabDrop { background: var(--accent-tint); border-bottom-color: var(--accent); color: var(--accent); }
+.tabCount {
+  font-size: 11px; font-weight: 700; color: #fff; background: var(--accent);
+  border-radius: 10px; padding: 1px 7px; min-width: 16px; text-align: center;
+}
+.tabActive .tabCount { background: var(--accent); }
+
+.accum {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-height: 40px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--surface-alt);
+}
+.accumDrop { outline: 2px dashed var(--accent); outline-offset: -4px; background: var(--accent-tint); }
+.accumHint { font-size: 12px; color: var(--text-muted); font-style: italic; }
+
+.chiclet {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  padding: 3px 6px 3px 11px; max-width: 220px;
+}
+.chicletName { font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chicletX {
+  border: none; background: transparent; cursor: pointer; color: var(--text-muted);
+  font-size: 15px; line-height: 1; padding: 0 3px; border-radius: 50%;
+}
+.chicletX:hover { color: var(--error); }
+
+.panel { flex: 1 1 auto; overflow: auto; min-height: 0; padding: 16px; }
+
+/* Profile tab: a slim bar + the embedded ProfileViewer. */
+.profileWrap { display: flex; flex-direction: column; gap: 12px; }
+.profileBar { display: flex; align-items: center; gap: 10px; }
+.profileName { font-weight: 700; font-size: 15px; color: var(--text); }
+.spacer { flex: 1 1 auto; }
+.modifiedPill {
+  font-size: 11px; font-weight: 700; color: var(--warning);
+  border: 1px solid var(--warning); border-radius: 10px; padding: 1px 8px;
+}
+
+/* Empty + placeholder states. */
+.empty { text-align: center; padding: 64px 24px; color: var(--text-muted); max-width: 460px; margin: 24px auto; }
+.emptyIcon { font-size: 44px; opacity: 0.65; margin-bottom: 12px; }
+.emptyHead { font-size: 17px; font-weight: 600; color: var(--text); margin: 0 0 6px; }
+.emptySub { font-size: 13px; line-height: 1.5; margin: 0; }
+
+.placeholder { max-width: 520px; margin: 24px auto; padding: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.placeholderHead { font-size: 16px; font-weight: 700; color: var(--text); margin: 0 0 6px; }
+.placeholderSub { font-size: 13px; color: var(--text-muted); margin: 0 0 10px; }
+.placeholderList { margin: 0; padding-left: 20px; font-size: 13px; color: var(--text); }
+.placeholderList li { margin: 2px 0; }

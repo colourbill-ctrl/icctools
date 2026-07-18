@@ -1,0 +1,93 @@
+/* Left info pane — the profile pool. Uses the shared tokens in index.css so it
+   recolours under body.dark automatically. */
+
+.pane {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  max-width: 620px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  height: 100%;
+  min-height: 0;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.headTitle { font-weight: 700; font-size: 14px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.count {
+  font-size: 11px; font-weight: 700; color: #fff; background: var(--accent);
+  border-radius: 10px; padding: 1px 7px; min-width: 18px; text-align: center;
+}
+.collapseBtn, .remove {
+  border: none; background: transparent; cursor: pointer; color: var(--text-muted);
+  font-size: 18px; line-height: 1; padding: 2px 6px; border-radius: 4px;
+}
+.collapseBtn:hover, .remove:hover { background: var(--surface-alt); color: var(--text); }
+
+.loadRow { padding: 10px 12px; border-bottom: 1px solid var(--border-soft); }
+.loadRow .btn-primary, .loadRow > button { width: 100%; }
+.hidden { display: none; }
+
+.body { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+.bodyDrag { outline: 2px dashed var(--accent); outline-offset: -6px; background: var(--accent-tint); }
+
+.empty { text-align: center; padding: 36px 18px; color: var(--text-muted); }
+.emptyIcon { font-size: 34px; opacity: 0.7; margin-bottom: 8px; }
+.emptyHead { font-weight: 600; color: var(--text); margin: 0 0 4px; font-size: 14px; }
+.emptySub { font-size: 12px; margin: 0; line-height: 1.4; }
+
+.list { list-style: none; margin: 0; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.row {
+  padding: 7px 9px; border-radius: var(--radius); cursor: pointer;
+  border: 1px solid transparent; background: var(--surface-alt);
+  display: flex; flex-direction: column; gap: 5px; user-select: none;
+}
+.row:hover { border-color: var(--border); }
+.rowSel { background: var(--accent-tint); border-color: var(--accent); }
+
+.rowMain { display: flex; align-items: center; gap: 6px; }
+.rowName {
+  flex: 1 1 auto; font-size: 13px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.remove { flex: 0 0 auto; font-size: 16px; }
+
+.badges { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.badge {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase;
+  color: var(--accent-dark); background: var(--accent-tint-strong);
+  border-radius: 4px; padding: 1px 5px; max-width: 120px; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis;
+}
+.badgeDim { font-size: 10px; color: var(--text-muted); }
+.badgeWarn { color: #fff; background: var(--warning); }
+
+/* Right-edge drag handle. */
+.resize {
+  position: absolute; top: 0; right: -3px; width: 6px; height: 100%;
+  cursor: col-resize; z-index: 2;
+}
+.resize:hover { background: var(--accent); opacity: 0.35; }
+
+/* Collapsed rail. */
+.rail { flex: 0 0 auto; width: 34px; background: var(--surface); border-right: 1px solid var(--border); height: 100%; }
+.railToggle {
+  width: 100%; height: 100%; border: none; background: transparent; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px 0;
+  color: var(--text-muted);
+}
+.railToggle:hover { color: var(--accent); background: var(--surface-alt); }
+.railChevron { font-size: 18px; }
+.railLabel { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; }
+.railCount {
+  font-size: 10px; font-weight: 700; color: #fff; background: var(--accent);
+  border-radius: 9px; padding: 1px 5px;
+}

@@ -1,176 +1,90 @@
-/* (c) 2026 William Li */
-.layout {
-  width: 841px;
-  max-width: 100%;
-  margin: 16px auto;
-  background: var(--surface);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-  min-height: calc(100vh - 32px);
+/* (c) 2026 William Li — 2.x Profile Pool workbench shell.
+   Full-viewport three-zone layout: slim topbar / [pool | canvas] shell / footer.
+   The SettingsBlade is a fixed right-edge overlay; reserve room for its collapsed
+   rail + floating tab column (and the full width when it's open). */
+.app {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  height: 100vh;
+  box-sizing: border-box;
+  padding-right: 44px;              /* collapsed blade rail + tab column */
+  background: var(--page-bg);
 }
+:global(body.blade-open) .app { padding-right: 226px; }
 
-.header {
-  padding: 22px 28px 6px 28px;
+.topbar {
+  flex: 0 0 auto;
   display: flex;
   align-items: baseline;
-  gap: 14px;
-  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
-
 .title {
   font-family: var(--font-sans);
-  font-size: 22px;
+  font-size: 19px;
   font-weight: bold;
   color: #333;
   letter-spacing: 0.2px;
   margin: 0;
 }
-
-/* Dark-mode title needs explicit high-contrast colour — the default `#333` is
-   nearly invisible on the dark surface. Pure white maximises contrast against
-   `--surface` (#242529) ≈ 16.5:1, which feels right for a top-level page
-   heading and matches chardata's preference for bright, punchy headings. */
 :global(body.dark) .title { color: #ffffff; }
+.tagline { font-size: 12px; color: var(--text-muted); }
+.tagline a { color: var(--accent); }
+.topSpacer { flex: 1 1 auto; }
 
-/* Tagline under the page heading. `flex-basis: 100%` forces it onto its own
-   line beneath the title (the header is a baseline-aligned flex row). */
-.subtitle {
-  flex-basis: 100%;
-  margin: 2px 0 0 0;
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-.subtitle a { color: var(--accent); }
-
-.banner {
-  padding: 6px 28px 18px 28px;
-  font-size: 13px;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
-}
-
-.banner strong {
-  color: var(--accent);
-}
-
-.main {
-  flex: 1;
-  padding: 22px 28px 40px 28px;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.status {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
+.status { display: inline-flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12px; }
 .spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
+  display: inline-block; width: 13px; height: 13px;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.7s linear infinite;
 }
-
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .errorBanner {
-  background: var(--error-tint);
-  border: 1px solid #f4cccc;
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--error-tint); border-bottom: 1px solid var(--error);
   border-left: 4px solid var(--error);
-  border-radius: var(--radius);
-  padding: 10px 14px;
-  color: var(--error);
-  font-size: 13px;
+  padding: 8px 14px; color: var(--error); font-size: 13px;
+}
+.errorClose {
+  margin-left: auto; border: none; background: transparent; color: var(--error);
+  font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px;
 }
 
-.toolbar {
+/* The row that holds the pool pane + main canvas. min-height:0 lets both panes
+   own their own vertical scroll. */
+.shell {
+  flex: 1 1 auto;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.modifiedPill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--accent-tint);
-  color: var(--accent-hover);
-  border: 1px solid #cfdef5;
-  border-radius: var(--radius);
-  font-size: 11px;
-  font-weight: bold;
-  padding: 4px 10px;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
+  min-height: 0;
 }
 
 .footer {
+  flex: 0 0 auto;
   background: var(--surface-alt);
   color: var(--text-muted);
   border-top: 1px solid var(--border);
   text-align: center;
-  padding: 12px 22px;
+  padding: 8px 22px;
   font-size: 11px;
   letter-spacing: 0.3px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
-
 .footer a { color: var(--accent); font-weight: normal; }
-
-/* Second footer line (attribution) sits a touch quieter than the slugline. */
 .poweredBy { opacity: 0.85; }
-
-/* Subscribe affordance in the slugline — keep the envelope + word on one line. */
 .subscribe { white-space: nowrap; }
-
-/* Footer build label. Mono so the digits line up nicely next to the slug
-   and stay visually distinct from the slug text. Subdued colour by design —
-   the version is contextual info, not a call-out. */
-.version {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-muted);
-  opacity: 0.85;
-}
+.version { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); opacity: 0.85; }
 
 @media (max-width: 720px) {
-  .layout {
-    width: 100%;
-    margin: 0;
-    border-radius: 0;
-    min-height: 100vh;
-  }
-  .header {
-    padding: 16px 16px 4px 16px;
-    gap: 8px;
-  }
-  .title { font-size: 19px; }
-  .banner {
-    padding: 4px 16px 14px 16px;
-    font-size: 12px;
-  }
-  .main {
-    padding: 16px 12px 32px 12px;
-    gap: 14px;
-  }
-  .toolbar { gap: 8px; }
-  .footer {
-    padding: 10px 14px;
-    font-size: 10px;
-  }
+  /* Phase-2 will give the tabs a proper mobile treatment; for now keep the
+     three zones but drop the blade reservation (it becomes an off-canvas drawer). */
+  .app { padding-right: 0; }
+  :global(body.blade-open) .app { padding-right: 0; }
+  .topbar { padding: 10px 14px; }
+  .title { font-size: 17px; }
 }
