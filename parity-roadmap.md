@@ -324,6 +324,10 @@ control"* — means the **only new chrome is the method listbox + use-MPE checkb
 plan) — there is no new collapsible and no intent `<select>` (intent = row axis).
 Build target = extend `ProfileStatsSection` in `AnalysisPanel.jsx`. Folds in the
 former A-2 (controls) and A-3 (PRMG presentation).
+**Update (P1-b, 2026-07-18):** in the 2.x shell the Profile-Statistics table **splits by
+tab** — **gamut-volume → the `Compare` tab** (with the 3D/2D gamut plots); **round-trip
+stays in `Profile`** as its own per-intent table carrying this method listbox. Gamut and
+round-trip are no longer co-tabled.
 
 ### DL-IA1 — App identity: inspector vs generator/transformer · ✅ RESOLVED 2026-07-18 (Option 4, staged)
 **Q:** profiletool is inspect-only today (drop profile → Header/Tags/Validation/
@@ -576,9 +580,10 @@ the pool + verb frame.
   revised 2026-07-18). **Activate by clicking a tab OR dragging profile(s) from the info
   pane onto a tab.** *(Mobile may need a different tab UX — deferred to phase 2.)*
   - **Profile** — all single-profile views/actions: today's `ProfileViewer`
-    (Header/Tags/Validation/Analysis/XML/JSON + save toolbar) **plus more**. Operates on 1.
-  - **Compare** — comparison of **1 or more** profiles; at this stage = **gamut views**
-    (the cross-cutting 1..N gamut component lives here — P1-b).
+    (Header/Tags/Validation/Analysis/XML/JSON + save toolbar) **plus more**, **minus gamut**
+    (gamut relocates to `Compare`; round-trip stays here — P1-b / DL-A1). Operates on 1.
+  - **Compare** — the **sole home for gamut**, **1..N** profiles: gamut-volume (per-intent
+    table) + **3D gamut mesh / 2D gamut slice** plots (P1-b), overlaid across the tab's set.
   - **Link** — linking / multi-profile transform. **Phase-stable home for the node canvas**
     (canvas phase slots in here); thin/placeholder in phase 1.
   - **Per-tab accumulator** (removable **chiclets** near the tabs): each tab keeps its
@@ -646,13 +651,24 @@ assembly node, a natural node-graph fit, not a phase-1 multi-select-verb fit.)*
 - **P1-a** ✅ RESOLVED — **three-zone chardata layout** (left collapsible/resizable info
   pane = pool list + drop target; centre main canvas switches single↔multi by selection;
   right settings overlay unchanged). See §1.
-- **P1-b** — 🕓 **DECISION DEFERRED but STAYS WITHIN PHASE 1** (user). Gamut view is
-  **homed in the `Compare` tab**, serving **1..N** profiles (mode-agnostic component). User
-  prefers chardata's **3D gamut plot + 2D gamut slice** forms over today's iccviz plots.
-  Still open: extend iccviz vs a new plot engine; upstream-migration fit
-  ([[iccviz-upstream-migration-plan]]); chardata-viz adoption; **whether the single-profile
-  gamut currently in Profile/Analysis relocates to `Compare` or is shared.** Decide at
-  build time — NOT pushed to the canvas phase.
+- **P1-b** — 🔷 **FORMS RESOLVED 2026-07-18; engine wiring still deferred within phase 1.**
+  **Forms (user):** adopt chardata's **3D gamut mesh + 2D gamut slice** views, homed in the
+  `Compare` tab, serving **1..N** profiles (overlay each profile's mesh/slice, distinct
+  colours). chardata renders both on a **2D `<canvas>`** (no WebGL/three.js → CSP-safe, no
+  heavy new dep). **Drop point/scatter plotting** — no data-point overlay; use the
+  **profile-derived** boundary mesh/slice (chardata's ICC-A2B-CLUT path shape), NOT its
+  `fitModel` polynomial/measurement path (consistent with **DL-SCOPE1**).
+  **Engine source — deferred, but clear direction:** drive the geometry from **IccProfLib**
+  (extend **iccviz**: boundary-cloud 2-skeleton triangulation + slice-hull fed by iccviz
+  A2B sampling), **NOT** chardata's **lcms2**-based `chardata-gamut.mjs` — profiletool stays
+  IccProfLib-only + rides the upstream path ([[iccviz-upstream-migration-plan]]). Port
+  chardata's *geometry algorithm + 2D-canvas renderer*; feed with IccProfLib A2B.
+  **Single-profile gamut RELOCATES to `Compare`** (user 2026-07-18) — `Compare` is the
+  **sole home for gamut** (volume table + 3D/2D plots, 1..N); `Profile` shows no gamut.
+  **Consequence for DL-A1:** the current Profile-Statistics table **splits** — gamut-volume
+  → `Compare`; **round-trip STAYS in `Profile`** (single-profile quality, not a comparison)
+  as its own per-intent table (method listbox per DL-A1). Only the iccviz mesh/slice engine
+  wiring remains deferred.
 - **P1-c** ✅ RESOLVED — **DEFER to the CANVAS phase (not dropped).** `SpecSepToTiff` is a
   **spectral-imaging assembly tool** (concatenates N single-wavelength TIFFs → one
   multi-sample TIFF, optional profile embed). It **gathers N image nouns**, which fits the
@@ -670,3 +686,47 @@ assembly node, a natural node-graph fit, not a phase-1 multi-select-verb fit.)*
   the accumulator (not the pool). Resolves replace-vs-add and tab↔selection coupling: tab
   sets are **accumulator-driven, per-tab, independent** of live info-pane selection. Each
   tab needs a designed **empty state** (accumulator-empty, distinct from pool-empty).
+
+### 6. Step-1 implementation sketch (build-ready)
+
+**Component tree** (2.x shell; ✅ reuse · 🆕 new · ♻ absorb):
+```
+App (2.x shell) 🆕
+├─ PoolPane (left; collapsible + resizable) 🆕
+│  ├─ LoadControls — <input multiple> + drop target + type-sniff ♻ (absorbs DropZone)
+│  ├─ PoolList — rows: filename + class/space/PCS/version/size badges; multi-select 🆕
+│  └─ CreateVerbs — From .cube/XML/JSON · Add-from-image · Make-V4 (2-sel) 🆕 (per engine step)
+├─ MainCanvas (centre; width tracks PoolPane) 🆕
+│  ├─ TabBar: Profile · Compare · Link  + per-tab Accumulator chiclets 🆕
+│  └─ active TabPanel:
+│     ├─ ProfileTab → <ProfileViewer> ✅ (Header/Tags/Validation/Analysis/XML/JSON)
+│     ├─ CompareTab → <GamutView profiles={…}> (1..N) 🆕 (P1-b)
+│     └─ LinkTab → stub/placeholder 🆕 (node canvas = canvas phase)
+├─ SettingsBlade (right overlay) ✅
+└─ GuidePanel ✅
+```
+
+**State shape** (session-ephemeral; App-level store/context):
+- `pool: Map<id,{ id, filename, bytes, meta{class,colorSpace,pcs,version,sizeBytes}, json }>`
+  — `id` = profileId/content hash (dedup); `json` = full `validateProfile` output, so we
+  **validate once at load** and it drives BOTH the row badges AND `ProfileViewer`.
+- `selectedPoolIds: Set<id>` — info-pane highlight / drag source (transient).
+- `accumulators: { Profile: id|null, Compare: id[], Link: id[] }` — per-tab sets.
+- `activeTab: 'Profile'|'Compare'|'Link'`.
+- `ui: { poolPaneWidth, poolPaneCollapsed }` — localStorage-persisted (chardata blade pattern).
+
+**Data flow:** (1) load file(s) → sniff (profile vs image→extract embedded) →
+`validateProfile` → derive `meta` → add to `pool` (dedup by id). (2) drag PoolList row(s) →
+drop on a tab → mutate `accumulators` (Profile **replace**/multi→last; Compare/Link
+**append**+dedup). (3) each tab renders from its accumulator — ProfileTab feeds the cached
+`json` to `<ProfileViewer>`, CompareTab feeds N entries to `<GamutView>`. (4) chiclet ✕
+removes from that accumulator; removing from pool purges it from all accumulators.
+
+**Reuse:** `ProfileViewer` + all children, `validator.js`, `SettingsBlade`, `GuidePanel`,
+`i18n`. **New:** the shell (App / PoolPane / PoolList / MainCanvas / TabBar / Accumulator /
+GamutView / LinkTab). **Absorb:** `DropZone` → `LoadControls`.
+
+**Step-1 cut (zero new C++):** PoolPane + PoolList + 3-tab shell + accumulators; ProfileTab
+fully functional (`ProfileViewer`); CompareTab shows the **existing** single-profile gamut
+for a 1-accumulator (full 1..N overlay = P1-b, later step); LinkTab = placeholder;
+CreateVerbs deferred to their engine steps. **Ships the whole IA with no WASM change.**
