@@ -16,7 +16,7 @@ const WIDTH_KEY = 'profiletool.poolWidth'
 const COLLAPSED_KEY = 'profiletool.poolCollapsed'
 const MIN_W = 220, MAX_W = 620, DEFAULT_W = 320
 
-export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, onRemove }) {
+export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, onRemove, onNewFromCube }) {
   const t = useT()
   const inputRef = useRef(null)
   const [dragOver, setDragOver] = useState(false)
@@ -107,6 +107,12 @@ export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, 
         </button>
         <input ref={inputRef} type="file" accept=".icc,.icm" multiple
                className={styles.hidden} onChange={handlePick} />
+        {/* Producer: build a DeviceLink from a .cube 3D-LUT (Group B). */}
+        {onNewFromCube && (
+          <button className={styles.newBtn} type="button" onClick={onNewFromCube}>
+            <span aria-hidden="true">＋</span> {t('pool_new_cube') || 'New from .cube'}
+          </button>
+        )}
       </div>
 
       <div

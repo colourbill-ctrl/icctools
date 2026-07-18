@@ -51,6 +51,9 @@ fi
 if [ -f "$BUILD_DIR/iccjson.mjs" ]; then
   ARTIFACTS+=(iccjson.mjs iccjson.wasm)
 fi
+if [ -f "$BUILD_DIR/iccconstruct.mjs" ]; then
+  ARTIFACTS+=(iccconstruct.mjs iccconstruct.wasm)
+fi
 if [ -f "$BUILD_DIR/iccplot.mjs" ]; then
   ARTIFACTS+=(iccplot.mjs iccplot.wasm)
 fi

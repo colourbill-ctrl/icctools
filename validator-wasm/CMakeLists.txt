@@ -249,6 +249,50 @@ if(BUILD_ICCJSON)
 endif()
 
 
+# ── iccconstruct (build profiles from text/params — Group B, lazy-loaded) ───
+# The "construct" module: verbs that take text/parameters and emit ICC bytes.
+# First capability is fromCube (.cube → DeviceLink); V5→V4 and ApplyToLink will
+# join it. No third-party dependency — construct-wrapper.cpp needs only
+# IccProfLib (the .cube parser + tag construction are ported inline in
+# fromcube-engine.hpp, beside the wrapper, so the quoted #include resolves via
+# the compiler's own source-dir search — no extra include dir needed).
+option(BUILD_ICCCONSTRUCT "Build the lazy-loaded profile-construction module" ON)
+
+if(BUILD_ICCCONSTRUCT)
+  add_executable(iccconstruct construct-wrapper.cpp ${ICCPROFLIB_SOURCES})
+
+  target_include_directories(iccconstruct PRIVATE
+    "${ICCPROFLIB_DIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+  target_compile_options(iccconstruct PRIVATE
+    -O3
+    -fexceptions
+    -Wno-deprecated-declarations)
+
+  target_link_options(iccconstruct PRIVATE
+    -O3
+    -fexceptions
+    -lembind
+    -sMODULARIZE=1
+    -sEXPORT_ES6=1
+    -sEXPORT_NAME=createIccConstructModule
+    -sENVIRONMENT=web,worker,node
+    -sALLOW_MEMORY_GROWTH=1
+    -sINITIAL_MEMORY=16MB
+    -sMAXIMUM_MEMORY=512MB
+    -sSTACK_SIZE=1MB
+    -sDYNAMIC_EXECUTION=0
+    # Same exception-unwrap exports as iccjson so JS reads the throw's .what().
+    -sEXPORTED_RUNTIME_METHODS=getExceptionMessage,decrementExceptionRefcount
+    # MEMFS: the .cube text is staged in and CIccProfile::Write goes out through
+    # a MEMFS path (CIccMemIO doesn't grow-on-write). See construct-wrapper.cpp.
+    -sFORCE_FILESYSTEM=1)
+
+  set_target_properties(iccconstruct PROPERTIES SUFFIX ".mjs")
+endif()
+
+
 # ── iccplot (data-first visualization model, lazy-loaded) ──────────────────
 # Wraps the IccVizModel engine (profiletool/iccviz/IccVizModel.cpp) — a
 # standalone re-implementation of the iccProfileVisualize plots that returns DATA

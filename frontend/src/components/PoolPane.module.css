@@ -36,6 +36,14 @@
 .loadRow .btn-primary, .loadRow > button { width: 100%; }
 .hidden { display: none; }
 
+/* Secondary producer action under the primary Load button. */
+.newBtn {
+  margin-top: 8px; padding: 7px 10px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--surface-alt);
+  color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.newBtn:hover { border-color: var(--accent); color: var(--accent); }
+
 .body { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
 .bodyDrag { outline: 2px dashed var(--accent); outline-offset: -6px; background: var(--accent-tint); }
 

@@ -1,0 +1,61 @@
+/* "New from .cube" producer dialog. Shares the backdrop/modal shape with the
+   other modals so it recolours under body.dark via the shared tokens. */
+.backdrop {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.4);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+  width: 100%; max-width: 520px;
+  max-height: 85vh; display: flex; flex-direction: column;
+  padding: 20px 22px;
+}
+.title { margin: 0 0 8px; font-size: 17px; font-weight: 700; color: var(--text); }
+.intro { margin: 0 0 14px; font-size: 13px; color: var(--text-muted); line-height: 1.45; }
+
+.drop {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 16px; border: 2px dashed var(--border); border-radius: var(--radius);
+  background: var(--surface-alt); text-align: center;
+}
+.dropActive { border-color: var(--accent); background: var(--accent-tint); }
+.pickBtn {
+  padding: 7px 14px; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.pickBtn:hover { border-color: var(--accent); color: var(--accent); }
+.dropHint { font-size: 12px; color: var(--text-muted); }
+.hidden { display: none; }
+
+.fileTag {
+  margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--accent-dark);
+  background: var(--accent-tint-strong); border-radius: 4px; padding: 3px 8px; align-self: flex-start;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.textarea {
+  margin-top: 12px; width: 100%; min-height: 150px; resize: vertical;
+  font-family: var(--font-mono, monospace); font-size: 12px; line-height: 1.4;
+  padding: 10px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); box-sizing: border-box;
+}
+.textarea:focus { outline: none; border-color: var(--accent); }
+
+.error {
+  margin-top: 12px; font-size: 13px; color: var(--error);
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  border: 1px solid var(--error); border-radius: var(--radius); padding: 8px 10px;
+}
+
+.actions { margin-top: 16px; display: flex; justify-content: flex-end; gap: 10px; }
+.cancel {
+  padding: 8px 16px; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font-size: 14px; cursor: pointer;
+}
+.cancel:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.cancel:disabled { opacity: 0.5; cursor: default; }

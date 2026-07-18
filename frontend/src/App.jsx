@@ -13,6 +13,7 @@ import SettingsBlade from './components/SettingsBlade.jsx'
 import SubscribeModal from './components/SubscribeModal.jsx'
 import GuidePanel from './components/GuidePanel.jsx'
 import RejectedFilesModal from './components/RejectedFilesModal.jsx'
+import NewFromCubeModal from './components/NewFromCubeModal.jsx'
 import { validateBytes, preloadValidator } from './lib/validator.js'
 import { bestEffortParse } from './lib/bestEffortParse.js'
 import { computeChangedTagIds } from './lib/tagDiff.js'
@@ -51,6 +52,7 @@ export default function App() {
   const [initialTab, setInitialTab] = useState(null)       // from #tab= launch fragment
   const [subscribeOpen, setSubscribeOpen] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
+  const [newCubeOpen, setNewCubeOpen] = useState(false)   // "New from .cube" producer
   const t = useT()
 
   useEffect(() => { preloadValidator() }, [])
@@ -189,6 +191,31 @@ export default function App() {
       setRejected([r.reject])
     }
   }, [ingestOne])
+
+  // Producer — build an ICC DeviceLink from .cube text (Group B / iccFromCube).
+  // The wasm module is lazy-imported so users who never open the producer don't
+  // pay for it. On success we both add the result to the pool (via the same
+  // ingest path as a loaded profile, so it validates + opens in Profile) and
+  // download the .icc. Errors propagate to the modal, which shows the engine's
+  // specific reason ("LUT too large to process", …) inline.
+  const createFromCube = useCallback(async (cubeText, filename) => {
+    const { fromCube } = await import('./lib/cubeConverter.js')
+    const bytes = await fromCube(cubeText, filename)          // throws with a readable message
+    const stem = (filename || 'devicelink').replace(/\.cube$/i, '').replace(/[^\w.-]+/g, '_') || 'devicelink'
+    const outName = `${stem}.icc`
+
+    // Download the generated profile.
+    const blob = new Blob([bytes], { type: 'application/vnd.iccprofile' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = outName
+    document.body.appendChild(a); a.click(); a.remove()
+    URL.revokeObjectURL(url)
+
+    // Add to the pool + open in Profile (reuses the validate/dedup ingest path).
+    await ingestSingle(outName, bytes)
+    setNewCubeOpen(false)
+  }, [ingestSingle])
 
   // Pool-row selection: plain = single, ctrl/meta = toggle, shift = range.
   const onSelectRow = useCallback((id, e) => {
@@ -356,6 +383,7 @@ export default function App() {
           onSelect={onSelectRow}
           onLoadFiles={loadFiles}
           onRemove={removeEntry}
+          onNewFromCube={() => setNewCubeOpen(true)}
         />
         <div className={styles.rightCol}>
           <header className={styles.topbar}>
@@ -408,6 +436,7 @@ export default function App() {
         </div>
       </div>
       <RejectedFilesModal files={rejected} onClose={() => setRejected(null)} />
+      <NewFromCubeModal open={newCubeOpen} onClose={() => setNewCubeOpen(false)} onCreate={createFromCube} />
       <SubscribeModal open={subscribeOpen} onClose={() => setSubscribeOpen(false)} />
       <SettingsBlade onOpenHelp={() => setGuideOpen(true)} />
       <GuidePanel open={guideOpen} onClose={() => setGuideOpen(false)} />
