@@ -70,17 +70,19 @@
 .badgeDim { font-size: 10px; color: var(--text-muted); }
 .badgeWarn { color: #fff; background: var(--warning); }
 
-/* Right-edge drag handle — chardata's grip-dots graphic (gray, blue on drag). */
+/* Right-edge drag handle — chardata's grip-dots graphic, gray at rest (visible),
+   blue on hover/drag. Wider than a hairline so it's an easy grab target. */
 .resize {
-  position: absolute; top: 0; right: -3px; width: 6px; height: 100%;
-  cursor: col-resize; z-index: 2;
-  background-color: transparent; background-repeat: no-repeat; background-position: center;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='3' height='22' viewBox='0 0 3 22'><circle cx='1.5' cy='2' r='1' fill='%23999'/><circle cx='1.5' cy='8' r='1' fill='%23999'/><circle cx='1.5' cy='14' r='1' fill='%23999'/><circle cx='1.5' cy='20' r='1' fill='%23999'/></svg>");
+  position: absolute; top: 0; right: -5px; width: 11px; height: 100%;
+  cursor: col-resize; z-index: 3;
+  background-color: var(--surface-alt); background-repeat: no-repeat; background-position: center;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='5' height='30' viewBox='0 0 5 30'><circle cx='2.5' cy='3' r='1.4' fill='%23999'/><circle cx='2.5' cy='9' r='1.4' fill='%23999'/><circle cx='2.5' cy='15' r='1.4' fill='%23999'/><circle cx='2.5' cy='21' r='1.4' fill='%23999'/><circle cx='2.5' cy='27' r='1.4' fill='%23999'/></svg>");
+  border-left: 1px solid var(--border);
   transition: background-color 0.15s;
 }
-.resize:hover {
-  background-color: var(--accent);
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='3' height='22' viewBox='0 0 3 22'><circle cx='1.5' cy='2' r='1' fill='white'/><circle cx='1.5' cy='8' r='1' fill='white'/><circle cx='1.5' cy='14' r='1' fill='white'/><circle cx='1.5' cy='20' r='1' fill='white'/></svg>");
+.resize:hover, .resize.dragging {
+  background-color: var(--accent); border-left-color: var(--accent);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='5' height='30' viewBox='0 0 5 30'><circle cx='2.5' cy='3' r='1.4' fill='white'/><circle cx='2.5' cy='9' r='1.4' fill='white'/><circle cx='2.5' cy='15' r='1.4' fill='white'/><circle cx='2.5' cy='21' r='1.4' fill='white'/><circle cx='2.5' cy='27' r='1.4' fill='white'/></svg>");
 }
 
 /* Collapsed rail. */
