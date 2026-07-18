@@ -75,6 +75,13 @@ export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, 
       <div className={styles.rail}>
         <button className={styles.railToggle} onClick={() => setCollapsed(false)}
                 title={t('pool_expand') || 'Show profile pool'} aria-label={t('pool_expand') || 'Show profile pool'}>
+          {/* chardata's file-blade glyph (document + chevron) as the open affordance */}
+          <span className={styles.railIcon} aria-hidden="true">
+            <svg width="15" height="18" viewBox="0 0 13 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M1 1.5C1 1.22 1.22 1 1.5 1H8L12 5V14.5C12 14.78 11.78 15 11.5 15H1.5C1.22 15 1 14.78 1 14.5V1.5Z" fill="#a8d4f0" stroke="#6aabd8" strokeWidth="1"/>
+              <path d="M8 1V5H12" fill="#c8e8f8" stroke="#6aabd8" strokeWidth="1" strokeLinejoin="round"/>
+            </svg>
+          </span>
           <span className={styles.railChevron}>›</span>
           <span className={styles.railLabel}>{t('pool_title') || 'Profiles'}</span>
           {entries.length > 0 && <span className={styles.railCount}>{entries.length}</span>}
@@ -96,7 +103,7 @@ export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, 
 
       <div className={styles.loadRow}>
         <button className="btn-primary" type="button" onClick={() => inputRef.current?.click()}>
-          {t('pool_load') || 'Load profiles…'}
+          {t('pool_load') || 'Load Profiles'}
         </button>
         <input ref={inputRef} type="file" accept=".icc,.icm" multiple
                className={styles.hidden} onChange={handlePick} />

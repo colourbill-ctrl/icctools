@@ -70,12 +70,18 @@
 .badgeDim { font-size: 10px; color: var(--text-muted); }
 .badgeWarn { color: #fff; background: var(--warning); }
 
-/* Right-edge drag handle. */
+/* Right-edge drag handle — chardata's grip-dots graphic (gray, blue on drag). */
 .resize {
   position: absolute; top: 0; right: -3px; width: 6px; height: 100%;
   cursor: col-resize; z-index: 2;
+  background-color: transparent; background-repeat: no-repeat; background-position: center;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='3' height='22' viewBox='0 0 3 22'><circle cx='1.5' cy='2' r='1' fill='%23999'/><circle cx='1.5' cy='8' r='1' fill='%23999'/><circle cx='1.5' cy='14' r='1' fill='%23999'/><circle cx='1.5' cy='20' r='1' fill='%23999'/></svg>");
+  transition: background-color 0.15s;
 }
-.resize:hover { background: var(--accent); opacity: 0.35; }
+.resize:hover {
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='3' height='22' viewBox='0 0 3 22'><circle cx='1.5' cy='2' r='1' fill='white'/><circle cx='1.5' cy='8' r='1' fill='white'/><circle cx='1.5' cy='14' r='1' fill='white'/><circle cx='1.5' cy='20' r='1' fill='white'/></svg>");
+}
 
 /* Collapsed rail. */
 .rail { flex: 0 0 auto; width: 34px; background: var(--surface); border-right: 1px solid var(--border); height: 100%; }
@@ -85,7 +91,8 @@
   color: var(--text-muted);
 }
 .railToggle:hover { color: var(--accent); background: var(--surface-alt); }
-.railChevron { font-size: 18px; }
+.railIcon { display: flex; align-items: center; justify-content: center; }
+.railChevron { font-size: 18px; font-weight: 700; }
 .railLabel { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; }
 .railCount {
   font-size: 10px; font-weight: 700; color: #fff; background: var(--accent);

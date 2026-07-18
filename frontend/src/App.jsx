@@ -1,21 +1,24 @@
 // (c) 2026 William Li
 //
-// 2.x Profile Pool workbench shell. Left = the pool (PoolPane); centre = the
-// Profile/Compare/Link tabs (MainCanvas); right = the settings blade (overlay,
-// unchanged). The pool is session-ephemeral — nothing persists; the user's
-// filesystem is the durable store (DL-STORE1). Today's single-profile app is
-// reused verbatim as the Profile tab (embedded ProfileViewer).
+// 2.x Profile Pool workbench shell. Left = the pool (PoolPane, full height);
+// right column = topbar / Profile·Compare·Link tabs (MainCanvas) / footer. The
+// settings blade + guide are fixed overlays on top (no layout push). The pool is
+// session-ephemeral — nothing persists; the user's filesystem is the durable
+// store (DL-STORE1). Today's single-profile app is reused verbatim as the Profile
+// tab (embedded ProfileViewer).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PoolPane from './components/PoolPane.jsx'
 import MainCanvas from './components/MainCanvas.jsx'
 import SettingsBlade from './components/SettingsBlade.jsx'
 import SubscribeModal from './components/SubscribeModal.jsx'
 import GuidePanel from './components/GuidePanel.jsx'
+import RejectedFilesModal from './components/RejectedFilesModal.jsx'
 import { validateBytes, preloadValidator } from './lib/validator.js'
 import { bestEffortParse } from './lib/bestEffortParse.js'
 import { computeChangedTagIds } from './lib/tagDiff.js'
 import { resolveTabAlias } from './lib/tabs.js'
 import { entryId, deriveMeta } from './lib/pool.js'
+import { classifyFile, ACCEPTED_KINDS, FileKind, rejectReason } from './lib/fileKind.js'
 import { useT } from './i18n.jsx'
 import styles from './App.module.css'
 
@@ -29,7 +32,7 @@ function renderPoweredBy(template) {
     <>
       {before}
       <a href="https://github.com/InternationalColorConsortium/iccDEV"
-         target="_blank" rel="noreferrer">IccProfLib</a>
+         target="_blank" rel="noreferrer">IccDEV</a>
       {after}
     </>
   )
@@ -44,6 +47,7 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [rejected, setRejected] = useState(null)           // [{filename, reason}] | null
   const [initialTab, setInitialTab] = useState(null)       // from #tab= launch fragment
   const [subscribeOpen, setSubscribeOpen] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
@@ -55,62 +59,60 @@ export default function App() {
   const poolRef = useRef(pool);  poolRef.current = pool
   const accumRef = useRef(accum); accumRef.current = accum
 
-  // Validate bytes and add a pool entry (dedup by identity). `focus` opens it in
-  // the Profile tab straight away — used by the launch protocols and the first
-  // profile of a manual load so "load → see it" is preserved.
-  const addEntryFromBytes = useCallback(async (filename, bytes, { focus = false } = {}) => {
-    setLoading(true); setError(null)
+  // Validate ICC bytes and add a pool entry (dedup by identity). Returns the
+  // entry id; throws only if the bytes surfaced as ICC ('acsp') but are wholly
+  // unparseable (caller turns that into a rejection).
+  const addIccEntry = useCallback(async (filename, bytes) => {
+    let parsed
     try {
-      if (bytes.length > MAX_ICC_BYTES) {
-        throw new Error(`Profile is ${(bytes.length / (1024*1024)).toFixed(1)} MB; refusing to load anything larger than ${MAX_ICC_BYTES / (1024*1024)} MB.`)
-      }
-      let parsed
-      try {
-        parsed = await validateBytes(bytes, filename)
-      } catch (e) {
-        // Critical validator error (e.g. a tag running past EOF): fall back to a
-        // best-effort structural read so the profile is still inspectable.
-        const partial = bestEffortParse(bytes, filename)
-        if (!partial) throw e
-        parsed = partial
-      }
-      const id = entryId(bytes, parsed)
-      setPool((m) => {
-        if (m.has(id)) return m   // already loaded — keep its edit state
-        const nm = new Map(m)
-        nm.set(id, {
-          id, filename, meta: deriveMeta(parsed),
-          originalBytes: bytes, originalParsed: parsed,
-          currentBytes: bytes, parsed,
-          xml: null, xmlBaseline: null, xmlDirty: false,
-          json: null, jsonBaseline: null, jsonDirty: false,
-          iccDirty: false,
-        })
-        return nm
-      })
-      // Open in Profile if requested, or if nothing is in the Profile slot yet.
-      if (focus || accumRef.current.Profile == null) {
-        setAccum((a) => ({ ...a, Profile: id }))
-        setActiveTab('Profile')
-      }
-      setSelectedIds(new Set([id]))
+      parsed = await validateBytes(bytes, filename)
     } catch (e) {
-      setError(e.message)
-    } finally {
-      setLoading(false)
+      // Critical validator error (e.g. a tag running past EOF): fall back to a
+      // best-effort structural read so the profile is still inspectable.
+      const partial = bestEffortParse(bytes, filename)
+      if (!partial) throw e
+      parsed = partial
     }
+    const id = entryId(bytes, parsed)
+    setPool((m) => {
+      if (m.has(id)) return m   // already loaded — keep its edit state
+      const nm = new Map(m)
+      nm.set(id, {
+        id, filename, meta: deriveMeta(parsed),
+        originalBytes: bytes, originalParsed: parsed,
+        currentBytes: bytes, parsed,
+        xml: null, xmlBaseline: null, xmlDirty: false,
+        json: null, jsonBaseline: null, jsonDirty: false,
+        iccDirty: false,
+      })
+      return nm
+    })
+    return id
   }, [])
 
-  // Multi-file load from the pool pane. Focus the first one only when the pool
-  // was empty (first-run convenience); subsequent files just populate the list.
-  const addFiles = useCallback(async (files) => {
-    const focusFirst = poolRef.current.size === 0
-    for (let i = 0; i < files.length; i++) {
-      const buf = await files[i].arrayBuffer()
-      // eslint-disable-next-line no-await-in-loop
-      await addEntryFromBytes(files[i].name, new Uint8Array(buf), { focus: focusFirst && i === 0 })
+  // Classify one buffer and either load it or return a rejection. This is the
+  // single choke point every load path funnels through, so the "is this a file
+  // we accept?" policy (and future image-extraction routing) lives in one place.
+  const ingestOne = useCallback(async (filename, bytes) => {
+    if (bytes.length > MAX_ICC_BYTES) {
+      return { reject: { filename, reason: `too large (> ${MAX_ICC_BYTES / (1024*1024)} MB)` } }
     }
-  }, [addEntryFromBytes])
+    const { kind } = classifyFile(bytes, filename)
+    if (!ACCEPTED_KINDS.has(kind)) {
+      // When embedded-profile extraction ships, kind === FileKind.IMAGE routes
+      // here to extract-then-addIccEntry (or reject if no embedded profile),
+      // instead of a flat rejection. Until then, image (and everything else) is
+      // reported, not left in the pool.
+      void FileKind
+      return { reject: { filename, reason: rejectReason(kind) } }
+    }
+    try {
+      const id = await addIccEntry(filename, bytes)
+      return { id }
+    } catch {
+      return { reject: { filename, reason: 'could not be read as an ICC profile' } }
+    }
+  }, [addIccEntry])
 
   const updateEntry = useCallback((id, updater) => {
     setPool((m) => {
@@ -135,10 +137,10 @@ export default function App() {
   // Drop pool row(s) onto a tab. Profile replaces (multi → last wins);
   // Compare/Link accumulate (dedup). Dropping switches to that tab.
   const dropOnTab = useCallback((tab, ids) => {
-    setAccum((a) => {
-      if (tab === 'Profile') return { ...a, Profile: ids[ids.length - 1] }
-      return { ...a, [tab]: uniq([...a[tab], ...ids]) }
-    })
+    if (!ids || !ids.length) return
+    setAccum((a) => tab === 'Profile'
+      ? { ...a, Profile: ids[ids.length - 1] }
+      : { ...a, [tab]: uniq([...a[tab], ...ids]) })
     setActiveTab(tab)
   }, [])
 
@@ -147,6 +149,46 @@ export default function App() {
       ? { ...a, Profile: a.Profile === id ? null : a.Profile }
       : { ...a, [tab]: a[tab].filter((x) => x !== id) })
   }, [])
+
+  // Load a batch of files (pool-pane picker/drop, or canvas OS-drop). `tab`, when
+  // given (canvas drop), accumulates the loaded profiles onto that tab — the same
+  // end effect as loading them then dragging them across. All rejects from the
+  // batch are reported together in one dialog (never one popup per file).
+  const loadFiles = useCallback(async (files, { tab } = {}) => {
+    setLoading(true); setError(null)
+    const wasEmpty = poolRef.current.size === 0
+    const rejects = [], ids = []
+    for (let i = 0; i < files.length; i++) {
+      const buf = await files[i].arrayBuffer()
+      // eslint-disable-next-line no-await-in-loop
+      const r = await ingestOne(files[i].name, new Uint8Array(buf))
+      if (r.id) ids.push(r.id)
+      else rejects.push(r.reject)
+    }
+    setLoading(false)
+    if (ids.length) {
+      setSelectedIds(new Set(ids))
+      if (tab) dropOnTab(tab, ids)
+      else if (wasEmpty || accumRef.current.Profile == null) {
+        setAccum((a) => ({ ...a, Profile: ids[0] })); setActiveTab('Profile')
+      }
+    }
+    if (rejects.length) setRejected(rejects)
+  }, [ingestOne, dropOnTab])
+
+  // Single-file ingest for the launch protocols (#url=, chardata postMessage):
+  // open in Profile on success, report on rejection.
+  const ingestSingle = useCallback(async (filename, bytes) => {
+    setLoading(true); setError(null)
+    const r = await ingestOne(filename, bytes)
+    setLoading(false)
+    if (r.id) {
+      setSelectedIds(new Set([r.id]))
+      setAccum((a) => ({ ...a, Profile: r.id })); setActiveTab('Profile')
+    } else {
+      setRejected([r.reject])
+    }
+  }, [ingestOne])
 
   // Pool-row selection: plain = single, ctrl/meta = toggle, shift = range.
   const onSelectRow = useCallback((id, e) => {
@@ -234,7 +276,7 @@ export default function App() {
     )
   }, [profileEntry])
 
-  // ── Launch protocols (unchanged behaviour; now load into the pool) ─────────
+  // ── Launch protocols (unchanged behaviour; now funnel through ingestSingle) ─
   const loadFromUrl = useCallback(async (rawUrl) => {
     let url
     try { url = new URL(rawUrl, window.location.href) }
@@ -259,8 +301,8 @@ export default function App() {
       setError(`${t('url_fetch_failed')} ${url.href} — ${e.message}`)
       return
     }
-    await addEntryFromBytes(filenameFromUrl(url), bytes, { focus: true })
-  }, [addEntryFromBytes, t])
+    await ingestSingle(filenameFromUrl(url), bytes)
+  }, [ingestSingle, t])
 
   useEffect(() => {
     const hash = window.location.hash.replace(/^#/, '')
@@ -292,53 +334,55 @@ export default function App() {
       const u8 = bytes instanceof Uint8Array ? bytes
         : bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
         : new Uint8Array(bytes)
-      addEntryFromBytes(filename || 'profile.icc', u8, { focus: true })
+      ingestSingle(filename || 'profile.icc', u8)
     }
     window.addEventListener('message', onMessage)
     for (const origin of allowedOrigins) {
       try { window.opener.postMessage({ type: 'profiletool:ready' }, origin) } catch (_) {}
     }
     return () => window.removeEventListener('message', onMessage)
-  }, [addEntryFromBytes])
+  }, [ingestSingle])
 
   const entries = useMemo(() => [...pool.values()], [pool])
   const getEntry = useCallback((id) => pool.get(id) || null, [pool])
+  const onDropFiles = useCallback((files, tab) => loadFiles(files, { tab }), [loadFiles])
 
   return (
     <>
       <div className={styles.app}>
-        <header className={styles.topbar}>
-          <h1 className={styles.title}>{t('app_title')}</h1>
-          <span className={styles.tagline}>
-            {t('subtitle_pre')}{' '}
-            <a href="https://github.com/InternationalColorConsortium/iccDEV" target="_blank" rel="noreferrer">iccDEV</a>
-            {' '}{t('subtitle_post')}
-          </span>
-          <span className={styles.topSpacer} />
-          {loading && <span className={styles.status}><span className={styles.spinner} /> {t('validating')}</span>}
-        </header>
+        <PoolPane
+          entries={entries}
+          selectedIds={selectedIds}
+          onSelect={onSelectRow}
+          onLoadFiles={loadFiles}
+          onRemove={removeEntry}
+        />
+        <div className={styles.rightCol}>
+          <header className={styles.topbar}>
+            <h1 className={styles.title}>{t('app_title')}</h1>
+            <span className={styles.tagline}>
+              {t('subtitle_pre')}{' '}
+              <a href="https://github.com/InternationalColorConsortium/iccDEV" target="_blank" rel="noreferrer">iccDEV</a>
+              {' '}{t('subtitle_post')}
+            </span>
+            <span className={styles.topSpacer} />
+            {loading && <span className={styles.status}><span className={styles.spinner} /> {t('validating')}</span>}
+          </header>
 
-        {error && (
-          <div className={styles.errorBanner}>
-            <strong>{t('error_label')}</strong> {error}
-            <button className={styles.errorClose} onClick={() => setError(null)} aria-label="Dismiss">×</button>
-          </div>
-        )}
+          {error && (
+            <div className={styles.errorBanner}>
+              <strong>{t('error_label')}</strong> {error}
+              <button className={styles.errorClose} onClick={() => setError(null)} aria-label="Dismiss">×</button>
+            </div>
+          )}
 
-        <div className={styles.shell}>
-          <PoolPane
-            entries={entries}
-            selectedIds={selectedIds}
-            onSelect={onSelectRow}
-            onLoadFiles={addFiles}
-            onRemove={removeEntry}
-          />
           <MainCanvas
             activeTab={activeTab}
             onActivate={setActiveTab}
             accum={accum}
             getEntry={getEntry}
             onDropOnTab={dropOnTab}
+            onDropFiles={onDropFiles}
             onRemoveFromAccum={removeFromAccum}
             profileEntry={profileEntry}
             initialTab={initialTab}
@@ -348,21 +392,22 @@ export default function App() {
             onIccProduced={handleIccProduced}
             onSave={handleSave}
           />
-        </div>
 
-        <footer className={styles.footer}>
-          <div className={styles.copyright}>
-            {t('product_name')}{' '}
-            <span className={styles.version}>v{__APP_VERSION__}</span>. &copy; 2026 William Li.{' '}
-            <a href="https://colourbill.com/" target="_blank" rel="noopener">colourbill.com</a>{' '}
-            <a href="#" className={styles.subscribe} title={t('sub_link_title')}
-               onClick={(e) => { e.preventDefault(); setSubscribeOpen(true) }}>
-              <span aria-hidden="true">&#9993;</span> {t('sub_link')}
-            </a>
-          </div>
-          <div className={styles.poweredBy}>{renderPoweredBy(t('powered_by'))}</div>
-        </footer>
+          <footer className={styles.footer}>
+            <div className={styles.copyright}>
+              {t('product_name')}{' '}
+              <span className={styles.version}>v{__APP_VERSION__}</span>. &copy; 2026 William Li.{' '}
+              <a href="https://colourbill.com/" target="_blank" rel="noopener">colourbill.com</a>{' '}
+              <a href="#" className={styles.subscribe} title={t('sub_link_title')}
+                 onClick={(e) => { e.preventDefault(); setSubscribeOpen(true) }}>
+                <span aria-hidden="true">&#9993;</span> {t('sub_link')}
+              </a>
+            </div>
+            <div className={styles.poweredBy}>{renderPoweredBy(t('powered_by'))}</div>
+          </footer>
+        </div>
       </div>
+      <RejectedFilesModal files={rejected} onClose={() => setRejected(null)} />
       <SubscribeModal open={subscribeOpen} onClose={() => setSubscribeOpen(false)} />
       <SettingsBlade onOpenHelp={() => setGuideOpen(true)} />
       <GuidePanel open={guideOpen} onClose={() => setGuideOpen(false)} />

@@ -1,16 +1,22 @@
 /* (c) 2026 William Li — 2.x Profile Pool workbench shell.
-   Full-viewport three-zone layout: slim topbar / [pool | canvas] shell / footer.
-   The SettingsBlade is a fixed right-edge overlay; reserve room for its collapsed
-   rail + floating tab column (and the full width when it's open). */
+   Full-viewport ROW: [ pool pane (full height) | right column ]. The right
+   column stacks topbar / canvas / footer, so the footer starts at the pane's
+   right edge and runs to the window's right edge. The SettingsBlade + GuidePanel
+   are fixed overlays on top — they do NOT push this layout. */
 .app {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: 100vh;
-  box-sizing: border-box;
-  padding-right: 44px;              /* collapsed blade rail + tab column */
   background: var(--page-bg);
 }
-:global(body.blade-open) .app { padding-right: 226px; }
+
+.rightCol {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 
 .topbar {
   flex: 0 0 auto;
@@ -54,14 +60,6 @@
   font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px;
 }
 
-/* The row that holds the pool pane + main canvas. min-height:0 lets both panes
-   own their own vertical scroll. */
-.shell {
-  flex: 1 1 auto;
-  display: flex;
-  min-height: 0;
-}
-
 .footer {
   flex: 0 0 auto;
   background: var(--surface-alt);
@@ -81,10 +79,7 @@
 .version { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); opacity: 0.85; }
 
 @media (max-width: 720px) {
-  /* Phase-2 will give the tabs a proper mobile treatment; for now keep the
-     three zones but drop the blade reservation (it becomes an off-canvas drawer). */
-  .app { padding-right: 0; }
-  :global(body.blade-open) .app { padding-right: 0; }
+  /* Phase-2 will give the tabs a proper mobile treatment. */
   .topbar { padding: 10px 14px; }
   .title { font-size: 17px; }
 }

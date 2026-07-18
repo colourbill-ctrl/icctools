@@ -68,7 +68,12 @@
 }
 .chicletX:hover { color: var(--error); }
 
-.panel { flex: 1 1 auto; overflow: auto; min-height: 0; padding: 16px; }
+.panel { position: relative; flex: 1 1 auto; overflow: auto; min-height: 0; padding: 16px; }
+.panelDrag::after {
+  content: ''; position: absolute; inset: 8px; pointer-events: none;
+  border: 2px dashed var(--accent); border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
 
 /* Profile tab: a slim bar + the embedded ProfileViewer. */
 .profileWrap { display: flex; flex-direction: column; gap: 12px; }

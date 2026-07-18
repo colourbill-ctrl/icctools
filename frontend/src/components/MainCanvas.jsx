@@ -15,30 +15,49 @@ import styles from './MainCanvas.module.css'
 const TABS = ['Profile', 'Compare', 'Link']
 
 export default function MainCanvas({
-  activeTab, onActivate, accum, getEntry, onDropOnTab, onRemoveFromAccum,
+  activeTab, onActivate, accum, getEntry, onDropOnTab, onDropFiles, onRemoveFromAccum,
   // Profile-tab viewer wiring (bound by App to the active Profile entry):
   profileEntry, initialTab, changedTagIds, onXmlChanged, onJsonChanged,
   onIccProduced, onSave,
 }) {
   const t = useT()
   const [dropTab, setDropTab] = useState(null)
+  const [panelDrag, setPanelDrag] = useState(false)
 
   const idsFor = (tab) => tab === 'Profile' ? (accum.Profile ? [accum.Profile] : []) : (accum[tab] || [])
 
-  const handleDrop = useCallback((tab, e) => {
-    e.preventDefault(); setDropTab(null)
+  // We accept two drag kinds anywhere on the canvas: internal pool-row drags
+  // (POOL_DND_MIME → accumulate onto the target tab) and OS file drags (Files →
+  // load into the pool AND accumulate onto the tab — the same end effect as
+  // loading then dragging across).
+  const acceptDrag = (e) => e.dataTransfer.types.includes(POOL_DND_MIME) || e.dataTransfer.types.includes('Files')
+
+  const routeDrop = useCallback((tab, e) => {
+    e.preventDefault(); setDropTab(null); setPanelDrag(false)
     const raw = e.dataTransfer.getData(POOL_DND_MIME)
-    if (!raw) return
-    let ids
-    try { ids = JSON.parse(raw) } catch { return }
-    if (Array.isArray(ids) && ids.length) onDropOnTab(tab, ids)
-  }, [onDropOnTab])
+    if (raw) {
+      let ids; try { ids = JSON.parse(raw) } catch { return }
+      if (Array.isArray(ids) && ids.length) onDropOnTab(tab, ids)
+      return
+    }
+    const files = Array.from(e.dataTransfer.files || [])
+    if (files.length && onDropFiles) onDropFiles(files, tab)
+  }, [onDropOnTab, onDropFiles])
 
   const dropProps = (tab) => ({
-    onDragOver: (e) => { if (e.dataTransfer.types.includes(POOL_DND_MIME)) { e.preventDefault(); setDropTab(tab) } },
+    onDragOver: (e) => { if (acceptDrag(e)) { e.preventDefault(); setDropTab(tab) } },
     onDragLeave: () => setDropTab((d) => (d === tab ? null : d)),
-    onDrop: (e) => handleDrop(tab, e),
+    onDrop: (e) => routeDrop(tab, e),
   })
+
+  // The whole panel is a drop target for the active tab. Clear the highlight only
+  // when the pointer actually leaves the panel subtree (not when crossing into a
+  // child), so it doesn't flicker over the embedded viewer.
+  const panelDropProps = {
+    onDragOver: (e) => { if (acceptDrag(e)) { e.preventDefault(); setPanelDrag(true) } },
+    onDragLeave: (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setPanelDrag(false) },
+    onDrop: (e) => routeDrop(activeTab, e),
+  }
 
   const tabLabel = (tab) => t('tab_' + tab.toLowerCase()) || tab
   const activeIds = idsFor(activeTab)
@@ -81,7 +100,7 @@ export default function MainCanvas({
         })}
       </div>
 
-      <div className={styles.panel} role="tabpanel">
+      <div className={`${styles.panel} ${panelDrag ? styles.panelDrag : ''}`} role="tabpanel" {...panelDropProps}>
         {activeTab === 'Profile' && (
           <ProfilePanel
             entry={profileEntry} t={t} initialTab={initialTab} changedTagIds={changedTagIds}
