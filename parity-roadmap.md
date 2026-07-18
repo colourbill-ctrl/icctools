@@ -572,21 +572,32 @@ the pool + verb frame.
   by `profileId`/content hash *(folder/subfolder load deferred post-phase-1, DL-STORE1)*.
   Rows = filename + auto-classification badges (class, colour space, PCS, version, size)
   from `validateProfile`; multi-select (click · shift/ctrl-range · select-all).
-- **Centre — main canvas switches by selection count:**
-  - 0 selected → empty / browse prompt.
-  - **1 selected → today's profiletool renders here** (`ProfileViewer`:
-    Header/Tags/Validation/Analysis/XML/JSON + its save toolbar) = single-profile actions.
-  - **N selected → a distinct multi-profile canvas** = compare/link actions (phase 1:
-    Plot Gamut compare, Make V4 Display).
+- **Centre — main canvas = 3 tabs: `Profile` · `Compare` · `Link`** (P1-a activation,
+  revised 2026-07-18). **Activate by clicking a tab OR dragging profile(s) from the info
+  pane onto a tab.** *(Mobile may need a different tab UX — deferred to phase 2.)*
+  - **Profile** — all single-profile views/actions: today's `ProfileViewer`
+    (Header/Tags/Validation/Analysis/XML/JSON + save toolbar) **plus more**. Operates on 1.
+  - **Compare** — comparison of **1 or more** profiles; at this stage = **gamut views**
+    (the cross-cutting 1..N gamut component lives here — P1-b).
+  - **Link** — linking / multi-profile transform. **Phase-stable home for the node canvas**
+    (canvas phase slots in here); thin/placeholder in phase 1.
+  - **Per-tab accumulator** (removable **chiclets** near the tabs): each tab keeps its
+    **own** set of dropped profiles, shown as chiclets with a remove (✕) affordance —
+    remove drops it from the tab's set, **not** the pool. Populated by **dragging from the
+    info pane onto the tab**; the accumulator (not live info-pane selection) is the tab's
+    authoritative set, **independent per tab**. **Drag semantics:** `Profile` **replaces**
+    (holds 1; multi-drop → **last one wins**); `Compare` & `Link` **accumulate** (add).
+    Multi-drag allowed into any tab.
+  - **Two empty states — both need a designed display:** (a) **pool empty** (nothing
+    loaded) → info pane shows the browse prompt; (b) **accumulator empty** (pool has
+    profiles, none dropped on this tab) → the tab shows its own prompt ("drag a profile
+    here to inspect / compare / link").
 - **Right — settings pane** unchanged from today (`SettingsBlade` overlay); `GuidePanel`
   unchanged.
-- **Verb placement** follows the canvas mode: single-mode verbs = `ProfileViewer`'s own
-  tabs/toolbar; multi-mode verbs = the compare/link canvas; **ingest/create verbs**
-  (from cube/xml/json, add-from-image) live in the **info pane** (the load/create area).
-- **Cross-cutting: the gamut view is SHARED across both modes** — single = this profile's
-  gamut, multi = N-profile overlay → the gamut component must be **selection-mode-agnostic
-  (1..N)**. Ties to P1-b.
-- Today's `DropZone` is absorbed into the info pane's empty-state + drop target.
+- **Division of labour:** the **tabs** = what you *do with* profiles (view / compare /
+  link); the **info pane** = get profiles *in* — load + **ingest/create verbs**
+  (from cube/xml/json, add-from-image, Make-V4 on a 2-selection) that produce *into* the
+  pool. Today's `DropZone` is absorbed into the info pane.
 
 ### 2. Verbs → engines → output
 | Verb | Arity | Engine | New? | Output |
@@ -636,11 +647,12 @@ assembly node, a natural node-graph fit, not a phase-1 multi-select-verb fit.)*
   pane = pool list + drop target; centre main canvas switches single↔multi by selection;
   right settings overlay unchanged). See §1.
 - **P1-b** — 🕓 **DECISION DEFERRED but STAYS WITHIN PHASE 1** (user). Gamut view is
-  **cross-cutting** (single + multi → a mode-agnostic 1..N component). User prefers
-  chardata's **3D gamut plot + 2D gamut slice** forms over today's iccviz plots. Still
-  open: extend iccviz vs a new plot engine; upstream-migration fit
-  ([[iccviz-upstream-migration-plan]]); chardata-viz adoption. Decide at build time — NOT
-  pushed to the canvas phase.
+  **homed in the `Compare` tab**, serving **1..N** profiles (mode-agnostic component). User
+  prefers chardata's **3D gamut plot + 2D gamut slice** forms over today's iccviz plots.
+  Still open: extend iccviz vs a new plot engine; upstream-migration fit
+  ([[iccviz-upstream-migration-plan]]); chardata-viz adoption; **whether the single-profile
+  gamut currently in Profile/Analysis relocates to `Compare` or is shared.** Decide at
+  build time — NOT pushed to the canvas phase.
 - **P1-c** ✅ RESOLVED — **DEFER to the CANVAS phase (not dropped).** `SpecSepToTiff` is a
   **spectral-imaging assembly tool** (concatenates N single-wavelength TIFFs → one
   multi-sample TIFF, optional profile embed). It **gathers N image nouns**, which fits the
@@ -651,3 +663,10 @@ assembly node, a natural node-graph fit, not a phase-1 multi-select-verb fit.)*
 - **P1-d** ✅ RESOLVED — **info-pane type-sniff.** The single info-pane drop/browse target
   sniffs file type: ICC profiles load directly into the pool; images (TIFF/PNG/JPEG) →
   extract embedded profile → pool. No distinct entry point.
+- **P1-e** ✅ RESOLVED — **per-tab accumulator + drag semantics.** Each tab has an
+  **accumulator** (removable chiclets near the tabs) = its own independent profile set,
+  drag-populated from the info pane. `Profile` **replaces** (1; multi-drop → last-wins);
+  `Compare` & `Link` **accumulate**; multi-drag allowed into any; chiclet ✕ removes from
+  the accumulator (not the pool). Resolves replace-vs-add and tab↔selection coupling: tab
+  sets are **accumulator-driven, per-tab, independent** of live info-pane selection. Each
+  tab needs a designed **empty state** (accumulator-empty, distinct from pool-empty).
