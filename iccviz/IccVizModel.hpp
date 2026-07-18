@@ -205,7 +205,7 @@ bool GetSilent();                                    // read that global silent 
 void SetDiagnosticContext(const std::string& name);
 
 // List every visualization available for the profile, in a stable canonical
-// order: chromaticity first, then per-tag in tag-table order — TRC curves, then
+// order: chromaticity first, then in a fixed canonical signature order — TRC curves, then
 // each LUT's A/B/M curves followed by its CLUT image, then a neutral-axis inking
 // graph for each PCS→device BToA table, then named/colorant tables as a*b* then xy.
 std::vector<Descriptor> Enumerate(CIccProfile* pIcc);

@@ -971,7 +971,7 @@ bool buildNeutralAxisGraph(CIccProfile* pIcc, icTagSignature sig, Graph& out,
   if (inCh < 3 || outCh <= 0 || outCh > kMaxInkChannels) return skip("invalid channel count");
 
   CIccXform* xform = CIccXform::Create(pIcc, tag, /*bInput=*/false,
-                                       neutralIntentForSig(sig), icInterpLinear);
+                                       neutralIntentForSig(sig), icInterpLinear, /*pPcc=*/NULL, /*bUseSpectralPCS=*/false, /*pHintManager=*/NULL, /*bOwnsProfile=*/false);
   if (!xform) return skip("could not build PCS→device transform");
   xform->ShareProfile();
   if (xform->Begin() != icCmmStatOk) { delete xform; return skip("transform Begin failed"); }
@@ -1019,7 +1019,7 @@ bool buildNeutralAxisGraph(CIccProfile* pIcc, icTagSignature sig, Graph& out,
   // receiver falls back to its channel palette.
   if (CIccTag* fwdTag = pIcc->FindTag(icSigAToB1Tag)) {
     if (CIccXform* fwd = CIccXform::Create(pIcc, fwdTag, /*bInput=*/true,
-                                           icRelativeColorimetric, icInterpLinear)) {
+                                           icRelativeColorimetric, icInterpLinear, /*pPcc=*/NULL, /*bUseSpectralPCS=*/false, /*pHintManager=*/NULL, /*bOwnsProfile=*/false)) {
       fwd->ShareProfile();
       icStatusCMM fst = icCmmStatOk;
       CIccApplyXform* fapply = (fwd->Begin() == icCmmStatOk) ? fwd->GetNewApply(fst) : nullptr;
@@ -1186,7 +1186,7 @@ double voxelEnclosedVolume(const std::vector<float>& lab, double vs,
 double boundarySampleCount(int N, int S) {
   if (N < 1) N = 1;
   const int e = (N >= 2) ? (N - 1) : 0;      // free axes per facet
-  return 2.0 * N * std::pow((double)(S + 1), (double)e);
+  return 2.0 * N * std::pow((double)S + 1.0, (double)e);
 }
 
 // boundaryDeviceSamples — sample the BOUNDARY of the device N-cube in 0..1
@@ -1289,7 +1289,7 @@ std::vector<Descriptor> Enumerate(CIccProfile* pIcc) {
   // TU walks off the end into the circular list (cross-TU std::list iterator
   // mismatch). CIccProfile::FindTag (which lives in IccProfLib) is safe, so we
   // probe a fixed, canonically-ordered signature list instead. This also gives
-  // deterministic ordering, close to the profile's tag-table order.
+  // deterministic ordering using a fixed canonical signature list (NOT the profile's tag-table order).
 
   // Chromaticity first. Enumerated whenever the profile carries a media white
   // point OR the full RGB colorant set: buildChromaticityGraph plots the white
@@ -1481,7 +1481,7 @@ GamutVolumeResult GamutVolume(CIccProfile* pIcc, icTagSignature aToBTag,
   if (!pTag) return fail("AToB tag not present");
 
   // Device→PCS transform for this tag (bInput=true = A2B / "input" side).
-  CIccXform* x = CIccXform::Create(pIcc, pTag, /*bInput=*/true, intent, icInterpLinear);
+  CIccXform* x = CIccXform::Create(pIcc, pTag, /*bInput=*/true, intent, icInterpLinear, /*pPcc=*/NULL, /*bUseSpectralPCS=*/false, /*pHintManager=*/NULL, /*bOwnsProfile=*/false);
   if (!x) return fail("could not build device→PCS transform");
   x->ShareProfile();                                   // we do NOT own pIcc
   if (x->Begin() != icCmmStatOk) { delete x; return fail("transform Begin failed"); }
@@ -1562,7 +1562,17 @@ GamutVolumeResult GamutVolume(CIccProfile* pIcc, icTagSignature aToBTag,
   // enclosed region is at/below the voxel-resolution floor (collapsed toward a
   // point/plane). Lets a caller show N/A instead of a misleading tiny number.
   const int finitePts = (int)(lab.size() / 3);
-  r.degenerate     = (finitePts * 2 < nPts) || (cells <= 27);
+  // Thinnest principal extent of the boundary cloud. voxelEnclosedVolume seals
+  // gaps with a morphological closing that floors a collapsed plane/line at ~1
+  // voxel thick, so its volume stays a sheet/tube artifact the cell-count floor
+  // above cannot catch. Flag degenerate when the cloud is effectively coplanar/
+  // collinear (s3 a negligible fraction of s1) or thinner than the voxel grid can
+  // resolve (s3 below vs): the volume is then not a meaningful 3-D measurement.
+  double s1 = 0.0, s2 = 0.0, s3 = 0.0;
+  iccvizmath::principalStdDevs(lab.data(), (std::size_t)finitePts, s1, s2, s3);
+  (void)s2;   // middle extent unused: s3 alone captures plane and line collapse
+  const bool flat = (s1 > 0.0) && (s3 < 0.02 * s1 || s3 < vs);
+  r.degenerate     = (finitePts * 2 < nPts) || (cells <= 27) || flat;
   r.ok             = true;
   return r;
 }
@@ -1592,8 +1602,8 @@ RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
   if (!a2bTag) return fail("AToB tag not present");
   if (!b2aTag) return fail("BToA tag not present");
 
-  CIccXform* xA = CIccXform::Create(pIcc, a2bTag, /*bInput=*/true,  intent, icInterpLinear);
-  CIccXform* xB = CIccXform::Create(pIcc, b2aTag, /*bInput=*/false, intent, icInterpLinear);
+  CIccXform* xA = CIccXform::Create(pIcc, a2bTag, /*bInput=*/true,  intent, icInterpLinear, /*pPcc=*/NULL, /*bUseSpectralPCS=*/false, /*pHintManager=*/NULL, /*bOwnsProfile=*/false);
+  CIccXform* xB = CIccXform::Create(pIcc, b2aTag, /*bInput=*/false, intent, icInterpLinear, /*pPcc=*/NULL, /*bUseSpectralPCS=*/false, /*pHintManager=*/NULL, /*bOwnsProfile=*/false);
   if (!xA || !xB) { delete xA; delete xB; return fail("could not build transforms"); }
   xA->ShareProfile(); xB->ShareProfile();
   if (xA->Begin() != icCmmStatOk || xB->Begin() != icCmmStatOk) { delete xA; delete xB; return fail("transform Begin failed"); }
@@ -1614,7 +1624,7 @@ RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
 
   int S = samplesPerAxis > 0 ? samplesPerAxis : roundTripSteps(N);
   if (S < 2) S = 2;
-  double total = std::pow((double)(S + 1), N);
+  double total = std::pow((double)S + 1.0, N);
   if (total > 3000000.0) { delete xA; delete xB; return fail("seed grid too large"); }
 
   icStatusCMM st = icCmmStatOk;
