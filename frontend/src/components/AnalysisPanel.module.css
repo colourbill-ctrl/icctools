@@ -73,6 +73,21 @@
   color: var(--text);
 }
 
+/* Checkbox control: label sits inline beside the box, not stacked above it. */
+.controlInline {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  align-self: end;   /* baseline-align with the select beside it */
+}
+
+/* "Specified gamut" line between the round-trip table and the PRMG histogram. */
+.rtGamut {
+  font-size: 0.85rem;
+  color: var(--text);
+  margin: 14px 0 6px;
+}
+
 /* ── Profile Statistics table ─────────────────────────────────────────────── */
 .table {
   width: 100%;

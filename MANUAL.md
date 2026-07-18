@@ -149,6 +149,16 @@ Per rendering intent, two whole-profile metrics computed from the device↔PCS l
 
 One row per intent (Perceptual, Relative Colorimetric, Saturation, Absolute Colorimetric); intents whose tags are absent are omitted.
 
+#### Round-Trip (PRMG)
+
+The full round-trip report, matching the iccDEV `iccRoundTrip` reference tool exactly. Where the Profile Statistics row above gives a quick single-direction summary, this section runs the reference metric: it seeds from the **device colour cube** and reports **both** round-trip directions plus a Perceptual Reference Medium Gamut (PRMG) interoperability histogram.
+
+- **Round Trip 1** — the device → PCS → device error: ΔE\*ab between each device colour's Lab and its Lab after one round trip. Reported as **min**, **mean**, **max**, plus the worst-case `L, a, b`.
+- **Round Trip 2** — the PCS round-trip stability: ΔE\*ab between the first and second round trip, again with min / mean / max and worst-case `L, a, b`.
+- **PRMG interoperability** — the count and share of samples whose round-trip ΔE falls within **1, 2, 3, 5, and 10**, and whether the profile implies the Perceptual Reference Medium Gamut.
+
+Two controls drive it: a **rendering intent** selector (Perceptual / Relative / Saturation / Absolute) and a **Use MPE (color) tags** checkbox (off = the colorimetric lookup tables; on = the multi-processing-element / color tags). Results are computed on demand when you open the section and cached per intent and MPE setting. A profile that can't be round-tripped — one lacking the device↔PCS transforms this metric needs — shows a *not applicable* note; a device space too wide to sample is reported as skipped rather than as an error.
+
 #### Neutral Axis Inking
 
 Sweeps the neutral axis (a\*=b\*=0) from white (L\*=100) down to black (L\*=0) through the profile's `B2A` (PCS → device) table and plots how much of each device colorant the profile lays down along the way — the classic GCR / neutral-build curve. One curve per device channel, colour-coded per colorant. **Output (printer) profiles only**; other profile classes show a note.

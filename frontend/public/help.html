@@ -275,6 +275,14 @@ body.dark .diag {
 <li><strong>Round-trip ΔE</strong> — how accurately the <code>B2A</code> (PCS → device) table inverts the <code>A2B</code>: in-gamut Lab values are pushed Lab → device → Lab and the error is reported as <strong>mean</strong>, <strong>P90</strong>, and <strong>max</strong> ΔE*ab.</li>
 </ul>
 <p>One row per intent (Perceptual, Relative Colorimetric, Saturation, Absolute Colorimetric); intents whose tags are absent are omitted.</p>
+<h4>Round-Trip (PRMG)</h4>
+<p>The full round-trip report, matching the iccDEV <code>iccRoundTrip</code> reference tool exactly. Where the Profile Statistics row above gives a quick single-direction summary, this section runs the reference metric: it seeds from the <strong>device colour cube</strong> and reports <strong>both</strong> round-trip directions plus a Perceptual Reference Medium Gamut (PRMG) interoperability histogram.</p>
+<ul>
+<li><strong>Round Trip 1</strong> — the device → PCS → device error: ΔE*ab between each device colour's Lab and its Lab after one round trip. Reported as <strong>min</strong>, <strong>mean</strong>, <strong>max</strong>, plus the worst-case <code>L, a, b</code>.</li>
+<li><strong>Round Trip 2</strong> — the PCS round-trip stability: ΔE*ab between the first and second round trip, again with min / mean / max and worst-case <code>L, a, b</code>.</li>
+<li><strong>PRMG interoperability</strong> — the count and share of samples whose round-trip ΔE falls within <strong>1, 2, 3, 5, and 10</strong>, and whether the profile implies the Perceptual Reference Medium Gamut.</li>
+</ul>
+<p>Two controls drive it: a <strong>rendering intent</strong> selector (Perceptual / Relative / Saturation / Absolute) and a <strong>Use MPE (color) tags</strong> checkbox (off = the colorimetric lookup tables; on = the multi-processing-element / color tags). Results are computed on demand when you open the section and cached per intent and MPE setting. A profile that can't be round-tripped — one lacking the device↔PCS transforms this metric needs — shows a <em>not applicable</em> note; a device space too wide to sample is reported as skipped rather than as an error.</p>
 <h4>Neutral Axis Inking</h4>
 <p>Sweeps the neutral axis (a*=b*=0) from white (L*=100) down to black (L*=0) through the profile's <code>B2A</code> (PCS → device) table and plots how much of each device colorant the profile lays down along the way — the classic GCR / neutral-build curve. One curve per device channel, colour-coded per colorant. <strong>Output (printer) profiles only</strong>; other profile classes show a note.</p>
 <h3 id="3-5-xml">3.5 XML</h3>

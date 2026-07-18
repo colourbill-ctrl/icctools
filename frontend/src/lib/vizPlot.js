@@ -130,6 +130,28 @@ export async function roundTripDE(bytes, intent) {
   return r
 }
 
+/**
+ * IccProfLib-canonical round trip — the parity port of the `iccRoundTrip` CLI.
+ * Seeds from the device cube and reports BOTH directions plus the PRMG
+ * interoperability histogram. `intent`: 0 perceptual / 1 relative / 2 saturation
+ * / 3 absolute; `useMpe`: false = colorimetric (lut) tags, true = MPE tags. →
+ *   { intent, useMpe, total,
+ *     roundTrip1: { minDE, meanDE, maxDE, maxLab:[L,a,b] },
+ *     roundTrip2: { minDE, meanDE, maxDE, maxLab:[L,a,b] },
+ *     prmg: { ok, implied, de1, de2, de3, de5, de10, total } | { ok:false, message },
+ *     status: 'ok' }
+ * `status:'tooManySamples'` (a skipped, non-error state — the #1405 wide-device
+ * guard) is returned as-is, NOT thrown; only a true `.error` throws.
+ */
+export async function roundTrip(bytes, intent, useMpe = false) {
+  const mod = await loadModule()
+  let out
+  try { out = mod.roundTrip(bytes, intent, useMpe) } catch (e) { throw toError(mod, e) }
+  const r = JSON.parse(out)
+  if (r.error) throw new Error(r.error)
+  return r
+}
+
 /** Render one raster by id → {width,height,channels,bitsPerChannel,photometric,samples}. */
 export async function renderRaster(bytes, id) {
   const mod = await loadModule()

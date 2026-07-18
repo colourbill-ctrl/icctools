@@ -1,6 +1,6 @@
 // (c) 2026 William Li
 import { useEffect, useState } from 'react'
-import { enumerateVisualizations, renderGraph, tagEvalInfo, gamutVolume, roundTripDE } from '../lib/vizPlot.js'
+import { enumerateVisualizations, renderGraph, tagEvalInfo, gamutVolume, roundTripDE, roundTrip } from '../lib/vizPlot.js'
 import { channelColor } from './viz/colors.js'
 import { labToRgb } from '../lib/rasterDecode.js'
 import Collapsible from './viz/Collapsible.jsx'
@@ -153,6 +153,218 @@ function ProfileStatsSection({ bytes, t }) {
   )
 }
 
+// ── Round-Trip (PRMG) ─────────────────────────────────────────────────────────
+// The IccProfLib-canonical round trip — parity with the `iccRoundTrip` CLI, and
+// distinct from the Profile-Statistics overview above (which uses iccviz's cheaper
+// single-direction bespoke metric). Seeds from the device cube and reports BOTH
+// directions plus the PRMG interoperability histogram, with live intent / MPE
+// controls. Computed lazily on first open (Collapsible mounts children on demand)
+// and cached per (profile, intent, useMpe) so re-selecting is instant.
+const RT_INTENTS = [
+  { intent: 0, key: 'intent_perceptual', fallback: 'Perceptual' },
+  { intent: 1, key: 'intent_relative',   fallback: 'Relative Colorimetric' },
+  { intent: 2, key: 'intent_saturation', fallback: 'Saturation' },
+  { intent: 3, key: 'intent_absolute',   fallback: 'Absolute Colorimetric' },
+]
+const rtCache = new WeakMap()   // bytes -> Map<`${intent}:${useMpe}`, { data } | { error }>
+
+function RoundTripSection({ bytes, t }) {
+  return (
+    <Collapsible title={t('analysis_rt_heading') || 'Round-Trip (PRMG)'}>
+      <p className={styles.sectionIntro}>
+        {t('analysis_rt_intro') ||
+          'Device-cube round trip through the profile, matching the iccRoundTrip reference tool. Round Trip 1 is the device→PCS→device error (ΔE*ab); Round Trip 2 is the PCS round-trip stability. The PRMG histogram reports interoperability against the Perceptual Reference Medium Gamut.'}
+      </p>
+      <RoundTripBody bytes={bytes} t={t} />
+    </Collapsible>
+  )
+}
+
+function RoundTripBody({ bytes, t }) {
+  const [intent, setIntent] = useState(1)      // default: relative colorimetric (CLI default)
+  const [useMpe, setUseMpe] = useState(false)  // default: colorimetric (lut) tags
+  const [state, setState] = useState({ loading: true })
+
+  useEffect(() => {
+    const cacheKey = `${intent}:${useMpe}`
+    let byKey = rtCache.get(bytes)
+    if (byKey && byKey.has(cacheKey)) { setState({ loading: false, ...byKey.get(cacheKey) }); return }
+    let cancelled = false
+    setState({ loading: true })
+    ;(async () => {
+      let result
+      try { result = { data: await roundTrip(bytes, intent, useMpe) } }
+      catch (e) { result = { error: e.message } }
+      if (!byKey) { byKey = new Map(); rtCache.set(bytes, byKey) }
+      byKey.set(cacheKey, result)
+      if (!cancelled) setState({ loading: false, ...result })
+    })()
+    return () => { cancelled = true }
+  }, [bytes, intent, useMpe])
+
+  return (
+    <>
+      <div className={styles.controls}>
+        <label className={styles.control}>
+          <span>{t('analysis_intent_label') || 'Rendering intent'}</span>
+          <select value={intent} onChange={(e) => setIntent(Number(e.target.value))}>
+            {RT_INTENTS.map((it) => (
+              <option key={it.intent} value={it.intent}>{t(it.key) || it.fallback}</option>
+            ))}
+          </select>
+        </label>
+        <label className={`${styles.control} ${styles.controlInline}`}>
+          <input type="checkbox" checked={useMpe} onChange={(e) => setUseMpe(e.target.checked)} />
+          <span>{t('analysis_rt_usempe') || 'Use MPE (color) tags'}</span>
+        </label>
+      </div>
+      {state.loading ? (
+        <div className={styles.loading}><span className={styles.spinner} /> {t('analysis_loading') || 'Analysing…'}</div>
+      ) : state.error ? (
+        <div className={styles.notApplicable}>
+          {t('analysis_rt_na') ||
+            'This profile cannot be round-tripped — it lacks the device↔PCS transforms this metric needs (e.g. a one-way or abstract profile).'}
+        </div>
+      ) : (
+        <RoundTripResult data={state.data} t={t} />
+      )}
+    </>
+  )
+}
+
+// Renders one round-trip result object (already parsed + error-checked by the
+// vizPlot loader). Every field is treated as *untrusted shape* here: the object
+// crosses the WASM→JS boundary, so we guard each access rather than assume the
+// C++ always populated it — a future engine change or a partial result can't
+// throw a render-time TypeError and blank the whole Analysis tab.
+function RoundTripResult({ data, t }) {
+  // The #1405 wide-device-space guard: EvaluateProfile deliberately refuses a
+  // device space too wide to sample. It's a skip, not a failure — surface it as
+  // an informational note (mirrors the CLI printing the status and exiting 0).
+  if (data.status === 'tooManySamples') {
+    return (
+      <div className={styles.notApplicable}>
+        {t('analysis_rt_toomany') ||
+          'Round trip skipped: the device colour space is too wide to evaluate (too many samples).'}
+      </div>
+    )
+  }
+
+  // RT1/RT2 are required on a successful result; if either is missing the result
+  // is malformed (not a real profile outcome), so fall back to the NA note
+  // rather than dereferencing undefined below.
+  const rt1 = data.roundTrip1, rt2 = data.roundTrip2
+  if (!rt1 || !rt2) {
+    return (
+      <div className={styles.notApplicable}>
+        {t('analysis_rt_na') ||
+          'This profile cannot be round-tripped — it lacks the device↔PCS transforms this metric needs (e.g. a one-way or abstract profile).'}
+      </div>
+    )
+  }
+
+  // ΔE cells: '—' for a missing/non-numeric value (never a NaN or "undefined").
+  const fmt = (v) => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : '—')
+  // Worst-Lab triple: only format when it's the expected 3-number array.
+  const fmtLab = (lab) =>
+    (Array.isArray(lab) && lab.length === 3 && lab.every((v) => typeof v === 'number' && Number.isFinite(v)))
+      ? lab.map((v) => v.toFixed(2)).join(', ')
+      : '—'
+  const rows = [
+    { label: t('analysis_rt_min')  || 'Min ΔE',  a: fmt(rt1.minDE),  b: fmt(rt2.minDE) },
+    { label: t('analysis_rt_mean') || 'Mean ΔE', a: fmt(rt1.meanDE), b: fmt(rt2.meanDE) },
+    { label: t('analysis_rt_max')  || 'Max ΔE',  a: fmt(rt1.maxDE),  b: fmt(rt2.maxDE) },
+  ]
+
+  // PRMG histogram. `prmg` is absent/`ok:false` when the PRMG pass was skipped
+  // (its status is independent of the round trip itself — the CLI still prints
+  // RT1/RT2 in that case), so everything below is gated on `prmg.ok && total`.
+  const prmg = data.prmg
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  const total = prmg ? num(prmg.total) : 0
+  // Share of samples at or under each ΔE threshold. Guard total>0 so we never
+  // divide by zero (a valid-but-empty PRMG pass) — show '—' instead of NaN.
+  const pct = (n) => (total > 0 ? (100 * num(n) / total).toFixed(1) + '%' : '—')
+  const buckets = prmg && prmg.ok ? [
+    { le: '1.0', n: num(prmg.de1) }, { le: '2.0', n: num(prmg.de2) }, { le: '3.0', n: num(prmg.de3) },
+    { le: '5.0', n: num(prmg.de5) }, { le: '10.0', n: num(prmg.de10) },
+  ] : []
+
+  return (
+    <>
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            <th>{t('analysis_rt_metric') || 'Metric'}</th>
+            <th className={styles.statNumC} title={t('analysis_rt_rt1_desc') || 'device → PCS → device'}>
+              {t('analysis_rt_rt1') || 'Round Trip 1'}</th>
+            <th className={styles.statNumC} title={t('analysis_rt_rt2_desc') || 'PCS round-trip stability'}>
+              {t('analysis_rt_rt2') || 'Round Trip 2'}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.label}>
+              <td>{r.label}</td>
+              <td className={styles.statNumC}>{r.a}</td>
+              <td className={styles.statNumC}>{r.b}</td>
+            </tr>
+          ))}
+          <tr>
+            <td>{t('analysis_rt_worstlab') || 'Worst L, a, b'}</td>
+            <td className={styles.statNumC}>{fmtLab(rt1.maxLab)}</td>
+            <td className={styles.statNumC}>{fmtLab(rt2.maxLab)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p className={styles.rtGamut}>
+        <strong>{t('analysis_rt_gamut') || 'Specified gamut'}:</strong>{' '}
+        {prmg && prmg.ok
+          ? (prmg.implied ? (t('analysis_rt_gamut_prmg') || 'Perceptual Reference Medium Gamut')
+                          : (t('analysis_rt_gamut_none') || 'Not specified'))
+          : (t('analysis_rt_gamut_na') || 'Not evaluated')}
+      </p>
+
+      {prmg && prmg.ok && total ? (
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th colSpan={3} style={{ textAlign: 'left' }}>
+                {t('analysis_rt_prmg_heading') || 'PRMG interoperability'}
+              </th>
+            </tr>
+            <tr>
+              <th>{t('analysis_rt_prmg_de') || 'Round-trip ΔE'}</th>
+              <th className={styles.statNumC}>{t('analysis_rt_count') || 'Count'}</th>
+              <th className={styles.statNumC}>{t('analysis_rt_pct') || 'Share'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {buckets.map((bk) => (
+              <tr key={bk.le}>
+                <td>≤ {bk.le}</td>
+                <td className={styles.statNumC}>{bk.n.toLocaleString()}</td>
+                <td className={styles.statNumC}>{pct(bk.n)}</td>
+              </tr>
+            ))}
+            <tr>
+              <td>{t('analysis_rt_total') || 'Total'}</td>
+              <td className={styles.statNumC}>{total.toLocaleString()}</td>
+              <td className={styles.statNumC} />
+            </tr>
+          </tbody>
+        </table>
+      ) : (
+        <div className={styles.notApplicable}>
+          {(t('analysis_rt_prmg_skipped') || 'PRMG not evaluated')}
+          {prmg && prmg.message ? `: ${prmg.message}` : ''}
+        </div>
+      )}
+    </>
+  )
+}
+
 function NeutralSection({ bytes, profileClass, tables, t }) {
   // Output (printer) profiles only — others get a localized error.
   const isOutput = String(profileClass || '').toLowerCase().includes('output')
@@ -266,6 +478,7 @@ export default function AnalysisPanel({ bytes, profileClass }) {
       <h2 className={styles.panelTitle}>{t('analysis_title') || 'Analysis'}</h2>
       <p className={styles.intro}>{t('analysis_intro') || 'Profile-wide quality analyses derived from the device→PCS transform.'}</p>
       <ProfileStatsSection bytes={bytes} t={t} />
+      <RoundTripSection bytes={bytes} t={t} />
       <NeutralSection bytes={bytes} profileClass={profileClass} tables={neutralTags} t={t} />
     </div>
   )

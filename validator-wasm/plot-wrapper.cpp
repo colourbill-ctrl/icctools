@@ -22,6 +22,8 @@
 #include "IccCmm.h"
 #include "IccUtil.h"
 #include "IccTagLut.h"
+#include "IccPrmg.h"
+#include "roundtrip-eval.hpp"
 
 #include <nlohmann/json.hpp>
 #include <emscripten/bind.h>
@@ -485,6 +487,72 @@ std::string roundTripDE(const std::string& bytes, int intent) {
   catch (...) { return json{{"error", "roundTripDE threw an unknown exception"}}.dump(); }
 }
 
+// IccProfLib-canonical round trip — the parity port of `iccRoundTrip` (the CLI
+// tool). Distinct from iccviz::RoundTripDE above: this seeds from the *device
+// cube* (CIccEvalCompare), reports BOTH round-trip directions (RT1 device→PCS
+// error, RT2 PCS-stability error), and adds the PRMG interoperability histogram.
+// intent: 0 perceptual, 1 relative, 2 saturation, 3 absolute (ICC values).
+// useMpe: false = colorimetric (lut) tags, true = MPE/color tags.
+std::string roundTripImpl(const std::string& bytes, int intent, bool useMpe) {
+  if (bytes.size() > kMaxIccBytes)
+    return json{{"error", "Profile exceeds size limit"}}.dump();
+  CIccProfile* pIcc = parseCached(bytes);
+  if (!pIcc) return json{{"error", "Failed to parse ICC profile"}}.dump();
+  if (intent < 0 || intent > 3) intent = 1;   // default: relative colorimetric
+  icRenderingIntent nIntent = static_cast<icRenderingIntent>(intent);
+
+  CIccMinMaxEval eval;
+  icStatusCMM stat = eval.EvaluateProfile(pIcc, 0, nIntent, icInterpLinear, useMpe);
+
+  if (stat != icCmmStatOk) {
+    // Mirror iccRoundTrip.cpp:226-235 — distinguish a deliberate refusal
+    // ("Too many samples", the #1405 wide-device-space guard) from an outright
+    // failure. The guard is a *skipped, non-error* state, surfaced as its own
+    // status so the UI can say "not evaluated" rather than "error".
+    if (stat == icCmmStatTooManySamples)
+      return json{{"status", "tooManySamples"},
+                  {"message", CIccCmm::GetStatusText(stat)}}.dump();
+    return json{{"error", std::string("Unable to perform round trip: ") +
+                          CIccCmm::GetStatusText(stat)}}.dump();
+  }
+
+  // PRMG is a second, independent pass; its own status can differ (e.g. skipped)
+  // without failing the round trip — mirror the CLI, which still prints RT1/RT2.
+  CIccPRMG prmg;
+  icStatusCMM prmgStat = prmg.EvaluateProfile(pIcc, nIntent, icInterpLinear, useMpe);
+  bool prmgOk = prmgStat == icCmmStatOk;
+
+  json out = {
+    {"intent", intent},
+    {"useMpe", useMpe},
+    {"total", eval.m_nTotal},
+    {"roundTrip1", {
+      {"minDE", eval.minDE1}, {"meanDE", eval.GetMean1()}, {"maxDE", eval.maxDE1},
+      {"maxLab", {eval.maxLab1[0], eval.maxLab1[1], eval.maxLab1[2]}}}},
+    {"roundTrip2", {
+      {"minDE", eval.minDE2}, {"meanDE", eval.GetMean2()}, {"maxDE", eval.maxDE2},
+      {"maxLab", {eval.maxLab2[0], eval.maxLab2[1], eval.maxLab2[2]}}}},
+    {"status", "ok"},
+  };
+
+  if (prmgOk && prmg.m_nTotal) {
+    out["prmg"] = {
+      {"ok", true}, {"implied", prmg.m_bPrmgImplied},
+      {"de1", prmg.m_nDE1}, {"de2", prmg.m_nDE2}, {"de3", prmg.m_nDE3},
+      {"de5", prmg.m_nDE5}, {"de10", prmg.m_nDE10}, {"total", prmg.m_nTotal}};
+  } else {
+    out["prmg"] = {{"ok", false},
+                   {"message", CIccCmm::GetStatusText(prmgStat)}};
+  }
+  return out.dump();
+}
+
+std::string roundTrip(const std::string& bytes, int intent, bool useMpe) {
+  try { return roundTripImpl(bytes, intent, useMpe); }
+  catch (const std::exception& e) { return json{{"error", std::string("roundTrip threw: ") + e.what()}}.dump(); }
+  catch (...) { return json{{"error", "roundTrip threw an unknown exception"}}.dump(); }
+}
+
 } // namespace
 
 EMSCRIPTEN_BINDINGS(iccplot) {
@@ -495,4 +563,5 @@ EMSCRIPTEN_BINDINGS(iccplot) {
   emscripten::function("evaluateTag", &evaluateTag);
   emscripten::function("gamutVolume", &gamutVolume);
   emscripten::function("roundTripDE", &roundTripDE);
+  emscripten::function("roundTrip", &roundTrip);
 }
