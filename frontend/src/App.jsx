@@ -20,6 +20,7 @@ import { computeChangedTagIds } from './lib/tagDiff.js'
 import { resolveTabAlias } from './lib/tabs.js'
 import { entryId, deriveMeta } from './lib/pool.js'
 import { classifyFile, ACCEPTED_KINDS, FileKind, rejectReason } from './lib/fileKind.js'
+import { extractEmbeddedProfile, extractEmbeddedProfileFromBlob } from './lib/embeddedProfile.js'
 import { useT } from './i18n.jsx'
 import styles from './App.module.css'
 
@@ -92,21 +93,26 @@ export default function App() {
     return id
   }, [])
 
-  // Classify one buffer and either load it or return a rejection. This is the
-  // single choke point every load path funnels through, so the "is this a file
-  // we accept?" policy (and future image-extraction routing) lives in one place.
+  // Classify one IN-MEMORY buffer and either load it or return a rejection. Used
+  // by the launch protocols (#url= / postMessage), where the bytes are already
+  // fully in hand, so there's no whole-image read to avoid — image bytes here go
+  // through the buffer-based extractor. File loads use ingestFile() instead, which
+  // streams. Both share the same accept policy + addIccEntry tail.
   const ingestOne = useCallback(async (filename, bytes) => {
     if (bytes.length > MAX_ICC_BYTES) {
       return { reject: { filename, reason: `too large (> ${MAX_ICC_BYTES / (1024*1024)} MB)` } }
     }
     const { kind } = classifyFile(bytes, filename)
     if (!ACCEPTED_KINDS.has(kind)) {
-      // When embedded-profile extraction ships, kind === FileKind.IMAGE routes
-      // here to extract-then-addIccEntry (or reject if no embedded profile),
-      // instead of a flat rejection. Until then, image (and everything else) is
-      // reported, not left in the pool.
-      void FileKind
       return { reject: { filename, reason: rejectReason(kind) } }
+    }
+    // IMAGE: pull the embedded profile and ingest THAT (not the image). No
+    // embedded profile → a clean rejection, same channel as any other reject.
+    if (kind === FileKind.IMAGE) {
+      const profile = await extractEmbeddedProfile(bytes)
+      if (!profile) return { reject: { filename, reason: rejectReason(FileKind.IMAGE) } }
+      bytes = profile
+      filename = embeddedName(filename)
     }
     try {
       const id = await addIccEntry(filename, bytes)
@@ -114,6 +120,50 @@ export default function App() {
     } catch {
       return { reject: { filename, reason: 'could not be read as an ICC profile' } }
     }
+  }, [addIccEntry])
+
+  // Classify + load one File WITHOUT reading the whole thing up front. We sniff a
+  // small front slice to classify, then:
+  //  • IMAGE  → stream the embedded profile out of the File (reads only the
+  //             header/IFD/markers + the profile blob, never the raster). We do
+  //             NOT size-cap the container — a 400 MB TIFF with a 10 KB profile is
+  //             fine; the extractor's own 64 MB embedded cap + bounded reads guard
+  //             memory, and the extracted profile is size-checked below.
+  //  • ICC    → size-cap the FILE (checked against file.size before allocating, so
+  //             a huge file is rejected without ever reading it), then read whole.
+  // This is the memory-safe counterpart to ingestOne for user file loads.
+  const ingestFile = useCallback(async (file) => {
+    const name = file.name
+    let head
+    try {
+      head = new Uint8Array(await file.slice(0, 64).arrayBuffer())   // enough for 'acsp'@36 + magics
+    } catch {
+      return { reject: { filename: name, reason: 'could not be read' } }
+    }
+    const { kind } = classifyFile(head, name)
+    if (!ACCEPTED_KINDS.has(kind)) return { reject: { filename: name, reason: rejectReason(kind) } }
+
+    if (kind === FileKind.IMAGE) {
+      let profile
+      try { profile = await extractEmbeddedProfileFromBlob(file) } catch { profile = null }
+      if (!profile) return { reject: { filename: name, reason: rejectReason(FileKind.IMAGE) } }
+      if (profile.length > MAX_ICC_BYTES) {
+        return { reject: { filename: name, reason: `embedded profile too large (> ${MAX_ICC_BYTES / (1024*1024)} MB)` } }
+      }
+      try { return { id: await addIccEntry(embeddedName(name), profile) } }
+      catch { return { reject: { filename: name, reason: 'embedded data is not a valid ICC profile' } } }
+    }
+
+    // ICC — cap by file.size BEFORE allocating the buffer.
+    if (file.size > MAX_ICC_BYTES) {
+      return { reject: { filename: name, reason: `too large (> ${MAX_ICC_BYTES / (1024*1024)} MB)` } }
+    }
+    let bytes
+    try { bytes = new Uint8Array(await file.arrayBuffer()) } catch {
+      return { reject: { filename: name, reason: 'could not be read' } }
+    }
+    try { return { id: await addIccEntry(name, bytes) } }
+    catch { return { reject: { filename: name, reason: 'could not be read as an ICC profile' } } }
   }, [addIccEntry])
 
   const updateEntry = useCallback((id, updater) => {
@@ -161,9 +211,10 @@ export default function App() {
     const wasEmpty = poolRef.current.size === 0
     const rejects = [], ids = []
     for (let i = 0; i < files.length; i++) {
-      const buf = await files[i].arrayBuffer()
+      // ingestFile streams: it never reads the whole file to classify, and images
+      // yield only their embedded profile (the raster is never loaded).
       // eslint-disable-next-line no-await-in-loop
-      const r = await ingestOne(files[i].name, new Uint8Array(buf))
+      const r = await ingestFile(files[i])
       if (r.id) ids.push(r.id)
       else rejects.push(r.reject)
     }
@@ -179,7 +230,7 @@ export default function App() {
       }
     }
     if (rejects.length) setRejected(rejects)
-  }, [ingestOne, dropOnTab])
+  }, [ingestFile, dropOnTab])
 
   // Single-file ingest for the launch protocols (#url=, chardata postMessage):
   // open in Profile on success, report on rejection.
@@ -478,6 +529,14 @@ function filenameFromUrl(url) {
     if (last) return decodeURIComponent(last)
   } catch (_) { /* fall through */ }
   return 'profile.icc'
+}
+
+// Pool-row label for a profile lifted out of an image: strip the image
+// extension and tag it as embedded so the source is obvious in the list.
+// (The label is cosmetic — dedup keys on the profile's own identity, not this.)
+function embeddedName(imageName) {
+  const stem = (imageName || 'image').replace(/\.(tiff?|png|jpe?g)$/i, '')
+  return `${stem} (embedded).icc`
 }
 
 function bytesEqual(a, b) {

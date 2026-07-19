@@ -59,7 +59,7 @@ export const I18N = {
     pool_load: 'Load Profiles',
     pool_remove: 'Remove',
     pool_empty_head: 'Drop ICC profiles here',
-    pool_empty_sub: 'or use “Load Profiles” — files stay on your device.',
+    pool_empty_sub: 'or an image (TIFF/PNG/JPEG) to extract its embedded profile — files stay on your device.',
     pool_new_cube: 'New from .cube',
     pool_sort: 'Sort by name',
     pool_sort_abbr: 'A–Z',

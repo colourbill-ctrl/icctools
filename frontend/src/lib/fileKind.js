@@ -27,10 +27,9 @@ function isIcc(bytes) {
     bytes[38] === 0x73 /* s */ && bytes[39] === 0x70 /* p */
 }
 
-// Reserved for the Add-from-image step: TIFF ("II*\0" / "MM\0*"), PNG
-// (\x89PNG\r\n\x1a\n), JPEG (\xFF\xD8\xFF). Returns false today so image files
-// are still rejected with a clear reason — but the branch already exists so
-// wiring extraction in later touches only this function + the loader's IMAGE arm.
+// Add-from-image kinds: TIFF ("II*\0" / "MM\0*"), PNG (\x89PNG\r\n\x1a\n), JPEG
+// (\xFF\xD8\xFF). Classified as IMAGE so the loader routes them to
+// embedded-profile extraction (lib/embeddedProfile.js) instead of rejecting.
 function isImage(bytes) {
   if (bytes.length < 4) return false
   const [b0, b1, b2, b3] = bytes
@@ -50,12 +49,13 @@ export function classifyFile(bytes /*, filename */) {
   return { kind: FileKind.UNKNOWN }
 }
 
-// Kinds the loader currently admits into the pool. Extend to include IMAGE when
-// embedded-profile extraction ships; the loader already branches on kind.
-export const ACCEPTED_KINDS = new Set([FileKind.ICC])
+// Kinds the loader admits into the pool. IMAGE is accepted because the loader's
+// IMAGE arm extracts the embedded profile (or reports "no embedded profile" if
+// there isn't one) — see App.jsx::ingestOne.
+export const ACCEPTED_KINDS = new Set([FileKind.ICC, FileKind.IMAGE])
 
-// Human-readable rejection reason for a kind we don't (yet) accept.
+// Human-readable rejection reason for a kind we can't turn into a pool entry.
 export function rejectReason(kind) {
-  if (kind === FileKind.IMAGE) return 'image file — embedded-profile extraction is not available yet'
+  if (kind === FileKind.IMAGE) return 'image has no embedded ICC profile'
   return 'not an ICC profile'
 }

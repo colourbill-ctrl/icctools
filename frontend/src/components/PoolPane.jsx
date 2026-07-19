@@ -153,8 +153,11 @@ export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, 
         <button className="btn-primary" type="button" onClick={() => inputRef.current?.click()}>
           {t('pool_load') || 'Load Profiles'}
         </button>
-        <input ref={inputRef} type="file" accept=".icc,.icm" multiple
-               className={styles.hidden} onChange={handlePick} />
+        {/* Images are accepted too: the loader extracts their embedded ICC
+            profile (TIFF/PNG/JPEG). Drag-drop bypasses this filter regardless. */}
+        <input ref={inputRef} type="file"
+               accept=".icc,.icm,.tif,.tiff,.png,.jpg,.jpeg,image/tiff,image/png,image/jpeg"
+               multiple className={styles.hidden} onChange={handlePick} />
         {/* Producer: build a DeviceLink from a .cube 3D-LUT (Group B). */}
         {onNewFromCube && (
           <button className={styles.newBtn} type="button" onClick={onNewFromCube}>
@@ -173,7 +176,7 @@ export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, 
           <div className={styles.empty}>
             <div className={styles.emptyIcon}>🎨</div>
             <p className={styles.emptyHead}>{t('pool_empty_head') || 'Drop ICC profiles here'}</p>
-            <p className={styles.emptySub}>{t('pool_empty_sub') || 'or use “Load profiles…” — files stay on your device.'}</p>
+            <p className={styles.emptySub}>{t('pool_empty_sub') || 'or an image (TIFF/PNG/JPEG) to extract its embedded profile — files stay on your device.'}</p>
           </div>
         ) : (
           <ul className={styles.list}>

@@ -296,6 +296,50 @@ date; `OPEN` entries carry the options so input can be dropped in by ID. IDs are
 referenced from the group sections above. Categories: **IA** app-identity/nav ·
 **A/B/C/D-UX** per-group user-experience · **ARCH** build/dependency.*
 
+### DL-UPSTREAM1 — Upstream-contribution posture (project weak directive) · 🎯 STANDING 2026-07-18
+**Weak directive (a project goal, not a hard rule):** one of profiletool's goals is to
+**look for opportunities — as we did with iccviz — to increase iccDEV's functionality by
+naturally generating API-based modules that slot cleanly into the iccDEV corpus**, either
+**inside `IccProfLib`** (and similar foundational-level libraries) **or one layer up** (a
+sibling optional library, the way `IccXML` / `IccJSON` / `IccConnect` sit beside the core).
+
+**Why "weak":** it's an opportunistic lens applied while building profiletool features, not
+a mandate to refactor iccDEV on a schedule. profiletool ships its feature *now* (usually a
+JS or local implementation); the upstream module is a **parallel track** that profiletool
+later migrates onto — the same pattern as [[iccviz-upstream-migration-plan]] (temporary
+in-app impl → author the clean engine for the upstream path → migrate + deprecate local).
+
+**What makes a good candidate** (the shape that keeps recurring):
+- The capability is **generally useful to the ICC ecosystem**, not profiletool-specific.
+- It fills a **real gap or wart** upstream — no reusable API today, or logic duplicated /
+  buried inside CLI tools (e.g. embedded-profile extraction, whose structure-parsing is
+  copy-pasted across `IccJpegDump`/`IccPngDump`/`IccTiffDump` and once shipped bug #1382).
+- It can be shaped **dependency-light** so it compiles into profiletool's WASM without
+  dragging heavy libs — prefer a *locator/producer* that returns data + hands the heavy or
+  platform-specific step (inflate, file I/O, async) back to the caller via injection, over
+  an API that pulls libpng/libtiff/zlib into the core.
+- profiletool's local impl doubles as the **executable spec + A/B oracle** for the C++ API.
+
+**Consequences / guardrails:**
+- Follow the iccDEV change policy for any actual contribution: moderator approval on the API
+  shape *before* writing much; ssh/gpg-signed commits, **no** Claude trailer; prefer an
+  upstream branch over a fork PR; bundle related changes into one noted PR
+  ([[iccdev-change-policy]], [[iccdev-commit-signing-no-claude-trailer]]).
+- Strongest-parity payoff: once profiletool consumes the shared C++ source (compiled into
+  validator-wasm), the in-app representation *is* the reference implementation — no drift.
+- **First declared candidate → PHASE 2 work item:** `icFindEmbeddedIccProfile` — a
+  dependency-free container locator (TIFF tag 34675 / PNG `iCCP` / JPEG `APP2`) returning
+  offset+length+compression, caller owns inflate; iccDEV's `IccJpegDump`/`IccPngDump`/
+  `IccTiffDump` refactor onto it (dedups their copy-pasted structural parsing; the JPEG one
+  once shipped bug #1382). **Phase-1 status (done 2026-07-18):** profiletool ships the
+  **streaming JS** implementation `frontend/src/lib/embeddedProfile.js` — a lazy byte-range
+  reader that extracts the profile touching only header/IFD/markers + the blob (verified:
+  a 50 MB container is resolved reading ~1–3 KB, ~0.005% of the file; never loads the
+  raster). That JS is the **executable spec + A/B oracle** (byte-exact vs libpng/libtiff/
+  libjpeg output) for the Phase-2 C++ locator. **Phase 2:** propose + (on moderator sign-off)
+  land `icFindEmbeddedIccProfile` in iccDEV, then migrate profiletool's WASM onto it while
+  keeping JS inflate for PNG. See § below (Group C) and [[upstream-api-contribution-directive]].
+
 ### DL-PHASE1 — Phase-1 scope & selection UX (base wasm set, no canvas) · ✅ RESOLVED 2026-07-18
 **Q:** Phase 1 covers the existing iccDEV **wasm CLI-tool collection** (`iccdev/wasm/`,
 22 modules) WITHOUT the node graph (DL-CANVAS1 = later phase). Does the data-store
@@ -728,11 +772,17 @@ Per-verb WASM entry-point byte caps; 12-locale i18n + `sync-translations.mjs`; M
 native CLI + a smoketest case.
 
 ### 5. Recommended phase-1 sequencing
-1. **Pool shell** wrapping **existing** verbs only (Inspect/Dump/JSON/XML/PAWG/single-plot)
+1. ✅ **Pool shell** wrapping **existing** verbs only (Inspect/Dump/JSON/XML/PAWG/single-plot)
    — pure UX, **zero new C++**. Ships the workbench.
-2. **Round-Trip** (DL-A1, Profile Statistics method control).
-3. **Add from image** (JS extract — Group C).
-4. **New from .cube** (producer).
+2. ✅ **Round-Trip** (DL-A1, Profile Statistics method control).
+3. ✅ **Add from image** (JS extract — Group C). **DONE 2026-07-18.** `lib/embeddedProfile.js`
+   pulls the embedded ICC from TIFF (IFD tag 34675), PNG (`iCCP`, native
+   `DecompressionStream('deflate')` inflate + 64 MB decompression-bomb cap), and JPEG
+   (`APP2` `ICC_PROFILE` multi-marker reassembly by sequence). Wired through the existing
+   `fileKind.js` → `App.jsx::ingestOne` choke point (IMAGE kind now accepted; extract →
+   `addIccEntry` or reject "no embedded profile"). No C++ / no WASM rebuild. Round-tripped
+   byte-exact against libjpeg/libpng/libtiff (PIL) output for all three formats.
+4. ✅ **New from .cube** (producer).
 5. **Make V4 Display** (`V5→V4`).
 6. **Gamut compare** (**P1-late · beyond parity**): iccviz boundary mesh/slice + chardata 3D/2D
    renderers + **lcms2→`CIccCmm`**. Last in phase 1 — heaviest, and the only item needing the CMM swap.
