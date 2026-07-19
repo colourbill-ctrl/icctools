@@ -4,7 +4,7 @@
 // It is the load target (multi-file <input> + OS drop) and the drag SOURCE: rows
 // drag onto the Profile/Compare/Link tabs' accumulators. Nothing here persists —
 // the pool is session-only; the user's filesystem is the durable store (DL-STORE1).
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '../i18n.jsx'
 import { formatSize } from '../lib/pool.js'
 import styles from './PoolPane.module.css'
@@ -14,20 +14,46 @@ export const POOL_DND_MIME = 'application/x-profiletool-pool-ids'
 
 const WIDTH_KEY = 'profiletool.poolWidth'
 const COLLAPSED_KEY = 'profiletool.poolCollapsed'
+const SORT_KEY = 'profiletool.poolSort'
 const MIN_W = 220, MAX_W = 620, DEFAULT_W = 320
+
+// Name-sort modes cycled by the header button: 'none' keeps load order; 'asc'
+// and 'desc' sort by filename (case-insensitive, natural numeric order).
+const SORT_MODES = ['none', 'asc', 'desc']
+const SORT_GLYPH = { none: '↕', asc: '↑', desc: '↓' }
 
 export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, onRemove, onNewFromCube }) {
   const t = useT()
   const inputRef = useRef(null)
   const [dragOver, setDragOver] = useState(false)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSED_KEY) === '1')
+  const [sort, setSort] = useState(() => {
+    const s = localStorage.getItem(SORT_KEY)
+    return SORT_MODES.includes(s) ? s : 'none'
+  })
   const [width, setWidth] = useState(() => {
     const w = parseInt(localStorage.getItem(WIDTH_KEY) || '', 10)
     return Number.isFinite(w) ? Math.min(MAX_W, Math.max(MIN_W, w)) : DEFAULT_W
   })
 
   useEffect(() => { localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0') }, [collapsed])
+  useEffect(() => { localStorage.setItem(SORT_KEY, sort) }, [sort])
   useEffect(() => { localStorage.setItem(WIDTH_KEY, String(width)) }, [width])
+
+  const cycleSort = useCallback(() => {
+    setSort((s) => SORT_MODES[(SORT_MODES.indexOf(s) + 1) % SORT_MODES.length])
+  }, [])
+
+  // The displayed order. 'none' preserves the pool's load order; asc/desc sort by
+  // filename with a locale-/numeric-aware compare (so "img2" < "img10"). We sort a
+  // copy so the source `entries` order is never mutated. Drag payloads carry ids,
+  // not positions, so sorting is purely a view concern.
+  const shownEntries = useMemo(() => {
+    if (sort === 'none') return entries
+    const dir = sort === 'asc' ? 1 : -1
+    return [...entries].sort((a, b) =>
+      dir * a.filename.localeCompare(b.filename, undefined, { numeric: true, sensitivity: 'base' }))
+  }, [entries, sort])
 
   // Drag-to-resize the right edge.
   const dragState = useRef(null)
@@ -64,8 +90,17 @@ export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, 
 
   // A row drag carries either the whole current selection (if the row is part of
   // a multi-selection) or just itself. Tabs read POOL_DND_MIME on drop.
+  //
+  // The grabbed row is always placed LAST in the payload. This matters because a
+  // single-slot target (the Profile tab) takes ids[last] as "the one" — so the
+  // row the user physically dragged is the one that lands, not whichever happens
+  // to be last in the pool. Without this, loading N profiles auto-selects all of
+  // them, and dragging any single row would drop the last-in-list onto Profile.
+  // Compare/Link accumulate the full set regardless of order, so this is safe.
   const onRowDragStart = useCallback((id, e) => {
-    const ids = selectedIds.has(id) && selectedIds.size > 1 ? [...selectedIds] : [id]
+    const ids = selectedIds.has(id) && selectedIds.size > 1
+      ? [...[...selectedIds].filter((x) => x !== id), id]   // grabbed row last
+      : [id]
     e.dataTransfer.setData(POOL_DND_MIME, JSON.stringify(ids))
     e.dataTransfer.effectAllowed = 'copy'
   }, [selectedIds])
@@ -97,8 +132,21 @@ export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, 
           {t('pool_title') || 'Profiles'}
           {entries.length > 0 && <span className={styles.count}>{entries.length}</span>}
         </span>
-        <button className={styles.collapseBtn} onClick={() => setCollapsed(true)}
-                title={t('pool_collapse') || 'Collapse'} aria-label={t('pool_collapse') || 'Collapse'}>‹</button>
+        <div className={styles.headActions}>
+          {entries.length > 1 && (
+            <button
+              className={`${styles.sortBtn} ${sort !== 'none' ? styles.sortActive : ''}`}
+              onClick={cycleSort}
+              title={`${t('pool_sort') || 'Sort by name'} (${sort})`}
+              aria-label={`${t('pool_sort') || 'Sort by name'} — ${sort}`}
+            >
+              <span className={styles.sortLabel}>{t('pool_sort_abbr') || 'A–Z'}</span>
+              <span aria-hidden="true">{SORT_GLYPH[sort]}</span>
+            </button>
+          )}
+          <button className={styles.collapseBtn} onClick={() => setCollapsed(true)}
+                  title={t('pool_collapse') || 'Collapse'} aria-label={t('pool_collapse') || 'Collapse'}>‹</button>
+        </div>
       </div>
 
       <div className={styles.loadRow}>
@@ -129,7 +177,7 @@ export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, 
           </div>
         ) : (
           <ul className={styles.list}>
-            {entries.map((e) => (
+            {shownEntries.map((e) => (
               <li
                 key={e.id}
                 className={`${styles.row} ${selectedIds.has(e.id) ? styles.rowSel : ''}`}

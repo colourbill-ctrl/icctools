@@ -32,6 +32,17 @@
 }
 .collapseBtn:hover, .remove:hover { background: var(--surface-alt); color: var(--text); }
 
+.headActions { display: flex; align-items: center; gap: 2px; }
+.sortBtn {
+  display: inline-flex; align-items: center; gap: 3px;
+  border: 1px solid var(--border); background: transparent; cursor: pointer;
+  color: var(--text-muted); font-size: 11px; font-weight: 700; line-height: 1;
+  padding: 3px 6px; border-radius: 4px;
+}
+.sortBtn:hover { background: var(--surface-alt); color: var(--text); border-color: var(--accent); }
+.sortActive { color: var(--accent); border-color: var(--accent); }
+.sortLabel { letter-spacing: 0.02em; }
+
 .loadRow { padding: 10px 12px; border-bottom: 1px solid var(--border-soft); }
 .loadRow .btn-primary, .loadRow > button { width: 100%; }
 .hidden { display: none; }

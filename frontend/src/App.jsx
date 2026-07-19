@@ -169,7 +169,10 @@ export default function App() {
     }
     setLoading(false)
     if (ids.length) {
-      setSelectedIds(new Set(ids))
+      // Loading does NOT select anything in the profiles pane — the pool is just
+      // populated; the user picks/drags rows themselves. (A canvas drop still
+      // accumulates onto its target tab, and an empty pool still auto-opens the
+      // first profile so the Profile tab isn't blank on a fresh single load.)
       if (tab) dropOnTab(tab, ids)
       else if (wasEmpty || accumRef.current.Profile == null) {
         setAccum((a) => ({ ...a, Profile: ids[0] })); setActiveTab('Profile')
@@ -185,7 +188,7 @@ export default function App() {
     const r = await ingestOne(filename, bytes)
     setLoading(false)
     if (r.id) {
-      setSelectedIds(new Set([r.id]))
+      // Open it in the Profile tab, but don't select the pane row (see loadFiles).
       setAccum((a) => ({ ...a, Profile: r.id })); setActiveTab('Profile')
     } else {
       setRejected([r.reject])
