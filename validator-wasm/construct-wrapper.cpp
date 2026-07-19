@@ -34,6 +34,7 @@
 #include "IccTagLut.h"
 #include "IccMpeBasic.h"
 #include "IccMpeSpectral.h"
+#include "IccColorimetry.h"   // CIccColorimetricCalculator — canonical spectral→XYZ (data methods)
 #include "IccUtil.h"
 
 #include <emscripten/bind.h>
@@ -406,17 +407,40 @@ int chooseGrid(int nSrc) {
   return g < 2 ? 2 : g;
 }
 
-emscripten::val buildLinkImpl(emscripten::val chainVal, int intentArg, int gridArg) {
+// Clamp a JS intent int to a valid icRenderingIntent (default relative colorimetric).
+static icRenderingIntent clampIntent(int v) {
+  return (v >= (int)icPerceptual && v <= (int)icAbsoluteColorimetric)
+    ? (icRenderingIntent)v : icRelativeColorimetric;
+}
+// Per-profile rendering intents. Accepts a JS array (one int per profile) OR a scalar
+// applied to all; anything missing/out-of-range falls back to relative. The UI now
+// picks an intent PER TRANSFORM (each profile contributes one xform), so the CMM must
+// receive an array, not one intent for the whole chain.
+static std::vector<icRenderingIntent> parseIntents(emscripten::val v, unsigned n) {
+  std::vector<icRenderingIntent> out(n, icRelativeColorimetric);
+  if (v.isArray()) {
+    unsigned len = v["length"].as<unsigned>();
+    for (unsigned i = 0; i < n; ++i)
+      out[i] = clampIntent(i < len ? v[i].as<int>() : (int)icRelativeColorimetric);
+  } else if (!v.isUndefined() && !v.isNull()) {
+    icRenderingIntent one = clampIntent(v.as<int>());
+    for (auto& e : out) e = one;
+  }
+  return out;
+}
+
+emscripten::val buildLinkImpl(emscripten::val chainVal, emscripten::val intentsVal,
+                              bool firstInput, int gridArg) {
   const unsigned n = chainVal["length"].as<unsigned>();
   if (n == 0) throw std::runtime_error("Add at least one profile to the chain.");
 
-  const icRenderingIntent intent =
-    (intentArg >= (int)icPerceptual && intentArg <= (int)icAbsoluteColorimetric)
-      ? (icRenderingIntent)intentArg : icRelativeColorimetric;
+  const std::vector<icRenderingIntent> intents = parseIntents(intentsVal, n);
 
-  // Let the profiles fix the start/end spaces; bFirstInput=true = the first profile is
-  // used device→PCS (the chain's source), matching lib/pipeline.js's source-space rule.
-  CIccCmm theCmm(icSigUnknownData, icSigUnknownData, /*bFirstInput=*/true);
+  // Let the profiles fix the start/end spaces. bFirstInput = the HEAD transform's
+  // direction: true = the first profile is used device→PCS (the chain's source);
+  // false = PCS→device (head reversed). The CMM alternates from there, so this single
+  // flag ripples the whole chain's directionality — matching the UI's head toggle.
+  CIccCmm theCmm(icSigUnknownData, icSigUnknownData, firstInput);
 
   // profileSequenceDescTag is a REQUIRED tag for a DeviceLink profile (a link without
   // it fails validation: "Critical tag(s) missing"). Build one entry per stage from
@@ -467,7 +491,7 @@ emscripten::val buildLinkImpl(emscripten::val chainVal, int intentArg, int gridA
       t->SetText(modelText.c_str());
     pSeq->m_Descriptions->push_back(psd);
 
-    icStatusCMM stat = theCmm.AddXform(pXform, intent, icInterpTetrahedral,
+    icStatusCMM stat = theCmm.AddXform(pXform, intents[i], icInterpTetrahedral,
                                        /*pPcc=*/NULL, icXformLutColor,
                                        /*bUseD2BxB2DxTags=*/true, /*pHint=*/NULL);
     if (stat)
@@ -557,9 +581,9 @@ emscripten::val buildLinkImpl(emscripten::val chainVal, int intentArg, int gridA
 }
 
 // Exception-safe boundary (same shape as fromCube / v5DspObsToV4).
-emscripten::val buildLink(emscripten::val chainVal, int intent, int grid) {
+emscripten::val buildLink(emscripten::val chainVal, emscripten::val intents, bool firstInput, int grid) {
   try {
-    return buildLinkImpl(chainVal, intent, grid);
+    return buildLinkImpl(chainVal, intents, firstInput, grid);
   } catch (const std::runtime_error&) {
     throw;
   } catch (const std::exception& e) {
@@ -588,16 +612,14 @@ std::string sigToStr(icColorSpaceSignature sig) {
 // destSamples? }. failedStage is the 1-based stage that broke, or 0 for a Begin()
 // failure. This is the definitive connectivity answer — the header-signature guess
 // in lib/pipeline.js cannot know true CMM space-linking.
-emscripten::val chainInfoImpl(emscripten::val chainVal, int intentArg) {
+emscripten::val chainInfoImpl(emscripten::val chainVal, emscripten::val intentsVal, bool firstInput) {
   emscripten::val r = emscripten::val::object();
   const unsigned n = chainVal["length"].as<unsigned>();
   if (n == 0) { r.set("ok", false); r.set("empty", true); return r; }
 
-  const icRenderingIntent intent =
-    (intentArg >= (int)icPerceptual && intentArg <= (int)icAbsoluteColorimetric)
-      ? (icRenderingIntent)intentArg : icRelativeColorimetric;
+  const std::vector<icRenderingIntent> intents = parseIntents(intentsVal, n);
 
-  CIccCmm theCmm(icSigUnknownData, icSigUnknownData, /*bFirstInput=*/true);
+  CIccCmm theCmm(icSigUnknownData, icSigUnknownData, firstInput);
   for (unsigned i = 0; i < n; ++i) {
     std::vector<std::uint8_t> buf =
       emscripten::convertJSArrayToNumberVector<std::uint8_t>(chainVal[i]);
@@ -612,7 +634,7 @@ emscripten::val chainInfoImpl(emscripten::val chainVal, int intentArg) {
       r.set("error", std::string("Profile ") + std::to_string(i + 1) + " is not a readable ICC profile.");
       return r;
     }
-    icStatusCMM stat = theCmm.AddXform(p, intent, icInterpTetrahedral,
+    icStatusCMM stat = theCmm.AddXform(p, intents[i], icInterpTetrahedral,
                                        NULL, icXformLutColor, true, NULL);
     if (stat) {
       r.set("ok", false); r.set("failedStage", (int)(i + 1));
@@ -636,9 +658,9 @@ emscripten::val chainInfoImpl(emscripten::val chainVal, int intentArg) {
   return r;
 }
 
-emscripten::val chainInfo(emscripten::val chainVal, int intent) {
+emscripten::val chainInfo(emscripten::val chainVal, emscripten::val intents, bool firstInput) {
   try {
-    return chainInfoImpl(chainVal, intent);
+    return chainInfoImpl(chainVal, intents, firstInput);
   } catch (...) {
     emscripten::val r = emscripten::val::object();
     r.set("ok", false);
@@ -655,7 +677,7 @@ emscripten::val chainInfo(emscripten::val chainVal, int intent) {
 // destination pixels as a Float32Array (nDst per pixel, [0,1]) for the browser to
 // encode. Bytes-in/bytes-out only — the format layer stays in JS (lib/imageIO.js).
 emscripten::val applyImageImpl(emscripten::val chainVal, std::string srcBytes,
-                               int nSrcCh, int intentArg) {
+                               int nSrcCh, emscripten::val intentsVal, bool firstInput) {
   const unsigned n = chainVal["length"].as<unsigned>();
   if (n == 0) throw std::runtime_error("Add at least one profile to the chain.");
   if (nSrcCh < 1) throw std::runtime_error("The image has no colour channels.");
@@ -666,11 +688,9 @@ emscripten::val applyImageImpl(emscripten::val chainVal, std::string srcBytes,
   if (nPixels > 64000000ULL)
     throw std::runtime_error("The image is too large to process (over 64 megapixels).");
 
-  const icRenderingIntent intent =
-    (intentArg >= (int)icPerceptual && intentArg <= (int)icAbsoluteColorimetric)
-      ? (icRenderingIntent)intentArg : icRelativeColorimetric;
+  const std::vector<icRenderingIntent> intents = parseIntents(intentsVal, n);
 
-  CIccCmm theCmm(icSigUnknownData, icSigUnknownData, /*bFirstInput=*/true);
+  CIccCmm theCmm(icSigUnknownData, icSigUnknownData, firstInput);
   for (unsigned i = 0; i < n; ++i) {
     std::vector<std::uint8_t> buf =
       emscripten::convertJSArrayToNumberVector<std::uint8_t>(chainVal[i]);
@@ -678,7 +698,7 @@ emscripten::val applyImageImpl(emscripten::val chainVal, std::string srcBytes,
       throw std::runtime_error("A chained profile is empty or too large.");
     CIccProfile* p = ReadIccProfile(buf.data(), (icUInt32Number)buf.size());
     if (!p) throw std::runtime_error("A chained profile could not be read.");
-    icStatusCMM stat = theCmm.AddXform(p, intent, icInterpTetrahedral,
+    icStatusCMM stat = theCmm.AddXform(p, intents[i], icInterpTetrahedral,
                                        NULL, icXformLutColor, true, NULL);
     if (stat)
       throw std::runtime_error("Cannot link profile " + std::to_string(i + 1) + ": "
@@ -710,15 +730,322 @@ emscripten::val applyImageImpl(emscripten::val chainVal, std::string srcBytes,
   return r;
 }
 
-emscripten::val applyImage(emscripten::val chainVal, std::string srcBytes, int nSrcCh, int intent) {
+emscripten::val applyImage(emscripten::val chainVal, std::string srcBytes, int nSrcCh,
+                           emscripten::val intents, bool firstInput) {
   try {
-    return applyImageImpl(chainVal, srcBytes, nSrcCh, intent);
+    return applyImageImpl(chainVal, srcBytes, nSrcCh, intents, firstInput);
   } catch (const std::runtime_error&) {
     throw;
   } catch (const std::exception& e) {
     throw std::runtime_error(std::string("Image processing failed: ") + e.what());
   } catch (...) {
     throw std::runtime_error("Image processing failed with an unknown error");
+  }
+}
+
+// ── CHUNKED image apply — bounded-memory streaming for LARGE rasters ───────────
+// applyImage above copies the WHOLE float image into WASM plus a full output vector,
+// which std::bad_allocs on a big CMYK TIFF (a 24 MP 4-channel float image is ~384 MB
+// each way — past the 32-bit heap). This session API builds the CMM ONCE and applies
+// the raster in caller-sized chunks, so WASM only ever holds one chunk at a time. The
+// UI streams ~1 MP chunks (see lib/pipelineEngine.js applyToImage). Single image at a
+// time (profiletool's design), so one static session slot is enough.
+static std::unique_ptr<CIccCmm> g_imgCmm;
+static int g_imgNSrc = 0, g_imgNDst = 0;
+
+emscripten::val imageApplyBeginImpl(emscripten::val chainVal, int nSrcCh,
+                                    emscripten::val intentsVal, bool firstInput) {
+  g_imgCmm.reset(); g_imgNSrc = g_imgNDst = 0;
+  const unsigned n = chainVal["length"].as<unsigned>();
+  if (n == 0) throw std::runtime_error("Add at least one profile to the chain.");
+  if (nSrcCh < 1) throw std::runtime_error("The image has no colour channels.");
+
+  const std::vector<icRenderingIntent> intents = parseIntents(intentsVal, n);
+  std::unique_ptr<CIccCmm> cmm(new CIccCmm(icSigUnknownData, icSigUnknownData, firstInput));
+  for (unsigned i = 0; i < n; ++i) {
+    std::vector<std::uint8_t> buf =
+      emscripten::convertJSArrayToNumberVector<std::uint8_t>(chainVal[i]);
+    if (buf.empty() || buf.size() > kMaxIccBytes)
+      throw std::runtime_error("A chained profile is empty or too large.");
+    CIccProfile* p = ReadIccProfile(buf.data(), (icUInt32Number)buf.size());
+    if (!p) throw std::runtime_error("A chained profile could not be read.");
+    icStatusCMM stat = cmm->AddXform(p, intents[i], icInterpTetrahedral,
+                                     NULL, icXformLutColor, true, NULL);
+    if (stat)
+      throw std::runtime_error("Cannot link profile " + std::to_string(i + 1) + ": "
+                               + CIccCmm::GetStatusText(stat));
+  }
+  icStatusCMM stat = cmm->Begin();
+  if (stat)
+    throw std::runtime_error(std::string("The chain does not connect: ")
+                             + CIccCmm::GetStatusText(stat));
+
+  const int nSrc = (int)icGetSpaceSamples(cmm->GetSourceSpace());
+  const int nDst = (int)icGetSpaceSamples(cmm->GetDestSpace());
+  if (nSrc != nSrcCh)
+    throw std::runtime_error("This image has " + std::to_string(nSrcCh)
+      + " channel(s) but the chain expects a " + std::to_string(nSrc) + "-channel source image.");
+  if (nDst < 1) throw std::runtime_error("The chain has an unusable output space.");
+
+  g_imgCmm = std::move(cmm); g_imgNSrc = nSrc; g_imgNDst = nDst;
+  emscripten::val r = emscripten::val::object();
+  r.set("ok", true); r.set("nSrc", nSrc); r.set("nDst", nDst);
+  return r;
+}
+
+emscripten::val imageApplyBegin(emscripten::val chainVal, int nSrcCh,
+                                emscripten::val intents, bool firstInput) {
+  try {
+    return imageApplyBeginImpl(chainVal, nSrcCh, intents, firstInput);
+  } catch (const std::runtime_error&) {
+    throw;
+  } catch (const std::exception& e) {
+    throw std::runtime_error(std::string("Image processing failed: ") + e.what());
+  } catch (...) {
+    throw std::runtime_error("Image processing failed with an unknown error");
+  }
+}
+
+// Apply one chunk of pixels (raw bytes of a Float32Array, nPixels × nSrc in [0,1])
+// through the active session → { pixels: Float32Array (nPixels × nDst), nDst }.
+emscripten::val imageApplyChunkImpl(std::string srcBytes) {
+  if (!g_imgCmm) throw std::runtime_error("No image session is active.");
+  const int nSrc = g_imgNSrc, nDst = g_imgNDst;
+  if (srcBytes.size() % (std::size_t)(nSrc * 4) != 0)
+    throw std::runtime_error("Malformed pixel chunk.");
+  const std::size_t nPix = srcBytes.size() / (std::size_t)(nSrc * 4);
+  if (nPix > 8000000ULL)   // ~128 MB per side at 4ch — keep chunks well under this
+    throw std::runtime_error("Image chunk too large.");
+  const float* src = reinterpret_cast<const float*>(srcBytes.data());
+  std::vector<float> dst(nPix * (std::size_t)nDst);
+  for (std::size_t px = 0; px < nPix; ++px)
+    g_imgCmm->Apply(&dst[px * nDst], &src[px * nSrc]);
+  emscripten::val r = emscripten::val::object();
+  r.set("pixels", makeFloat32Array(dst.data(), dst.size()));
+  r.set("nDst", nDst);
+  return r;
+}
+
+emscripten::val imageApplyChunk(std::string srcBytes) {
+  try {
+    return imageApplyChunkImpl(srcBytes);
+  } catch (const std::runtime_error&) {
+    throw;
+  } catch (const std::exception& e) {
+    throw std::runtime_error(std::string("Image processing failed: ") + e.what());
+  } catch (...) {
+    throw std::runtime_error("Image processing failed with an unknown error");
+  }
+}
+
+// Release the active session (frees the CMM). Safe to call with no session.
+void imageApplyEnd() { g_imgCmm.reset(); g_imgNSrc = g_imgNDst = 0; }
+
+// ── applyValues — run a colour LIST through the chain (Transform Data) ─────────
+// The point-data analogue of applyImage (this is profiletool's iccApplyNamedCmm
+// equivalent). Where applyImage assumes pixels are already normalized to the CMM's
+// internal [0,1] device encoding, a dropped dataset carries colours in a declared
+// icFloatColorEncoding (percent tints, 8-bit codes, PCS Lab in L*/a*/b* value
+// units, …) and may feed a PCS source space. So this path routes every sample
+// through CIccCmm::ToInternalEncoding / FromInternalEncoding — exactly as
+// iccApplyNamedCmm does — so Lab/XYZ and percent/8-bit inputs are interpreted
+// correctly and the output is returned in a caller-chosen encoding.
+//
+// srcBytes: raw bytes of a Float32Array, nSamples × nSrcCh, row-major, values in
+//   `srcEncodeArg` (icFloatColorEncoding int). nSrcCh must equal the chain source
+//   samples. Returns { ok, destSamples, srcSpace, dstSpace, values:Float32Array
+//   (nSamples × destSamples, in `dstEncodeArg`) }.
+static icFloatColorEncoding clampEncoding(int e) {
+  return (e >= (int)icEncodeValue && e <= (int)icEncode16BitV2)
+           ? (icFloatColorEncoding)e : icEncodeValue;
+}
+
+emscripten::val applyValuesImpl(emscripten::val chainVal, std::string srcBytes, int nSrcCh,
+                                emscripten::val intentsVal, bool firstInput,
+                                int srcEncodeArg, int dstEncodeArg) {
+  const unsigned n = chainVal["length"].as<unsigned>();
+  if (n == 0) throw std::runtime_error("Add at least one profile to the chain.");
+  if (nSrcCh < 1) throw std::runtime_error("The data has no colour channels.");
+  if (srcBytes.size() % (std::size_t)(nSrcCh * 4) != 0)
+    throw std::runtime_error("Malformed value buffer.");
+  const std::size_t nSamples = srcBytes.size() / (std::size_t)(nSrcCh * 4);
+  if (nSamples == 0) throw std::runtime_error("The dataset is empty.");
+  if (nSamples > 5000000ULL)
+    throw std::runtime_error("The dataset is too large to process (over 5 million patches).");
+
+  const std::vector<icRenderingIntent> intents = parseIntents(intentsVal, n);
+  const icFloatColorEncoding srcEncode = clampEncoding(srcEncodeArg);
+  const icFloatColorEncoding dstEncode = clampEncoding(dstEncodeArg);
+
+  CIccCmm theCmm(icSigUnknownData, icSigUnknownData, firstInput);
+  for (unsigned i = 0; i < n; ++i) {
+    std::vector<std::uint8_t> buf =
+      emscripten::convertJSArrayToNumberVector<std::uint8_t>(chainVal[i]);
+    if (buf.empty() || buf.size() > kMaxIccBytes)
+      throw std::runtime_error("A chained profile is empty or too large.");
+    CIccProfile* p = ReadIccProfile(buf.data(), (icUInt32Number)buf.size());
+    if (!p) throw std::runtime_error("A chained profile could not be read.");
+    icStatusCMM stat = theCmm.AddXform(p, intents[i], icInterpTetrahedral,
+                                       NULL, icXformLutColor, true, NULL);
+    if (stat)
+      throw std::runtime_error("Cannot link profile " + std::to_string(i + 1) + ": "
+                               + CIccCmm::GetStatusText(stat));
+  }
+  icStatusCMM stat = theCmm.Begin();
+  if (stat)
+    throw std::runtime_error(std::string("The chain does not connect: ")
+                             + CIccCmm::GetStatusText(stat));
+
+  const icColorSpaceSignature srcSpace = theCmm.GetSourceSpace();
+  const icColorSpaceSignature dstSpace = theCmm.GetDestSpace();
+  const int nSrc = (int)icGetSpaceSamples(srcSpace);
+  const int nDst = (int)icGetSpaceSamples(dstSpace);
+  if (nSrc != nSrcCh)
+    throw std::runtime_error("This data has " + std::to_string(nSrcCh)
+      + " channel(s) but the chain expects a " + std::to_string(nSrc) + "-channel source.");
+  if (nDst < 1) throw std::runtime_error("The chain has an unusable output space.");
+
+  const float* src = reinterpret_cast<const float*>(srcBytes.data());
+  std::vector<float> dst((std::size_t)nSamples * nDst);
+  std::vector<icFloatNumber> internalSrc(nSrc), internalDst(nDst), extDst(nDst);
+  for (std::size_t s = 0; s < nSamples; ++s) {
+    // external (file encoding) → internal CMM encoding for the source space.
+    if (CIccCmm::ToInternalEncoding(srcSpace, srcEncode, internalSrc.data(),
+                                    &src[s * nSrc]))
+      throw std::runtime_error("Could not encode a source colour for the chain's input space.");
+    theCmm.Apply(internalDst.data(), internalSrc.data());
+    // internal → external (requested output encoding) for the dest space.
+    if (CIccCmm::FromInternalEncoding(dstSpace, dstEncode, extDst.data(),
+                                      internalDst.data()))
+      throw std::runtime_error("Could not encode an output colour from the chain.");
+    for (int c = 0; c < nDst; ++c) dst[s * nDst + c] = (float)extDst[c];
+  }
+
+  emscripten::val r = emscripten::val::object();
+  r.set("ok", true);
+  r.set("destSamples", nDst);
+  r.set("srcSpace", sigToStr(srcSpace));
+  r.set("dstSpace", sigToStr(dstSpace));
+  r.set("values", makeFloat32Array(dst.data(), dst.size()));
+  return r;
+}
+
+emscripten::val applyValues(emscripten::val chainVal, std::string srcBytes, int nSrcCh,
+                            emscripten::val intents, bool firstInput, int srcEncode, int dstEncode) {
+  try {
+    return applyValuesImpl(chainVal, srcBytes, nSrcCh, intents, firstInput, srcEncode, dstEncode);
+  } catch (const std::runtime_error&) {
+    throw;
+  } catch (const std::exception& e) {
+    throw std::runtime_error(std::string("Data transform failed: ") + e.what());
+  } catch (...) {
+    throw std::runtime_error("Data transform failed with an unknown error");
+  }
+}
+
+// ── spectralToXYZ — CANONICAL spectral reflectance → CIE XYZ (data methods) ────
+// The "Prefer: Spectral" path integrates measured reflectance under a chosen
+// observer + illuminant using iccDEV's purpose-built CIccColorimetricCalculator
+// (IccColorimetry.h) — NOT hand-rolled weighting tables. This is why the data
+// methods route spectra through WASM rather than doing the maths in JS.
+//
+// reflBytes: raw bytes of a Float32Array, nSamples × nBands reflectance FACTORS in
+//   [0,1] (the JS side scales percent→unit before calling). The bands are equally
+//   spaced from startNm to endNm (inclusive), nBands samples. Returns { ok,
+//   values:Float32Array (nSamples × 3 XYZ, relative colorimetry Y=1 for a perfect
+//   diffuser), white:Float32Array[3] adopted white }.
+//
+// observerId: 1 = CIE 1931 2°, 2 = CIE 1964 10° (icStandardObserver).
+// illuminantId: icIlluminant enum — only D50(1)/D65(2)/D93(3)/A(6) have built-in
+//   SPDs. mCond: 0=M0 (use chosen illuminant), 1=M1 (force D50), 2=M2 (UV-cut:
+//   zero the illuminant ≤400nm), 3=M3 (polarized — no integration difference, so
+//   same as M0; the polarization is a measurement-geometry effect already in the
+//   reflectance).
+emscripten::val spectralToXYZImpl(std::string reflBytes, int nSamples, int nBands,
+                                  double startNm, double endNm,
+                                  int observerId, int illuminantId, int mCond) {
+  if (nBands < 2) throw std::runtime_error("Need at least two spectral bands.");
+  if (nSamples < 1) throw std::runtime_error("The dataset has no spectral rows.");
+  if (reflBytes.size() != (std::size_t)nSamples * nBands * 4)
+    throw std::runtime_error("Malformed spectral buffer.");
+  if ((std::size_t)nSamples * nBands > 60000000ULL)
+    throw std::runtime_error("The spectral dataset is too large to process.");
+
+  const icStandardObserver obs =
+    (observerId == 2) ? icStdObs1964TenDegrees : icStdObs1931TwoDegrees;
+
+  CIccColorimetricCalculator calc;
+  if (!calc.SetStandardObserver(obs))
+    throw std::runtime_error("The chosen observer has no built-in colour-matching data.");
+
+  // M1 forces the D50 colorimetric illuminant, overriding the picker.
+  const int effIll = (mCond == 1) ? (int)icIlluminantD50 : illuminantId;
+  if (mCond == 2) {
+    // M2 UV-cut: take the illuminant SPD and zero its ≤400nm samples.
+    icSpectralRange ir;
+    const icFloatNumber* base = icGetStandardIlluminant((icIlluminant)effIll, ir);
+    if (!base) throw std::runtime_error("The chosen illuminant has no built-in SPD for the M2 condition.");
+    std::vector<icFloatNumber> spd(base, base + ir.steps);
+    const double s = icF16toF(ir.start), e = icF16toF(ir.end);
+    const double stepNm = ir.steps > 1 ? (e - s) / (ir.steps - 1) : 0.0;
+    for (int i = 0; i < (int)ir.steps; ++i)
+      if (s + i * stepNm <= 400.0) spd[i] = 0;
+    if (!calc.SetIlluminant(ir, spd.data()))
+      throw std::runtime_error("Could not set the M2 (UV-cut) illuminant.");
+  } else {
+    if (!calc.SetStandardIlluminant((icIlluminant)effIll))
+      throw std::runtime_error("The chosen illuminant has no built-in SPD.");
+  }
+
+  icSpectralRange measR;
+  measR.start = icFtoF16((icFloat32Number)startNm);
+  measR.end = icFtoF16((icFloat32Number)endNm);
+  measR.steps = (icUInt16Number)nBands;
+  // Reduction method matches the vetted reference (~/code/spectral): DirectSum with
+  // a Sprague (CIE 167:2005) reconstruction of the observer/illuminant onto the
+  // measurement grid, holding the end bands. Its FOGRA51 cross-check puts this at
+  // mean ΔE ≈ 0.01 vs the published reference — the triangular Weighting method is
+  // notably worse (≈0.14), so it is deliberately NOT used here.
+  if (!calc.Prepare(measR, icXYZCalcDirectSum, icSpectralInterpSprague, icSpectralExtendHold))
+    throw std::runtime_error("Could not prepare the colorimetry operator for this spectral range.");
+
+  // Adopted white = perfect diffuser → its XYZ (Y≈1), for a downstream Lab white.
+  std::vector<icFloatNumber> diffuser((std::size_t)nBands, (icFloatNumber)1.0);
+  icFloatNumber white[3] = {0, 0, 0};
+  calc.ReflectanceToXYZ(diffuser.data(), white);
+
+  const float* refl = reinterpret_cast<const float*>(reflBytes.data());
+  std::vector<float> out((std::size_t)nSamples * 3);
+  std::vector<icFloatNumber> one((std::size_t)nBands);
+  icFloatNumber xyz[3];
+  for (int s = 0; s < nSamples; ++s) {
+    for (int b = 0; b < nBands; ++b) one[b] = (icFloatNumber)refl[(std::size_t)s * nBands + b];
+    calc.ReflectanceToXYZ(one.data(), xyz);
+    out[(std::size_t)s * 3] = (float)xyz[0];
+    out[(std::size_t)s * 3 + 1] = (float)xyz[1];
+    out[(std::size_t)s * 3 + 2] = (float)xyz[2];
+  }
+
+  emscripten::val r = emscripten::val::object();
+  r.set("ok", true);
+  r.set("values", makeFloat32Array(out.data(), out.size()));
+  float w[3] = {(float)white[0], (float)white[1], (float)white[2]};
+  r.set("white", makeFloat32Array(w, 3));
+  return r;
+}
+
+emscripten::val spectralToXYZ(std::string reflBytes, int nSamples, int nBands,
+                              double startNm, double endNm,
+                              int observerId, int illuminantId, int mCond) {
+  try {
+    return spectralToXYZImpl(reflBytes, nSamples, nBands, startNm, endNm,
+                             observerId, illuminantId, mCond);
+  } catch (const std::runtime_error&) {
+    throw;
+  } catch (const std::exception& e) {
+    throw std::runtime_error(std::string("Spectral conversion failed: ") + e.what());
+  } catch (...) {
+    throw std::runtime_error("Spectral conversion failed with an unknown error");
   }
 }
 
@@ -730,4 +1057,9 @@ EMSCRIPTEN_BINDINGS(iccconstruct) {
   emscripten::function("buildLink", &buildLink);
   emscripten::function("chainInfo", &chainInfo);
   emscripten::function("applyImage", &applyImage);
+  emscripten::function("imageApplyBegin", &imageApplyBegin);
+  emscripten::function("imageApplyChunk", &imageApplyChunk);
+  emscripten::function("imageApplyEnd", &imageApplyEnd);
+  emscripten::function("applyValues", &applyValues);
+  emscripten::function("spectralToXYZ", &spectralToXYZ);
 }

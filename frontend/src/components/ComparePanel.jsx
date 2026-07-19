@@ -55,6 +55,7 @@ export default function ComparePanel({ ids, getEntry, t }) {
   const [rollEnabled, setRollEnabled] = useState(false)
   const [rollSens, setRollSens] = useState(0.4)
   const [dragSens, setDragSens] = useState(1.0)
+  const [axisNumbers, setAxisNumbers] = useState(false)   // numeric axis labels (default off)
   // Slice controls.
   const [sliceIdx, setSliceIdx] = useState(0)
   const [sliceVal, setSliceVal] = useState(50)
@@ -146,6 +147,7 @@ export default function ComparePanel({ ids, getEntry, t }) {
               <div className={styles.sliceCtl}>
                 <label className={styles.chk}><input type="checkbox" checked={shell} onChange={(e) => setShell(e.target.checked)} /> <span>{t('gamut_shell') || 'Shell'}</span></label>
                 <label className={styles.chk}><input type="checkbox" checked={wire} onChange={(e) => setWire(e.target.checked)} /> <span>{t('gamut_wireframe') || 'Wireframe'}</span></label>
+                <label className={styles.chk}><input type="checkbox" checked={axisNumbers} onChange={(e) => setAxisNumbers(e.target.checked)} /> <span>{t('gamut_axis_numbers') || 'Axis numbers'}</span></label>
                 <span className={styles.ctlLabel}>{t('gamut_color_by') || 'Colour'}</span>
                 <select value={colorBy} onChange={(e) => setColorBy(e.target.value)} className={styles.mini}>
                   <option value="solid">{t('gamut_color_solid') || 'Solid'}</option>
@@ -167,7 +169,7 @@ export default function ComparePanel({ ids, getEntry, t }) {
               </div>
             </div>
             <GamutPlot3D meshes={meshes} bounds={bounds}
-                         controls={{ shell, wire, opacity, colorBy, rotMode, rollEnabled, rollSens, dragSens }} />
+                         controls={{ shell, wire, opacity, colorBy, rotMode, rollEnabled, rollSens, dragSens, axisNumbers }} />
           </section>
 
           {/* ── 2-D slice (bottom) ───────────────────────────────── */}

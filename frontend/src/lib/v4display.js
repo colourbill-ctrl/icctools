@@ -26,6 +26,16 @@ function sigAt(bytes, off) {
 export function classifyV5Role(bytes) {
   const klass = sigAt(bytes, 12)
   const space = sigAt(bytes, 16)
+  // Require the ICC V5 encoding (major version byte @8 ≥ 5). iccV5DspObsToV4Dsp is
+  // FUNDAMENTALLY a V5-only conversion: it re-integrates the display's SPECTRAL
+  // EMISSION (the AToB1 EmissionMatrix) under a different observer — data only ICC v5/
+  // iccMAX profiles carry. A v2/v4 display (e.g. AdobeRGB1998) holds only colorimetric
+  // XYZ colorants (already integrated under one fixed observer), so it cannot be
+  // observer-changed. The tool itself hard-rejects `version < icVersionNumberV5`, so we
+  // don't route sub-V5 profiles into a slot. (The engine still does the precise
+  // spectral-emission-AToB1 check and rejects any off-contract V5 input with a reason.)
+  const major = bytes && bytes.length > 8 ? bytes[8] : 0
+  if (major < 5) return null
   if (klass === 'mntr' && space === 'RGB ') return 'display'   // V5 RGB display
   if (klass === 'spac') return 'observer'                      // ColorSpace-class PCC (observer)
   return null                                                  // not a V4-maker input

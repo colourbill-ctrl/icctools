@@ -17,10 +17,16 @@ import { classifyV5Role } from '../lib/v4display.js'
 import { useT } from '../i18n.jsx'
 import styles from './V4DisplayMaker.module.css'
 
-export default function V4DisplayMaker({ getEntry, onCreate }) {
+export default function V4DisplayMaker({ getEntry, onCreate, roles, setRoles }) {
   const t = useT()
-  const [dspId, setDspId] = useState(null)
-  const [obsId, setObsId] = useState(null)
+  // Role slots (dsp / obs) are lifted to App so they survive tab switches within a
+  // session (the pool is unchanged). Local fallback keeps the component usable if a
+  // parent forgets to pass them.
+  const [localRoles, setLocalRoles] = useState({ dsp: null, obs: null })
+  const roleState = roles || localRoles
+  const setRoleState = setRoles || setLocalRoles
+  const dspId = roleState.dsp
+  const obsId = roleState.obs
   const [dragOver, setDragOver] = useState(false)
   const [naming, setNaming] = useState(false)
   const [name, setName] = useState('')
@@ -46,8 +52,8 @@ export default function V4DisplayMaker({ getEntry, onCreate }) {
     for (const id of ids) {
       const entry = getEntry(id)
       const role = entry ? classifyV5Role(entry.currentBytes) : null
-      if (role === 'display') setDspId(id)
-      else if (role === 'observer') setObsId(id)
+      if (role === 'display') setRoleState((r) => ({ ...r, dsp: id }))
+      else if (role === 'observer') setRoleState((r) => ({ ...r, obs: id }))
       else miss++
     }
     setUnrouted(miss)
@@ -96,10 +102,10 @@ export default function V4DisplayMaker({ getEntry, onCreate }) {
       <div className={styles.slots}>
         <Slot label={t('v4_slot_display') || 'V5 RGB display'} entry={dsp}
               hint={t('v4_slot_display_hint') || 'drop a display profile'}
-              onClear={() => setDspId(null)} clearLabel={t('accum_remove') || 'Remove'} />
+              onClear={() => setRoleState((r) => ({ ...r, dsp: null }))} clearLabel={t('accum_remove') || 'Remove'} />
         <Slot label={t('v4_slot_observer') || 'V5 observer (PCC)'} entry={obs}
               hint={t('v4_slot_observer_hint') || 'drop an observer profile'}
-              onClear={() => setObsId(null)} clearLabel={t('accum_remove') || 'Remove'} />
+              onClear={() => setRoleState((r) => ({ ...r, obs: null }))} clearLabel={t('accum_remove') || 'Remove'} />
       </div>
 
       {unrouted > 0 && (

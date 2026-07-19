@@ -76,6 +76,70 @@ export function profileFacts(entry) {
   }
 }
 
+// A PCS connection space (Lab or XYZ). The CMM inter-converts the two at a PCS
+// junction, so either counts as "PCS" when deciding a profile's direction.
+export function isPCS(sig) {
+  const s = (sig || '').trim()
+  return s === 'Lab' || s === 'XYZ'
+}
+
+/**
+ * Per-transform flow of an ordered chain, given the HEAD transform's direction.
+ * Each profile contributes ONE transform whose direction alternates as the payload
+ * bounces between device and PCS coordinates (the CIccCmm model). Returns a stage
+ * per profile with its input→output spaces, whether a rendering intent applies, and
+ * whether it is a PROBLEM (a space the profile can't accept, or a DeviceLink asked to
+ * run backwards). This is the fast per-keystroke label/validation feedback; the WASM
+ * chainInfo (with the same firstInput + intents) remains the authoritative gate.
+ *
+ * @param {Array<{currentBytes?:Uint8Array}|null>} entries ordered pool entries
+ * @param {boolean} headForward  true = head runs device→PCS; false = PCS→device
+ * @returns {{ stages: Array<{inSpace?:string,outSpace?:string,problem:boolean,
+ *   canIntent:boolean,unknown?:boolean,klass?:string}>, ok:boolean,
+ *   source:?string, dest:?string }}
+ */
+export function computeChainFlow(entries, headForward = true) {
+  const facts = (entries || []).map((e) => (e ? profileFacts(e) : null))
+  const stages = []
+  let ok = facts.length > 0
+  // Space the payload currently occupies (4-char sig), or null after a break.
+  let cur = null
+  const head = facts[0]
+  if (head && head.known) cur = headForward ? head.data : head.pcs
+
+  for (let i = 0; i < facts.length; i++) {
+    const f = facts[i]
+    if (!f || !f.known) { stages.push({ unknown: true, problem: true, canIntent: false }); ok = false; cur = null; continue }
+    let inSpace, outSpace, problem = false
+    if (f.isLink) {
+      // DeviceLink is one-way: A-side device (data) → B-side device (pcs field).
+      inSpace = f.data; outSpace = f.pcs
+      if (cur != null && cur !== f.data) problem = true   // can't invert / space mismatch
+    } else if (f.isAbstract) {
+      // Abstract runs PCS → PCS.
+      inSpace = f.pcs; outSpace = f.pcs
+      if (cur != null && !isPCS(cur)) problem = true
+    } else {
+      // Device-class (display/output/input/colorspace) is bidirectional device↔PCS.
+      if (cur == null) { inSpace = f.data; outSpace = f.pcs }              // best-effort after a break
+      else if (cur === f.data) { inSpace = f.data; outSpace = f.pcs }      // device→PCS
+      else if (isPCS(cur) && isPCS(f.pcs)) { inSpace = f.pcs; outSpace = f.data }  // PCS→device
+      else { problem = true; inSpace = cur; outSpace = '?' }               // upstream space this profile can't take
+    }
+    stages.push({
+      inSpace: spaceLabel(inSpace), outSpace: spaceLabel(outSpace), problem,
+      canIntent: !f.isLink && !f.isAbstract && !f.isNamed, klass: f.cls,
+    })
+    if (problem) { ok = false; cur = null } else cur = outSpace
+  }
+
+  let dest = null
+  for (let i = stages.length - 1; i >= 0; i--) {
+    if (!stages[i].unknown && !stages[i].problem) { dest = stages[i].outSpace; break }
+  }
+  return { stages, ok, source: stages[0] && !stages[0].unknown ? stages[0].inSpace : null, dest }
+}
+
 /**
  * Analyse an ordered chain of pool entries → outcomes + source/dest labels.
  * @param {Array<{id:string, filename:string, currentBytes?:Uint8Array}>} entries

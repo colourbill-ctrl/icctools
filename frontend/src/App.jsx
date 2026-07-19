@@ -45,6 +45,14 @@ const uniq = (arr) => [...new Set(arr)]
 export default function App() {
   const [pool, setPool] = useState(() => new Map())        // id -> entry
   const [accum, setAccum] = useState({ Profile: null, Compare: [], Link: [], SpecSep: [] })
+  // Combine-tab maker state lifted to App so it SURVIVES tab switches (the maker
+  // cards unmount when you leave the Combine tab; local state would be lost, but the
+  // pool/datastore hasn't changed, so the chain and the Observer-Change slots should
+  // persist for the session — just like the accumulators above).
+  // Link Pipeline config: ordered pool ids + a parallel per-transform rendering
+  // intent, the head-transform direction, and the last global intent chosen.
+  const [pipeline, setPipeline] = useState({ chain: [], intents: [], headForward: true, globalIntent: 1 })
+  const [v4Roles, setV4Roles] = useState({ dsp: null, obs: null })  // Observer-Change slots
   const [activeTab, setActiveTab] = useState('Profile')
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [loading, setLoading] = useState(false)
@@ -299,30 +307,31 @@ export default function App() {
   // the pool stays profiles-only). The WASM engines (iccApplyToLink / iccApplyProfiles
   // ports) land in a later stage; lib/pipelineEngine.js is the seam and today throws
   // a clear pending message so the whole build → name → route flow is judgeable now.
-  const buildDeviceLink = useCallback(async (chainIds, name) => {
+  const buildDeviceLink = useCallback(async (chainIds, name, opts = {}) => {
     const entries = chainIds.map((id) => poolRef.current.get(id))
     if (entries.some((e) => !e)) throw new Error('A chained profile is no longer in the pool.')
     const { buildLink } = await import('./lib/pipelineEngine.js')
-    const bytes = await buildLink(entries.map((e) => e.currentBytes))
+    const bytes = await buildLink(entries.map((e) => e.currentBytes), opts)
     const stem = (name || 'devicelink').replace(/\.(icc|icm)$/i, '').replace(/[^\w.-]+/g, '_') || 'devicelink'
     const id = await addIccEntry(`${stem}.icc`, bytes)              // → pool handle
     setAccum((a) => ({ ...a, Link: uniq([...a.Link, id]) }))        // → Link accumulator handle
     return id
   }, [addIccEntry])
 
-  const applyImagesThroughChain = useCallback(async (chainIds, files) => {
+  // Runs each image through the chain and RETURNS the produced {bytes, filename}
+  // results (no download here) — the caller drives the Save dialog so it can acquire
+  // the file handle from a fresh user gesture before the transform runs.
+  const applyImagesThroughChain = useCallback(async (chainIds, files, opts = {}) => {
     const entries = chainIds.map((id) => poolRef.current.get(id))
     if (entries.some((e) => !e)) throw new Error('A chained profile is no longer in the pool.')
     const { applyToImage } = await import('./lib/pipelineEngine.js')
     const chainBytes = entries.map((e) => e.currentBytes)
-    let done = 0
+    const results = []
     for (const file of files) {
       // eslint-disable-next-line no-await-in-loop
-      const out = await applyToImage(chainBytes, file)
-      downloadBytes(out.bytes, out.filename)
-      done++
+      results.push(await applyToImage(chainBytes, file, opts))
     }
-    return done
+    return results
   }, [])
 
   // Spectral assembler (SpecSep tab) — gather N single-channel images → one multi-
@@ -540,6 +549,10 @@ export default function App() {
             onBuildLink={buildDeviceLink}
             onApplyImages={applyImagesThroughChain}
             onAssembleSpec={assembleSpectral}
+            pipeline={pipeline}
+            setPipeline={setPipeline}
+            v4Roles={v4Roles}
+            setV4Roles={setV4Roles}
           />
 
           <footer className={styles.footer}>

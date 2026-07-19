@@ -5,16 +5,29 @@
   border-radius: var(--radius-lg, 12px);
   background: var(--surface);
   padding: 16px 18px;
-  max-width: 560px;
+  /* Span its own row in the Combine canvas and stretch to the canvas width minus a
+     5% margin on each side (≈90% wide), growing/shrinking with the viewport. */
+  flex: 1 1 100%;
+  max-width: none;
+  margin: 0 5%;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
-.cardDrag {
-  border-color: var(--accent);
+
+/* The profile-drop ACTIVE area — the card minus the header and the two top sub-boxes
+   (image / dataset slots). Only this region highlights on a profile drag, so the
+   whole Combine canvas never lights up. */
+.activeZone {
+  display: flex; flex-direction: column; gap: 12px;
+  border-radius: var(--radius, 8px);
+  padding: 4px;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.activeZoneDrag {
   background: var(--accent-tint);
-  box-shadow: 0 0 0 3px var(--accent-tint);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .head { display: flex; flex-direction: column; gap: 4px; }
@@ -33,33 +46,78 @@
   color: var(--text-muted);
 }
 
-/* ── the ordered chain ───────────────────────────────────────────── */
-.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 2px; }
-.stageWrap { display: inline-flex; align-items: center; }
-.arrow { color: var(--text-muted); padding: 0 4px; font-size: 0.9rem; }
+/* ── chain-level controls (global rendering intent) ── */
+.chainCtls { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.ctlMixed select { color: var(--text-muted); font-style: italic; }   /* greyed when intents differ */
+
+/* ── the ordered chain — a VERTICAL stack (source → sink, top → bottom) ── */
+.chain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.stageItem { display: flex; flex-direction: column; }
 
 .stage {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  max-width: 240px;
+  gap: 8px;
   border: 1px solid var(--accent);
   background: var(--accent-tint);
   border-radius: var(--radius, 8px);
-  padding: 5px 6px 5px 8px;
+  padding: 6px 8px;
+  /* Narrower than the column so the head/middle/tail can sit at different x-positions
+     to trace the flow (align-self set per position below). */
+  width: 68%;
+  box-sizing: border-box;
 }
+/* Head aligns LEFT, tail aligns RIGHT, middles CENTRE — a top-left → bottom-right
+   flow down the stack. (.stageItem is a column flex, so align-self is horizontal.) */
+.stageFirst { align-self: flex-start; }
+.stageMiddle { align-self: center; }
+.stageLast { align-self: flex-end; }
+.stageDragging { opacity: 0.45; }
+.stageDropTarget { box-shadow: 0 -2px 0 0 var(--accent); }
 .stageBroken { border-color: var(--error); border-style: dashed; background: transparent; }
+/* A transform the flow can't satisfy (space mismatch / DeviceLink run backwards) —
+   red outline until the problem is resolved; build/transform are refused meanwhile. */
+.stageProblem { border-color: var(--error); box-shadow: 0 0 0 2px var(--error); }
+
+.stageGrip { flex: none; color: var(--text-muted); font-size: 0.9rem; cursor: grab; line-height: 1; }
+.stageGrip:active { cursor: grabbing; }
 .stageNum {
   flex: none;
-  width: 17px; height: 17px;
+  width: 18px; height: 18px;
   border-radius: 50%;
   background: var(--accent);
   color: #fff;
   font-size: 0.68rem; font-weight: 700;
   display: inline-flex; align-items: center; justify-content: center;
 }
-.stageName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; color: var(--text); }
+.stageBody { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; gap: 1px; }
+.stageName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; font-weight: 600; color: var(--text); }
+/* Transform (in→out) label sits immediately beside its rendering-intent picker. */
+.stageTransform { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.stageSpace { font-size: 0.72rem; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Per-transform rendering-intent picker (short labels: Perc/Rel/Sat/Abs). */
+.stageRi {
+  flex: none; padding: 2px 4px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--text); font-size: 0.7rem; font-weight: 700;
+}
 .stageCtl { display: inline-flex; align-items: center; gap: 1px; flex: none; }
+/* Head-only directionality flip button. */
+.headDir {
+  border: 1px solid var(--accent); background: var(--surface); cursor: pointer;
+  color: var(--accent); font-size: 0.85rem; line-height: 1; padding: 1px 4px;
+  border-radius: 5px; margin-right: 2px;
+}
+.headDir:hover { background: var(--accent-tint); }
+
+/* Connector between stacked stages — a short vertical line with the connecting
+   colour-space label. */
+.connector { display: flex; flex-direction: column; align-items: center; padding: 2px 0; }
+.connLine { width: 2px; height: 10px; background: var(--border); }
+.connSpace {
+  font-size: 0.64rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+  color: var(--text-muted); background: var(--surface-alt);
+  border-radius: 4px; padding: 0 5px; margin: 1px 0;
+}
 
 .mini, .miniX {
   border: none; background: transparent; cursor: pointer;
@@ -106,33 +164,62 @@
 }
 .cancel:hover:not(:disabled) { border-color: var(--accent); }
 
-/* ── image drop zone: idle (grey) vs live (green) ────────────────── */
-.imgZone {
+/* ── top row: image slot + data slot, side by side (wrap on narrow) ── */
+.topRow { display: flex; gap: 10px; flex-wrap: wrap; }
+.slot {
+  flex: 1 1 220px;
   display: flex;
   align-items: center;
-  gap: 10px;
   border: 1px dashed var(--border);
   border-radius: var(--radius, 8px);
-  padding: 12px 14px;
+  background: var(--surface-alt);
+  min-height: 88px;    /* 2× — a prominent drop target */
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
-.imgIdle { background: var(--surface-alt); opacity: 0.7; }
-.imgLive {
-  border-style: solid;
-  border-color: var(--pl-green, #3fa66a);
-  background: var(--pl-green-tint, rgba(63, 166, 106, 0.1));
+.slotFilled { border-style: solid; border-color: var(--accent); background: var(--accent-tint); }
+.slotWarn { border-color: var(--warning); }
+.slotOver {
+  border-style: solid; border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
 }
-.imgOver {
-  box-shadow: 0 0 0 3px var(--pl-green-tint, rgba(63, 166, 106, 0.18));
-  border-color: var(--pl-green, #3fa66a);
+.slotOpen {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; min-height: 88px; border: none; background: transparent; cursor: pointer;
+  padding: 10px 14px;
 }
-.imgIcon { font-size: 1.3rem; flex: none; }
-.imgText { font-size: 0.84rem; color: var(--text); }
-.imgIdle .imgText { color: var(--text-muted); font-style: italic; }
-.imgLive .imgText { color: var(--pl-green-text, #2c7a4d); font-weight: 600; }
+.slotIcon { font-size: 1.25rem; flex: none; }
+.slotText { font-size: 0.82rem; color: var(--text-muted); text-align: center; }
 
-:global(body.dark) .imgLive { border-color: #4fbe80; background: rgba(79, 190, 128, 0.14); }
-:global(body.dark) .imgLive .imgText { color: #7fe0a6; }
+.chip { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px 8px 14px; }
+.chipMeta { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.chipName { font-size: 0.86rem; color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chipDims { font-size: 0.74rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.chipX { border: none; background: transparent; cursor: pointer; font-size: 1.2rem; line-height: 1; color: var(--text-muted); padding: 0 4px; flex: none; }
+.chipX:hover { color: var(--error); }
+
+.hintRow { display: flex; flex-direction: column; gap: 2px; }
+.hint { margin: 0; font-size: 0.8rem; color: var(--text-muted); }
+.hidden { display: none; }
+
+/* ── data-method controls (observer/illuminant/M-cond · Prefer · dedup) ── */
+.dataControls {
+  border: 1px solid var(--border-soft, var(--border));
+  border-radius: var(--radius, 8px);
+  background: var(--surface-alt);
+  padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.dataSummary { margin: 0; font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; }
+.ctlRow { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.ctl, .ctlCheck { display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; color: var(--text); }
+.ctl select, .ctlCheck select {
+  padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--text); font-size: 0.78rem;
+}
+.ctlCheck input { accent-color: var(--accent); }
+
+/* ── outcome buttons row ─────────────────────────────────────────── */
+.actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
 .error { margin: 0; font-size: 0.84rem; color: var(--error); }
 .notice { margin: 0; font-size: 0.84rem; color: var(--accent); }

@@ -68,12 +68,13 @@ function getProfWorker() {
   try {
     profWorker = new Worker(new URL('./imageWorker.js', import.meta.url), { type: 'module' })
     profWorker.onmessage = (e) => {
-      const { reqId, profile, error } = e.data || {}
+      const { reqId, profile, probe, error } = e.data || {}
       const p = pending.get(reqId)
       if (!p) return
       pending.delete(reqId)
-      if (error) p.reject(new Error(error))
-      else p.resolve(profile ? (profile instanceof Uint8Array ? profile : new Uint8Array(profile)) : null)
+      if (error) return p.reject(new Error(error))
+      if (probe !== undefined) return p.resolve(probe)   // header probe → info object
+      p.resolve(profile ? (profile instanceof Uint8Array ? profile : new Uint8Array(profile)) : null)
     }
     profWorker.onerror = () => {
       profWorkerBroken = true
@@ -112,6 +113,40 @@ export function findEmbeddedProfileFromFile(file) {
 async function findEmbeddedProfileWhole(file) {
   const bytes = new Uint8Array(await file.arrayBuffer())
   return findEmbeddedProfile(bytes)
+}
+
+/**
+ * Probe an image File for geometry + colour space reading ONLY the header (never the
+ * pixels) — for validating a dropped image before deciding to transform it.
+ * @param {File|Blob} file
+ * @returns {Promise<{ok:boolean, error?:string, width?:number, height?:number,
+ *   channels?:number, bitDepth?:number, photometric?:number}>}
+ */
+export function probeImageFromFile(file) {
+  const w = getProfWorker()
+  if (!w) return probeImageWhole(file)
+  const reqId = ++reqSeq
+  return new Promise((resolve, reject) => {
+    pending.set(reqId, { resolve, reject })
+    try { w.postMessage({ reqId, file, op: 'probe' }) }
+    catch (err) { pending.delete(reqId); reject(err) }
+  }).catch((err) => {
+    if (profWorkerBroken) return probeImageWhole(file)   // worker died → main-thread fallback
+    throw err
+  })
+}
+// Fallback only (no worker): decode the whole image on the main thread to read its
+// geometry. Reads the pixels — used solely when a worker can't be created.
+async function probeImageWhole(file) {
+  try {
+    const mod = await loadModule()
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    const r = mod.decodeImage(bytes)
+    if (!r || !r.ok) return { ok: false, error: (r && r.error) || 'Could not read the image.' }
+    return { ok: true, width: r.width, height: r.height, channels: r.channels, bitDepth: r.bitDepth, photometric: r.photometric }
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) }
+  }
 }
 
 /**

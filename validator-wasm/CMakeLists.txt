@@ -22,6 +22,7 @@ endif()
 # Authoritative source list — mirrors Build/Cmake/IccProfLib/CMakeLists.txt.
 set(ICCPROFLIB_SOURCES
   IccApplyBPC.cpp IccArrayBasic.cpp IccArrayFactory.cpp IccCAM.cpp IccCmm.cpp
+  IccColorimetry.cpp
   IccConvertUTF.cpp IccEncoding.cpp IccEnvVar.cpp IccEval.cpp IccIO.cpp
   IccMatrixMath.cpp IccMpeACS.cpp IccMpeBasic.cpp IccMpeCalc.cpp IccMpeFactory.cpp
   IccMpeSpectral.cpp IccPrmg.cpp IccPcc.cpp IccProfile.cpp IccSolve.cpp
@@ -280,7 +281,11 @@ if(BUILD_ICCCONSTRUCT)
     -sENVIRONMENT=web,worker,node
     -sALLOW_MEMORY_GROWTH=1
     -sINITIAL_MEMORY=16MB
-    -sMAXIMUM_MEMORY=512MB
+    # 1 GB ceiling (grows lazily): headroom for large DeviceLink grids and the chunked
+    # image apply's per-chunk transients. Image rasters stream in ~1 MP chunks via the
+    # imageApplyBegin/Chunk/End session (construct-wrapper.cpp), so a big CMYK TIFF no
+    # longer needs the whole float image resident (which bad_alloc'd at 512 MB).
+    -sMAXIMUM_MEMORY=1024MB
     -sSTACK_SIZE=1MB
     -sDYNAMIC_EXECUTION=0
     # Same exception-unwrap exports as iccjson so JS reads the throw's .what().

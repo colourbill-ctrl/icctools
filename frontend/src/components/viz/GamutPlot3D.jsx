@@ -105,6 +105,7 @@ export default function GamutPlot3D({ meshes, bounds, controls }) {
   const {
     shell = true, wire = true, opacity = 0.55, colorBy = 'solid',
     rotMode = 'turntable', rollEnabled = false, rollSens = 0.4, dragSens = 1.0,
+    axisNumbers = false,
   } = controls || {}
   // Live-camera knobs read by the (once-attached) roll handler + the sens effects.
   const rollRef = useRef({ enabled: rollEnabled, sens: rollSens })
@@ -184,13 +185,27 @@ export default function GamutPlot3D({ meshes, bounds, controls }) {
       }
       const mkLabel = (x, y, z, txt) => ({ type: 'scatter3d', mode: 'text', x: [x], y: [y], z: [z], text: [txt], textfont: { color: c.label, size: 13 }, hoverinfo: 'none', showlegend: false })
       const tickLen = Math.max(xR[1] - xR[0], yR[1] - yR[0], zR[1] - zR[0]) * 0.025
+      const xTicks = tickPositions(xR, niceInterval(xR[1] - xR[0]))
+      const yTicks = tickPositions(yR, niceInterval(yR[1] - yR[0]))
+      const zTicks = tickPositions(zR, niceInterval(zR[1] - zR[0]))
+      // Numeric labels on the MAJOR tick marks — off by default, toggled by the control.
+      const mkTickNums = (positions, ax) => {
+        const xs = [], ys = [], zs = [], txt = []
+        const off = tickLen * 2.4
+        positions.forEach((p) => {
+          if (ax === 'x') { xs.push(p); ys.push(-off); zs.push(0) }
+          else if (ax === 'y') { xs.push(-off); ys.push(p); zs.push(0) }
+          else { xs.push(-off); ys.push(0); zs.push(p) }
+          txt.push(String(Math.round(p)))
+        })
+        return { type: 'scatter3d', mode: 'text', x: xs, y: ys, z: zs, text: txt, textfont: { color: c.axis, size: 9 }, hoverinfo: 'none', showlegend: false }
+      }
       traces.push(
         mkLine([xR[0], xR[1]], [0, 0], [0, 0]), mkLine([0, 0], [yR[0], yR[1]], [0, 0]), mkLine([0, 0], [0, 0], [0, zR[1]]),
-        mkTicks(tickPositions(xR, niceInterval(xR[1] - xR[0])), 'x', tickLen),
-        mkTicks(tickPositions(yR, niceInterval(yR[1] - yR[0])), 'y', tickLen),
-        mkTicks(tickPositions(zR, niceInterval(zR[1] - zR[0])), 'z', tickLen),
+        mkTicks(xTicks, 'x', tickLen), mkTicks(yTicks, 'y', tickLen), mkTicks(zTicks, 'z', tickLen),
         mkLabel(xR[1], 0, 0, 'a*'), mkLabel(0, yR[1], 0, 'b*'), mkLabel(0, 0, zR[1], 'L*'),
       )
+      if (axisNumbers) traces.push(mkTickNums(xTicks, 'x'), mkTickNums(yTicks, 'y'), mkTickNums(zTicks, 'z'))
 
       const axisBase = { showbackground: false, showgrid: false, showline: false, zeroline: false, showticklabels: false, title: { text: '' } }
       const layout = {
@@ -214,7 +229,7 @@ export default function GamutPlot3D({ meshes, bounds, controls }) {
     })()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [arrays, axisRanges, dark, shell, wire, opacity, colorBy])
+  }, [arrays, axisRanges, dark, shell, wire, opacity, colorBy, axisNumbers])
 
   // Rotation mode → relayout the live scene (no re-render, no view reset — chardata onPlotRotMode).
   useEffect(() => {

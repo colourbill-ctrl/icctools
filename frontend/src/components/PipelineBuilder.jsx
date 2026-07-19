@@ -1,96 +1,303 @@
 // (c) 2026 William Li
 //
-// Pipeline builder — the Link-tab "chain maker" (Phase-2, DL-PIPELINE1). Same grab-
-// and-drop mechanism as the V4 Display Maker, but instead of fixed role slots the
-// user drops profiles (from the pool or a tab accumulator) into an ORDERED, reorder-
-// able chain. The chain's profile types decide what it can PRODUCE (lib/pipeline.js):
-//   • Make DeviceLink — bake the chain into one 'link' profile → lands in the pool
-//     exactly like a V4 Display (a pool handle you can inspect/save).
-//   • Process images  — when the chain starts AND ends in a picture space, an image
-//     drop zone goes live (green cue); dropping images runs them through the chain
-//     and saves each result. Images are NEVER kept in the pool/store — they are
-//     dropped, processed once, and downloaded (keeps the store profiles-only).
+// Link Pipeline — the Combine-tab chain builder (Phase-2, DL-PIPELINE1). Drop profiles
+// (from the pool or a tab accumulator) into an ORDERED chain, then either:
+//   • Make DeviceLink — bake the chain into one 'link' profile → lands in the pool.
+//   • Transform Image — run ONE dropped image through the chain (iccApplyProfiles) →
+//     downloads the result. profiletool is an experimentation tool, so one image at a
+//     time is deliberate (no batch). The image is accepted + VALIDATED at the top via a
+//     streaming header probe (type + size + colour space) WITHOUT loading its pixels.
+//   • Transform Data — run ONE dropped colour dataset (CGATS/CSV/CxF/JSON) through the
+//     chain (iccApplyNamedCmm equivalent) → shows a result table with Save. The data
+//     slot sits beside the image slot; both validate live against the chain HEAD.
 //
-// Engines are wired in a later stage; producing today surfaces a clear "engine
-// arriving" notice so the whole flow (build → name → route) is judgeable first.
+// The data methods interpret the dataset's kinds (device / Lab / XYZ / spectral) and
+// feed whichever the chain's input space needs; spectral→colorimetry is canonical
+// iccDEV (CIccColorimetricCalculator, WASM). Observer/illuminant/M-condition, the
+// Prefer-colorimetry-source listbox, and duplicate filtering are persisted controls.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { POOL_DND_MIME } from './PoolPane.jsx'
-import { isImageSpace, spaceLabel } from '../lib/pipeline.js'
-import { chainInfo } from '../lib/pipelineEngine.js'
+import { spaceLabel, computeChainFlow } from '../lib/pipeline.js'
+import {
+  chainInfo, transformData as engineTransformData, spectralToXYZ,
+  OBSERVERS, ILLUMINANTS, RENDERING_INTENTS,
+} from '../lib/pipelineEngine.js'
+import {
+  parseDataText, summarizeDataset, classifyColumns, spaceKind,
+  buildTransformInput, deduplicateRows, destHeaders,
+} from '../lib/dataParse.js'
+import { probeImageFromFile } from '../lib/imageCodec.js'
+import DataResultModal from './DataResultModal.jsx'
 import { useT } from '../i18n.jsx'
 import styles from './PipelineBuilder.module.css'
 
-export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, onAccumulate }) {
+// Cap on the image we'll transform (matches the WASM applyImage 64 MP guard). Checked
+// from the streaming probe's dimensions — no pixels loaded.
+const MAX_IMAGE_PIXELS = 64_000_000
+// A dropped dataset is text — small. Guard the read so a huge mislabelled file can't
+// stall the tab (the WASM applyValues also caps at 5M patches).
+const MAX_DATA_CHARS = 64 * 1024 * 1024
+// Private drag type for reordering chain stages by dragging. Distinct from
+// POOL_DND_MIME so a stage-reorder drag never triggers the profile-drop highlight,
+// and a pool-profile drag never looks like a reorder.
+const REORDER_MIME = 'application/x-pipeline-reorder'
+
+// Persist a control in localStorage (data-method observer/illuminant/dedup settings
+// live inside this UI only — design decision #3).
+function usePersisted(key, initial) {
+  const [v, setV] = useState(() => {
+    try {
+      const raw = localStorage.getItem(key)
+      if (raw == null) return initial
+      return typeof initial === 'number' ? Number(raw)
+        : typeof initial === 'boolean' ? raw === '1' : raw
+    } catch { return initial }
+  })
+  useEffect(() => {
+    try { localStorage.setItem(key, typeof v === 'boolean' ? (v ? '1' : '0') : String(v)) } catch { /* ignore */ }
+  }, [key, v])
+  return [v, setV]
+}
+
+const PREFER_LABELS = { lab: 'Lab', xyz: 'XYZ', spectral: 'Spectral' }
+
+export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, onAccumulate, pipeline, setPipeline }) {
   const t = useT()
-  const [chain, setChain] = useState([])          // ordered array of pool ids (dups allowed)
+  // The whole pipeline config (chain + per-transform intents + head direction +
+  // global intent) is lifted to App so it survives Combine↔other-tab switches within
+  // a session (the pool is unchanged, so it should persist). `chain` and `intents`
+  // are kept strictly parallel by the mutation helpers below.
+  const chain = pipeline.chain
+  const intents = pipeline.intents
+  const headForward = pipeline.headForward
+  const globalIntent = pipeline.globalIntent
+
+  // Append profiles to the chain (+ a matching intent = current global) and reflect
+  // them in the accumulator. Every other mutation keeps chain/intents in lock-step.
+  const appendStages = (ids) => setPipeline((p) => ({
+    ...p, chain: [...p.chain, ...ids], intents: [...p.intents, ...ids.map(() => p.globalIntent)],
+  }))
+  const swapStages = (i, j) => setPipeline((p) => {
+    if (j < 0 || j >= p.chain.length) return p
+    const c = [...p.chain], it = [...p.intents]
+    ;[c[i], c[j]] = [c[j], c[i]]; [it[i], it[j]] = [it[j], it[i]]
+    return { ...p, chain: c, intents: it }
+  })
+  const removeStage = (i) => setPipeline((p) => ({
+    ...p, chain: p.chain.filter((_, k) => k !== i), intents: p.intents.filter((_, k) => k !== i),
+  }))
+  const clearStages = () => setPipeline((p) => ({ ...p, chain: [], intents: [] }))
+  const reorderStages = (from, to) => setPipeline((p) => {
+    if (from === to || from < 0 || from >= p.chain.length || to < 0 || to >= p.chain.length) return p
+    const c = [...p.chain], it = [...p.intents]
+    const [mc] = c.splice(from, 1); c.splice(to, 0, mc)
+    const [mi] = it.splice(from, 1); it.splice(to, 0, mi)
+    return { ...p, chain: c, intents: it }
+  })
+  const setIntentAt = (i, val) => setPipeline((p) => {
+    const it = [...p.intents]; it[i] = val; return { ...p, intents: it }
+  })
+  // Selecting the global intent re-applies it to EVERY transform (and re-solidifies
+  // the global listbox text). Changing any individual intent leaves globalIntent as
+  // the last global pick — the mismatch greys the global listbox (see intentsMixed).
+  const setGlobalIntent = (val) => setPipeline((p) => ({
+    ...p, globalIntent: val, intents: p.chain.map(() => val),
+  }))
+  const toggleHeadDir = () => setPipeline((p) => ({ ...p, headForward: !p.headForward }))
+
   const [dragOver, setDragOver] = useState(false)
-  const [imgOver, setImgOver] = useState(false)
   const [naming, setNaming] = useState(false)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
   const nameRef = useRef(null)
+  const imgInputRef = useRef(null)
+  const dataInputRef = useRef(null)
 
-  // Resolve each stage id → entry (may be null if the profile was removed from the
-  // pool while chained).
+  // Held image + its streaming header probe (NOT its pixels).
+  const [image, setImage] = useState(null)         // File | null
+  const [imageInfo, setImageInfo] = useState(null) // { ok, width, height, channels, photometric } | null
+  const [imageErr, setImageErr] = useState(null)
+  const [imgChecking, setImgChecking] = useState(false)
+  const [imgOver, setImgOver] = useState(false)
+
+  // Held dataset (parsed + summarised on drop; the transform runs on demand).
+  const [dataParsed, setDataParsed] = useState(null)   // { name, format, headers, rows, … }
+  const [dataSummary, setDataSummary] = useState(null) // summarizeDataset result
+  const [dataErr, setDataErr] = useState(null)
+  const [dataOver, setDataOver] = useState(false)
+  const [result, setResult] = useState(null)           // DataResultModal payload | null
+
+  // Persisted data-method controls.
+  // Observer + illuminant are the two first-class spectral-conversion inputs
+  // (illuminant defaults to D50 — the PCS reference white). Measurement CONDITION
+  // (M0–M3) is intentionally NOT exposed: it is not a first-class input to the
+  // CIccColorimetricCalculator (it only ever modified the illuminant, e.g. M1→D50),
+  // so a control for it was more confusing than useful. The engine defaults to M0
+  // (chosen illuminant, unmodified).
+  const [observer, setObserver] = usePersisted('profiletool.dm.observer', 1)
+  const [illuminant, setIlluminant] = usePersisted('profiletool.dm.illuminant', 1)   // 1 = D50
+  const [prefer, setPrefer] = usePersisted('profiletool.dm.prefer', '')   // '' = auto (first available)
+  const [filterDup, setFilterDup] = usePersisted('profiletool.dm.filterdup', false)
+  const [dupMethod, setDupMethod] = usePersisted('profiletool.dm.dupmethod', 'median')
+
   const stageEntries = useMemo(() => chain.map((id) => getEntry(id)), [chain, getEntry])
   const broken = stageEntries.some((e) => !e)
 
-  // AUTHORITATIVE validation: the WASM CMM assembly (chainInfo) is the only thing that
-  // truly knows whether the chain connects — a header-signature guess cannot. Runs on
-  // every chain edit; latest result wins; empty/broken chains skip the call. Outcomes
-  // are gated on info.ok so an invalid combination can never be produced, and info.error
-  // drives the explanatory warning.
+  // AUTHORITATIVE chain validation (WASM CMM assembly). Gates outcomes; drives warnings.
   const [info, setInfo] = useState(null)
   const [checking, setChecking] = useState(false)
+  const intentsKey = intents.join(',')   // stable dep for the intents array
   useEffect(() => {
     if (broken || chain.length === 0) { setInfo(null); setChecking(false); return }
     let cancelled = false
     setChecking(true)
     const bytes = stageEntries.map((e) => e.currentBytes)
-    chainInfo(bytes)
+    // Authoritative validation with the CHOSEN per-transform intents + head direction.
+    chainInfo(bytes, intents, headForward)
       .then((r) => { if (!cancelled) { setInfo(r); setChecking(false) } })
       .catch(() => { if (!cancelled) { setInfo({ ok: false, error: 'Could not analyse the chain.' }); setChecking(false) } })
     return () => { cancelled = true }
-  }, [stageEntries, broken, chain.length])
+  }, [stageEntries, broken, chain.length, intentsKey, headForward])   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const canLink = !broken && !checking && info?.ok === true
-  const canImage = canLink && isImageSpace(info.sourceSpace) && isImageSpace(info.destSpace)
+  // Fast per-transform flow (labels + per-stage problems) from the header signatures.
+  // The WASM `info` is the authoritative gate; `flow` drives the directional labels,
+  // the RI-applicability per stage, and the red-outline problem markers.
+  const flow = useMemo(() => computeChainFlow(stageEntries, headForward), [stageEntries, headForward])
+  // A stage is problematic if the flow model flags it OR the WASM broke at it.
+  const stageBad = (i) => flow.stages[i]?.problem || (info && info.ok === false && info.failedStage === i + 1)
+  const hasProblem = flow.stages.some((s) => s.problem)
 
-  // Append dropped pool rows to the END of the chain (order preserved, duplicates
-  // allowed — a chain may legitimately repeat an abstract profile). stopPropagation
-  // so the tab's own drop handler doesn't ALSO fire (double-handling); instead we
-  // accumulate explicitly via onAccumulate, so a profile dropped straight into the
-  // chain also parks on the Link tab (the pipeline's working set).
+  // Global-intent listbox greys when the per-transform intents aren't all the global
+  // value (i.e. at least one was changed individually).
+  const intentsMixed = chain.length > 0 && !intents.every((x) => x === globalIntent)
+
+  // Build/transform are gated on BOTH the authoritative WASM result and the fast flow
+  // (so a detected problem refuses the operation even before the WASM round-trip lands).
+  const canLink = !broken && !checking && info?.ok === true && !hasProblem
+
+  // ── image ↔ chain-source LIVE validation ────────────────────────────────────
+  const imgStatus = useMemo(
+    () => imageStatus({ image, imageInfo, imgChecking, imageErr, info, checking }),
+    [image, imageInfo, imgChecking, imageErr, info, checking],
+  )
+  const canTransform = !busy && imgStatus.ready && !hasProblem
+
+  // ── data ↔ chain-source LIVE validation ─────────────────────────────────────
+  const dataStatus = useMemo(
+    () => dataMethodStatus({ dataParsed, dataSummary, dataErr, info, checking, prefer }),
+    [dataParsed, dataSummary, dataErr, info, checking, prefer],
+  )
+  const canTransformData = !busy && dataStatus.ready && !hasProblem
+
+  // Which colorimetry source a PCS-input chain will actually use (Prefer or first).
+  const effPrefer = useMemo(() => {
+    const srcs = dataSummary?.colorimetrySources || []
+    if (!srcs.length) return null
+    return srcs.includes(prefer) ? prefer : srcs[0]
+  }, [dataSummary, prefer])
+  const hasSpectral = !!dataSummary?.kinds?.some((k) => k.kind === 'spectral')
+
+  // Accept an image: streaming probe (type + size + colour space), pixels NOT loaded.
+  const acceptImage = useCallback(async (file) => {
+    if (!file) return
+    setImage(null); setImageInfo(null); setImageErr(null); setImgChecking(true)
+    setError(null); setNotice(null)
+    let probe
+    try { probe = await probeImageFromFile(file) }
+    catch (e) { probe = { ok: false, error: e?.message || String(e) } }
+    if (!probe.ok) {
+      setImgChecking(false)
+      setImageErr(probe.error || (t('pl_img_badtype') || 'Not a supported image (TIFF, PNG or JPEG).'))
+      return
+    }
+    const px = (probe.width || 0) * (probe.height || 0)
+    if (px > MAX_IMAGE_PIXELS) {
+      setImgChecking(false)
+      setImageErr(t('pl_img_toolarge', { mp: Math.round(px / 1e6), max: MAX_IMAGE_PIXELS / 1e6 })
+        || `Image too large (${Math.round(px / 1e6)} MP; limit ${MAX_IMAGE_PIXELS / 1e6} MP).`)
+      return
+    }
+    setImage(file); setImageInfo(probe); setImgChecking(false)
+  }, [t])
+
+  const onImageDrop = useCallback((e) => {
+    e.preventDefault(); e.stopPropagation(); setImgOver(false)
+    const f = Array.from(e.dataTransfer.files || [])[0]
+    if (f) acceptImage(f)
+  }, [acceptImage])
+  const clearImage = () => { setImage(null); setImageInfo(null); setImageErr(null); setImgChecking(false) }
+
+  // Accept a dataset: read text → parse → summarise. Held; transformed on demand.
+  const acceptData = useCallback(async (file) => {
+    if (!file) return
+    setDataParsed(null); setDataSummary(null); setDataErr(null)
+    setError(null); setNotice(null)
+    let text
+    try { text = await file.text() }
+    catch { setDataErr(t('pl_data_read') || 'Could not read that file.'); return }
+    if (text.length > MAX_DATA_CHARS) { setDataErr(t('pl_data_toolarge') || 'Data file too large.'); return }
+    try {
+      const parsed = parseDataText(file.name, text)
+      const summary = summarizeDataset(parsed)
+      setDataParsed({ ...parsed, name: file.name })
+      setDataSummary(summary)
+    } catch (e) { setDataErr(e?.message || String(e)) }
+  }, [t])
+
+  const onDataDrop = useCallback((e) => {
+    e.preventDefault(); e.stopPropagation(); setDataOver(false)
+    const f = Array.from(e.dataTransfer.files || [])[0]
+    if (f) acceptData(f)
+  }, [acceptData])
+  const clearData = () => { setDataParsed(null); setDataSummary(null); setDataErr(null) }
+
+  // ── chain drop / reorder ────────────────────────────────────────────────────
   const onDrop = useCallback((e) => {
     e.preventDefault(); e.stopPropagation(); setDragOver(false)
     const raw = e.dataTransfer.getData(POOL_DND_MIME)
     if (!raw) return
     let ids; try { ids = JSON.parse(raw) } catch { return }
     if (!Array.isArray(ids) || !ids.length) return
-    setChain((c) => [...c, ...ids])
+    appendStages(ids)
     onAccumulate?.(ids)
     setError(null); setNotice(null); setNaming(false)
-  }, [onAccumulate])
-
+  }, [onAccumulate])   // eslint-disable-line react-hooks/exhaustive-deps
   const onDragOver = useCallback((e) => {
-    if (e.dataTransfer.types.includes(POOL_DND_MIME)) {
-      e.preventDefault(); e.stopPropagation(); setDragOver(true)
-    }
+    if (e.dataTransfer.types.includes(POOL_DND_MIME)) { e.preventDefault(); e.stopPropagation(); setDragOver(true) }
   }, [])
-  const onDragLeave = useCallback((e) => {
-    if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false)
-  }, [])
+  const onDragLeave = useCallback((e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false) }, [])
 
-  const move = (i, d) => setChain((c) => {
-    const j = i + d
-    if (j < 0 || j >= c.length) return c
-    const n = [...c]; [n[i], n[j]] = [n[j], n[i]]; return n
-  })
-  const removeAt = (i) => setChain((c) => c.filter((_, k) => k !== i))
-  const clearChain = () => { setChain([]); setNaming(false); setError(null); setNotice(null) }
+  const move = (i, d) => swapStages(i, i + d)
+  const removeAt = (i) => removeStage(i)
+  const clearChain = () => { clearStages(); setNaming(false); setError(null); setNotice(null) }
 
+  // ── drag-reorder a stage within the vertical chain ──────────────────────────
+  const [dragIdx, setDragIdx] = useState(null)   // stage being dragged
+  const [dropIdx, setDropIdx] = useState(null)   // stage the pointer is over
+  const reorder = (from, to) => reorderStages(from, to)
+  const onStageDragStart = (e, i) => {
+    e.dataTransfer.setData(REORDER_MIME, String(i))
+    e.dataTransfer.effectAllowed = 'move'
+    setDragIdx(i)
+  }
+  const onStageDragOver = (e, i) => {
+    if (!e.dataTransfer.types.includes(REORDER_MIME)) return   // let pool-profile drags bubble
+    e.preventDefault(); e.stopPropagation()
+    e.dataTransfer.dropEffect = 'move'
+    if (dropIdx !== i) setDropIdx(i)
+  }
+  const onStageDrop = (e, i) => {
+    if (!e.dataTransfer.types.includes(REORDER_MIME)) return
+    e.preventDefault(); e.stopPropagation()
+    const from = parseInt(e.dataTransfer.getData(REORDER_MIME), 10)
+    if (Number.isInteger(from)) reorder(from, i)
+    setDragIdx(null); setDropIdx(null)
+  }
+  const onStageDragEnd = () => { setDragIdx(null); setDropIdx(null) }
+
+  // ── outcome: Make DeviceLink ────────────────────────────────────────────────
   function beginNaming() {
     if (!canLink) return
     const base = (stageEntries[0]?.filename || 'link').replace(/\.(icc|icm)$/i, '')
@@ -98,153 +305,501 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
     setNaming(true); setError(null); setNotice(null)
     requestAnimationFrame(() => nameRef.current?.select())
   }
-
   async function buildLink() {
     const clean = name.trim()
     if (!clean || !canLink || busy) return
     setBusy(true); setError(null); setNotice(null)
     try {
-      await onBuildLink(chain.slice(), clean)
+      await onBuildLink(chain.slice(), clean, { intents: intents.slice(), firstInput: headForward })
       setNaming(false)
       setNotice(t('pl_link_made', { name: clean }) || `Created “${clean}” — added to the pool and this tab.`)
-    } catch (e) {
-      setError(e?.message || String(e))
-    } finally {
-      setBusy(false)
-    }
+    } catch (e) { setError(e?.message || String(e)) } finally { setBusy(false) }
   }
 
-  // Image drop: OS image files run through the chain → save each. stopPropagation so
-  // the images are NOT also loaded into the pool by the tab's file-drop handler.
-  const onImgDrop = useCallback(async (e) => {
-    e.preventDefault(); e.stopPropagation(); setImgOver(false)
-    if (!canImage || busy) return
-    const files = Array.from(e.dataTransfer.files || [])
-    if (!files.length) return
+  // ── outcome: Transform Image ────────────────────────────────────────────────
+  async function transformImage() {
+    if (!canTransform || busy || !image) return
+    // Output container is decided by the chain's dest channel count (1/3 → PNG, else
+    // TIFF) — mirrors lib/pipelineEngine.js encodeImage, so we can name the file up
+    // front. The transform can take seconds and consume the user activation, so on
+    // Chromium we open the Save dialog NOW (fresh gesture) and write to the handle
+    // after; other browsers fall back to prompt-for-name + download post-transform.
+    const nDst = info?.destSamples || 0
+    const isPng = nDst === 1 || nDst === 3
+    const ext = isPng ? 'png' : 'tif'
+    const mime = isPng ? 'image/png' : 'image/tiff'
+    const stem = (image.name || 'image').replace(/\.[^.]+$/, '')
+    const suggested = `${stem}-converted.${ext}`
+
+    let handle = null
+    if (typeof window.showSaveFilePicker === 'function') {
+      try {
+        handle = await window.showSaveFilePicker({
+          suggestedName: suggested,
+          types: [{ description: `${ext.toUpperCase()} image`, accept: { [mime]: [`.${ext}`] } }],
+        })
+      } catch (e) {
+        if (e && e.name === 'AbortError') return   // user cancelled the Save dialog — do nothing
+        handle = null                              // other failure → fall back after the transform
+      }
+    }
+
     setBusy(true); setError(null); setNotice(null)
     try {
-      const n = await onApplyImages(chain.slice(), files)
-      setNotice(t('pl_img_done', { n: n ?? files.length }) || `Processed ${n ?? files.length} image(s).`)
-    } catch (err) {
-      setError(err?.message || String(err))
-    } finally {
-      setBusy(false)
-    }
-  }, [canImage, busy, chain, onApplyImages, t])
+      const results = await onApplyImages(chain.slice(), [image], { intents: intents.slice(), firstInput: headForward })
+      const out = results && results[0]
+      if (!out) throw new Error('No image was produced.')
+      if (handle) {
+        const writable = await handle.createWritable()
+        await writable.write(out.bytes)
+        await writable.close()
+      } else {
+        const { saveBinaryFile } = await import('../lib/dataExport.js')
+        const saved = await saveBinaryFile(out.bytes, out.filename || suggested, mime)
+        if (!saved) { setBusy(false); return }   // cancelled at the name prompt
+      }
+      setNotice(t('pl_img_done') || 'Saved the transformed image.')
+    } catch (err) { setError(err?.message || String(err)) } finally { setBusy(false) }
+  }
 
-  const onImgDragOver = useCallback((e) => {
-    if (canImage && e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.stopPropagation(); setImgOver(true) }
-  }, [canImage])
+  // ── outcome: Transform Data (iccApplyNamedCmm equivalent) ───────────────────
+  async function doTransformData() {
+    if (!canTransformData || busy || !dataParsed || !info?.ok) return
+    setBusy(true); setError(null); setNotice(null)
+    try {
+      const chainBytes = stageEntries.map((e) => e.currentBytes)
+      const need = { kind: spaceKind(info.sourceSpace), nSrc: info.sourceSamples }
+
+      // Optional duplicate filtering (device rows only, aggregated median/mean).
+      let workParsed = dataParsed
+      const devCols = dataSummary.classification.device
+      if (filterDup && dataSummary.duplicates.dupeRows > 0 && devCols.length) {
+        workParsed = { ...dataParsed, rows: deduplicateRows(dataParsed.headers, dataParsed.rows, devCols, dupMethod) }
+      }
+
+      // Spectral→colorimetry (canonical iccDEV) when the PCS input prefers spectral.
+      let spectralXYZRows = null
+      if (need.kind !== 'device' && effPrefer === 'spectral') {
+        const wcls = classifyColumns(workParsed.headers)
+        const nm = wcls.spectral.map((s) => s.nm)
+        const specKind = dataSummary.kinds.find((k) => k.kind === 'spectral')
+        const scale = specKind?.encoding === 'percent' ? 0.01 : 1
+        const specRows = workParsed.rows.map((row) => wcls.spectral.map((s) => (parseFloat(row[s.idx]) || 0) * scale))
+        const { xyz } = await spectralToXYZ(specRows, {
+          startNm: nm[0], endNm: nm[nm.length - 1], observer, illuminant,   // mCond defaults to M0 (no condition control)
+        })
+        spectralXYZRows = xyz
+      }
+
+      const input = buildTransformInput(workParsed, need, need.kind === 'device' ? null : effPrefer, spectralXYZRows)
+      const dstKind = spaceKind(info.destSpace)
+      const dstEncoding = dstKind === 'device' ? 'percent' : 'value'
+
+      const res = await engineTransformData(chainBytes, input.samples, input.nSrc, {
+        intents: intents.slice(), firstInput: headForward, srcEncoding: input.srcEncoding, dstEncoding,
+      })
+
+      // Assemble the result table: source cols (fed) + dest cols (produced).
+      const nDst = res.destSamples
+      const dHeaders = destHeaders(res.dstSpace, nDst)
+      const destCells = input.sourceCells.map((_, i) => {
+        const row = []
+        for (let c = 0; c < nDst; c++) row.push(res.values[i * nDst + c])
+        return row
+      })
+      const nameIdx = classifyColumns(workParsed.headers).nameIdx
+      const names = nameIdx >= 0 ? workParsed.rows.map((r) => r[nameIdx]) : null
+
+      setResult({
+        title: t('dm_transform_data') || 'Transform Data',
+        srcSpace: res.srcSpace, dstSpace: res.dstSpace,
+        srcEncoding: input.srcEncoding, dstEncoding,
+        names, sourceHeaders: input.sourceHeaders, sourceCells: input.sourceCells,
+        destHeaders: dHeaders, destCells, datasetName: dataParsed.name,
+      })
+    } catch (e) { setError(e?.message || String(e)) } finally { setBusy(false) }
+  }
 
   return (
-    <section className={`${styles.card} ${dragOver ? styles.cardDrag : ''}`}
-             onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+    <section className={styles.card}>
       <header className={styles.head}>
-        <h3 className={styles.title}>{t('pl_title') || 'Pipeline'}</h3>
-        <p className={styles.sub}>{t('pl_sub') || 'Drag profiles here to build a transform chain, then make a DeviceLink or process images.'}</p>
+        <h3 className={styles.title}>{t('pl_title') || 'Link Pipeline'}</h3>
+        <p className={styles.sub}>{t('pl_sub') || 'Build a chain of profiles, then make a DeviceLink, transform an image, or transform a colour dataset through it.'}</p>
       </header>
 
-      {/* ── the ordered chain ─────────────────────────────────────── */}
-      {chain.length === 0 ? (
-        <div className={styles.dropHint}>{t('pl_drop_hint') || 'Drop profiles to start the chain'}</div>
-      ) : (
-        <div className={styles.chain}>
-          {chain.map((id, i) => {
-            const entry = stageEntries[i]
-            return (
-              <div key={`${id}:${i}`} className={styles.stageWrap}>
-                {i > 0 && <span className={styles.arrow} aria-hidden="true">→</span>}
-                <div className={`${styles.stage} ${entry ? '' : styles.stageBroken}`}
-                     title={entry?.filename || t('pl_removed') || 'removed from pool'}>
-                  <span className={styles.stageNum}>{i + 1}</span>
-                  <span className={styles.stageName}>{entry?.filename || t('pl_removed') || 'removed'}</span>
-                  <span className={styles.stageCtl}>
-                    <button className={styles.mini} type="button" disabled={i === 0}
-                            onClick={() => move(i, -1)} title={t('pl_move_left') || 'Move earlier'} aria-label={t('pl_move_left') || 'Move earlier'}>‹</button>
-                    <button className={styles.mini} type="button" disabled={i === chain.length - 1}
-                            onClick={() => move(i, +1)} title={t('pl_move_right') || 'Move later'} aria-label={t('pl_move_right') || 'Move later'}>›</button>
-                    <button className={styles.miniX} type="button"
-                            onClick={() => removeAt(i)} title={t('accum_remove') || 'Remove'} aria-label={t('accum_remove') || 'Remove'}>×</button>
-                  </span>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* ── outcome summary / authoritative validation ────────────── */}
-      {chain.length > 0 && (
-        <div className={styles.summary}>
-          {broken ? (
-            <span className={styles.warn}>{t('pl_broken') || 'A chained profile was removed from the pool — remove it to continue.'}</span>
-          ) : checking ? (
-            <span className={styles.checking}>{t('pl_checking') || 'Checking chain…'}</span>
-          ) : info?.ok ? (
-            <span className={styles.flow}>
-              {t('pl_flow') || 'Chain'}: <b>{spaceLabel(info.sourceSpace)}</b> <span aria-hidden="true">→</span> <b>{spaceLabel(info.destSpace)}</b>
-            </span>
+      {/* ── top row: image slot + data slot (each drop-highlights on its own) ── */}
+      <div className={styles.topRow}>
+        {/* image slot */}
+        <div
+          className={`${styles.slot} ${image ? styles.slotFilled : ''} ${imgOver ? styles.slotOver : ''} ${imgStatus.warn ? styles.slotWarn : ''}`}
+          onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.stopPropagation(); setImgOver(true) } }}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setImgOver(false) }}
+          onDrop={onImageDrop}
+        >
+          {!image ? (
+            <button type="button" className={styles.slotOpen} onClick={() => imgInputRef.current?.click()}>
+              <span className={styles.slotIcon} aria-hidden="true">🖼️</span>
+              <span className={styles.slotText}>
+                {imgChecking ? (t('pl_img_checking') || 'Checking image…')
+                  : imageErr ? imageErr
+                  : (t('pl_img_drop') || 'Drop an image to transform (TIFF/PNG/JPEG)')}
+              </span>
+            </button>
           ) : (
-            <span className={styles.warn}>{chainError(info, t)}</span>
+            <div className={styles.chip}>
+              <span className={styles.slotIcon} aria-hidden="true">🖼️</span>
+              <span className={styles.chipMeta} title={image.name}>
+                <span className={styles.chipName}>{image.name}</span>
+                <span className={styles.chipDims}>
+                  {imageInfo ? `${imageInfo.width}×${imageInfo.height} · ${imgSpaceLabel(imageInfo)}` : ''}
+                </span>
+              </span>
+              <button className={styles.chipX} type="button" onClick={clearImage}
+                      title={t('accum_remove') || 'Remove'} aria-label={t('accum_remove') || 'Remove'}>×</button>
+            </div>
           )}
-          <button className={styles.clear} type="button" onClick={clearChain}>{t('pl_clear') || 'Clear'}</button>
+          <input ref={imgInputRef} type="file" className={styles.hidden}
+                 accept=".tif,.tiff,.png,.jpg,.jpeg,image/tiff,image/png,image/jpeg"
+                 onChange={(e) => { const f = e.target.files?.[0]; if (f) acceptImage(f); e.target.value = '' }} />
+        </div>
+
+        {/* data slot */}
+        <div
+          className={`${styles.slot} ${dataParsed ? styles.slotFilled : ''} ${dataOver ? styles.slotOver : ''} ${dataStatus.warn ? styles.slotWarn : ''}`}
+          onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.stopPropagation(); setDataOver(true) } }}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDataOver(false) }}
+          onDrop={onDataDrop}
+        >
+          {!dataParsed ? (
+            <button type="button" className={styles.slotOpen} onClick={() => dataInputRef.current?.click()}>
+              <span className={styles.slotIcon} aria-hidden="true">🔢</span>
+              <span className={styles.slotText}>
+                {dataErr ? dataErr : (t('pl_data_drop') || 'Drop a colour dataset (CGATS/CSV/CxF/JSON)')}
+              </span>
+            </button>
+          ) : (
+            <div className={styles.chip}>
+              <span className={styles.slotIcon} aria-hidden="true">🔢</span>
+              <span className={styles.chipMeta} title={dataParsed.name}>
+                <span className={styles.chipName}>{dataParsed.name}</span>
+                <span className={styles.chipDims}>{datasetChipText(dataSummary)}</span>
+              </span>
+              <button className={styles.chipX} type="button" onClick={clearData}
+                      title={t('accum_remove') || 'Remove'} aria-label={t('accum_remove') || 'Remove'}>×</button>
+            </div>
+          )}
+          <input ref={dataInputRef} type="file" className={styles.hidden}
+                 accept=".txt,.csv,.cgats,.it8,.cxf,.xml,.json,text/plain,text/csv,application/json"
+                 onChange={(e) => { const f = e.target.files?.[0]; if (f) acceptData(f); e.target.value = '' }} />
+        </div>
+      </div>
+      {(imgStatus.msg || dataStatus.msg) && (
+        <div className={styles.hintRow}>
+          {imgStatus.msg && <p className={imgStatus.blocked ? styles.warn : styles.hint}>{imgStatus.msg}</p>}
+          {dataStatus.msg && <p className={dataStatus.blocked ? styles.warn : styles.hint}>{dataStatus.msg}</p>}
         </div>
       )}
 
-      {/* ── outcome 1: Make DeviceLink → pool ─────────────────────── */}
-      <div className={styles.outcome}>
-        {!naming ? (
-          <button className="btn-primary" type="button" disabled={!canLink} onClick={beginNaming}>
-            {t('pl_make_link') || 'Make DeviceLink'}
-          </button>
+      {/* ── ACTIVE AREA: the profile-drop target (card minus the two sub-boxes). Only
+             this region highlights when a profile is dragged in — never the whole
+             Combine canvas. Holds the dataset controls, the vertical chain, the
+             chain summary, and the action buttons. ──────────────────────────────── */}
+      <div className={`${styles.activeZone} ${dragOver ? styles.activeZoneDrag : ''}`}
+           onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+
+        {/* dataset properties + controls (design decision #5 summary + controls) */}
+        {dataParsed && dataSummary && (
+          <div className={styles.dataControls}>
+            <p className={styles.dataSummary}>{datasetSummaryText(dataSummary, t)}</p>
+            <div className={styles.ctlRow}>
+              {(dataSummary.colorimetrySources.length > 1) && (
+                <label className={styles.ctl}>
+                  {t('dm_prefer') || 'Prefer'}
+                  <select value={effPrefer || ''} onChange={(e) => setPrefer(e.target.value)}>
+                    {dataSummary.colorimetrySources.map((s) => (
+                      <option key={s} value={s}>{PREFER_LABELS[s] || s}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {hasSpectral && (
+                <>
+                  <label className={styles.ctl}>
+                    {t('dm_observer') || 'Observer'}
+                    <select value={observer} onChange={(e) => setObserver(Number(e.target.value))}>
+                      {OBSERVERS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                  </label>
+                  <label className={styles.ctl}>
+                    {t('dm_illuminant') || 'Illuminant'}
+                    <select value={illuminant} onChange={(e) => setIlluminant(Number(e.target.value))}>
+                      {ILLUMINANTS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                  </label>
+                </>
+              )}
+              {dataSummary.duplicates.dupeRows > 0 && (
+                <label className={styles.ctlCheck}>
+                  <input type="checkbox" checked={filterDup} onChange={(e) => setFilterDup(e.target.checked)} />
+                  {t('dm_filter_dup', { n: dataSummary.duplicates.dupeRows }) || `Filter ${dataSummary.duplicates.dupeRows} duplicate(s)`}
+                  {filterDup && (
+                    <select value={dupMethod} onChange={(e) => setDupMethod(e.target.value)}>
+                      <option value="median">{t('dm_median') || 'median'}</option>
+                      <option value="mean">{t('dm_mean') || 'mean'}</option>
+                    </select>
+                  )}
+                </label>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* the ordered chain — a VERTICAL stack: source at the top, sink at the bottom.
+            Each profile contributes ONE transform whose direction (input→output) is
+            shown and whose rendering intent is chosen per transform. The head's
+            direction can be flipped (⇅), rippling through the rest. The first stage is
+            offset left and the last offset right to mark the flow's entry/exit; drag a
+            stage's grip (or use ▲/▼) to reorder. */}
+        {chain.length === 0 ? (
+          <div className={styles.dropHint}>{t('pl_drop_hint') || 'Drop profiles to start the chain'}</div>
         ) : (
-          <div className={styles.nameRow}>
-            <input ref={nameRef} className={styles.nameInput} value={name}
-                   onChange={(e) => setName(e.target.value)}
-                   onKeyDown={(e) => { if (e.key === 'Enter') buildLink(); if (e.key === 'Escape') setNaming(false) }}
-                   placeholder={t('pl_name_ph') || 'DeviceLink name'} aria-label={t('pl_name_ph') || 'DeviceLink name'} />
-            <button className="btn-primary" type="button" disabled={busy || !name.trim()} onClick={buildLink}>
-              {busy ? (t('pl_making') || 'Making…') : (t('v4_create') || 'Create')}
-            </button>
-            <button className={styles.cancel} type="button" disabled={busy} onClick={() => setNaming(false)}>
-              {t('cancel') || 'Cancel'}
-            </button>
+          <>
+            {/* global rendering intent — sets ALL transforms; greys when any differ */}
+            <div className={styles.chainCtls}>
+              <label className={`${styles.ctl} ${intentsMixed ? styles.ctlMixed : ''}`}
+                     title={intentsMixed ? (t('pl_ri_mixed') || 'Transforms use different intents') : ''}>
+                {t('pl_global_ri') || 'Rendering intent (all)'}
+                <select value={globalIntent} onChange={(e) => setGlobalIntent(Number(e.target.value))}>
+                  {RENDERING_INTENTS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+              </label>
+            </div>
+            <ol className={styles.chain}>
+              {chain.map((id, i) => {
+                const entry = stageEntries[i]
+                const fs = flow.stages[i] || {}
+                const first = i === 0
+                const last = i === chain.length - 1
+                // Position class: head LEFT, tail RIGHT, middles CENTRE (first wins for a single item).
+                const posClass = first ? styles.stageFirst : last ? styles.stageLast : styles.stageMiddle
+                const bad = stageBad(i)
+                const conn = !last ? fs.outSpace : null   // connecting space (this transform's output)
+                return (
+                  <li key={`${id}:${i}`} className={styles.stageItem}>
+                    <div
+                      className={`${styles.stage} ${entry ? '' : styles.stageBroken} ${bad ? styles.stageProblem : ''} ${posClass} ${dragIdx === i ? styles.stageDragging : ''} ${dropIdx === i && dragIdx !== i ? styles.stageDropTarget : ''}`}
+                      title={entry?.filename || t('pl_removed') || 'removed from pool'}
+                      onDragOver={(e) => onStageDragOver(e, i)}
+                      onDrop={(e) => onStageDrop(e, i)}
+                    >
+                      <span className={styles.stageGrip} aria-hidden="true"
+                            draggable onDragStart={(e) => onStageDragStart(e, i)} onDragEnd={onStageDragEnd}>⠿</span>
+                      <span className={styles.stageNum}>{i + 1}</span>
+                      <span className={styles.stageBody}>
+                        <span className={styles.stageName}>{entry?.filename || t('pl_removed') || 'removed'}</span>
+                      </span>
+                      {/* the transform this profile performs + its rendering intent,
+                          kept side by side (the RI applies to this in→out transform) */}
+                      {!fs.unknown && (
+                        <span className={styles.stageTransform}>
+                          <span className={styles.stageSpace}>
+                            {fs.inSpace}<span aria-hidden="true"> → </span>{fs.outSpace}
+                          </span>
+                          {fs.canIntent && (
+                            <select className={styles.stageRi} value={intents[i] ?? globalIntent}
+                                    title={t('pl_stage_ri') || 'Rendering intent for this transform'}
+                                    onChange={(e) => setIntentAt(i, Number(e.target.value))}>
+                              {RENDERING_INTENTS.map((o) => <option key={o.id} value={o.id}>{o.short}</option>)}
+                            </select>
+                          )}
+                        </span>
+                      )}
+                      <span className={styles.stageCtl}>
+                        {first && (
+                          <button className={styles.headDir} type="button" onClick={toggleHeadDir}
+                                  title={t('pl_flip_dir') || 'Flip chain direction (reverses the head transform, rippling through the chain)'}
+                                  aria-label={t('pl_flip_dir') || 'Flip chain direction'}>⇅</button>
+                        )}
+                        <button className={styles.mini} type="button" disabled={first}
+                                onClick={() => move(i, -1)} title={t('pl_move_up') || 'Move up'} aria-label={t('pl_move_up') || 'Move up'}>▲</button>
+                        <button className={styles.mini} type="button" disabled={last}
+                                onClick={() => move(i, +1)} title={t('pl_move_down') || 'Move down'} aria-label={t('pl_move_down') || 'Move down'}>▼</button>
+                        <button className={styles.miniX} type="button"
+                                onClick={() => removeAt(i)} title={t('accum_remove') || 'Remove'} aria-label={t('accum_remove') || 'Remove'}>×</button>
+                      </span>
+                    </div>
+                    {!last && (
+                      <div className={styles.connector} aria-hidden="true">
+                        <span className={styles.connLine} />
+                        {conn && conn !== '?' && <span className={styles.connSpace}>{conn}</span>}
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
+            </ol>
+          </>
+        )}
+
+        {/* chain summary / validation */}
+        {chain.length > 0 && (
+          <div className={styles.summary}>
+            {broken ? (
+              <span className={styles.warn}>{t('pl_broken') || 'A chained profile was removed from the pool — remove it to continue.'}</span>
+            ) : checking ? (
+              <span className={styles.checking}>{t('pl_checking') || 'Checking chain…'}</span>
+            ) : info?.ok ? (
+              <span className={styles.flow}>
+                {t('pl_flow') || 'Chain'}: <b>{spaceLabel(info.sourceSpace)}</b> <span aria-hidden="true">→</span> <b>{spaceLabel(info.destSpace)}</b>
+              </span>
+            ) : (
+              <span className={styles.warn}>{chainError(info, t)}</span>
+            )}
+            <button className={styles.clear} type="button" onClick={clearChain}>{t('pl_clear') || 'Clear'}</button>
           </div>
         )}
       </div>
 
-      {/* ── outcome 2: process images (live only when both ends are picture spaces) ── */}
-      <div
-        className={`${styles.imgZone} ${canImage ? styles.imgLive : styles.imgIdle} ${imgOver ? styles.imgOver : ''}`}
-        onDragOver={onImgDragOver}
-        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setImgOver(false) }}
-        onDrop={onImgDrop}
-      >
-        <span className={styles.imgIcon} aria-hidden="true">🖼️</span>
-        {canImage ? (
-          <span className={styles.imgText}>
-            {t('pl_img_live', { src: spaceLabel(info.sourceSpace), dst: spaceLabel(info.destSpace) })
-              || `Drop ${spaceLabel(info.sourceSpace)} images to convert to ${spaceLabel(info.destSpace)} — results download, nothing is stored.`}
-          </span>
-        ) : (
-          <span className={styles.imgText}>
-            {chain.length === 0 ? (t('pl_img_need_chain') || 'Build a chain to process images')
-              : checking ? (t('pl_checking') || 'Checking chain…')
-              : !info?.ok ? (t('pl_img_invalid') || 'Fix the chain before processing images')
-              : (t('pl_img_not_image') || 'This chain does not start and end in an image colour space')}
-          </span>
-        )}
-      </div>
+      {/* Outcome buttons live OUTSIDE the drop-highlight active area — a profile drag
+          never lights them up, and dropping on a button never lands in the chain. */}
+      {!naming ? (
+        <div className={styles.actions}>
+          <button className="btn-primary" type="button" disabled={!canLink} onClick={beginNaming}>
+            {t('pl_make_link') || 'Make DeviceLink'}
+          </button>
+          <button className="btn-primary" type="button" disabled={!canTransform} onClick={transformImage}>
+            {busy && image ? (t('pl_transforming') || 'Transforming…') : (t('pl_transform') || 'Transform Image')}
+          </button>
+          <button className="btn-primary" type="button" disabled={!canTransformData} onClick={doTransformData}>
+            {busy && dataParsed ? (t('dm_transforming') || 'Transforming…') : (t('dm_transform_data') || 'Transform Data')}
+          </button>
+        </div>
+      ) : (
+        <div className={styles.nameRow}>
+          <input ref={nameRef} className={styles.nameInput} value={name}
+                 onChange={(e) => setName(e.target.value)}
+                 onKeyDown={(e) => { if (e.key === 'Enter') buildLink(); if (e.key === 'Escape') setNaming(false) }}
+                 placeholder={t('pl_name_ph') || 'DeviceLink name'} aria-label={t('pl_name_ph') || 'DeviceLink name'} />
+          <button className="btn-primary" type="button" disabled={busy || !name.trim()} onClick={buildLink}>
+            {busy ? (t('pl_making') || 'Making…') : (t('v4_create') || 'Create')}
+          </button>
+          <button className={styles.cancel} type="button" disabled={busy} onClick={() => setNaming(false)}>
+            {t('cancel') || 'Cancel'}
+          </button>
+        </div>
+      )}
 
       {error && <p className={styles.error} role="alert">{error}</p>}
       {notice && <p className={styles.notice} aria-live="polite">{notice}</p>}
+
+      <DataResultModal open={!!result} result={result} onClose={() => setResult(null)} />
     </section>
   )
 }
 
-// Explanatory text for an invalid chain, from the authoritative chainInfo result. The
-// engine's terse status ("Invalid space link") is kept in parentheses for precision,
-// wrapped in a plain-language sentence that names the offending stage.
+// Photometric + channel count → a short colour-space label for the held image.
+function imgSpaceLabel(info) {
+  if (!info) return '?'
+  const ch = info.channels
+  switch (info.photometric) {
+    case 2: return 'RGB'
+    case 5: return ch === 4 ? 'CMYK' : `${ch}-channel`
+    case 8: return 'Lab'
+    case 0: case 1: return ch === 1 ? 'Gray' : `${ch}-channel`
+    default: return `${ch}-channel`
+  }
+}
+function imgKind(info) {
+  switch (info?.photometric) {
+    case 2: return 'RGB'
+    case 5: return info.channels === 4 ? 'CMYK' : 'CLR'
+    case 8: return 'Lab'
+    case 0: case 1: return info.channels === 1 ? 'GRAY' : 'CLR'
+    default: return 'CLR'
+  }
+}
+function chainKind(sig) {
+  const s = (sig || '').trim()
+  if (s === 'RGB') return 'RGB'
+  if (s === 'CMYK') return 'CMYK'
+  if (s === 'GRAY') return 'GRAY'
+  if (s === 'Lab') return 'LAB'
+  if (s === 'XYZ') return 'XYZ'
+  return /CLR/.test(s) ? 'CLR' : s
+}
+
+// Live image↔chain status. `ready` gates Transform (channel-count match + valid chain).
+function imageStatus({ image, imageInfo, imgChecking, imageErr, info, checking }) {
+  if (imgChecking) return { ready: false, msg: null }
+  if (imageErr) return { ready: false, blocked: true, msg: null }
+  if (!image || !imageInfo?.ok) return { ready: false, msg: null }
+  if (checking) return { ready: false, msg: null }
+  if (!info?.ok) return { ready: false, msg: null }
+  const need = info.sourceSamples, have = imageInfo.channels
+  const iLabel = imgSpaceLabel(imageInfo)
+  const cLabel = spaceLabel(info.sourceSpace)
+  if (need !== have) {
+    return { ready: false, blocked: true,
+      msg: `Image: ${iLabel} (${have}ch) doesn’t fit the ${cLabel} chain input (${need}ch).` }
+  }
+  const iKind = imgKind(imageInfo), cKind = chainKind(info.sourceSpace)
+  if (iKind !== cKind && iKind !== 'CLR' && cKind !== 'CLR') {
+    return { ready: true, warn: true,
+      msg: `Image looks ${iLabel} but the chain starts in ${cLabel} — result may be wrong.` }
+  }
+  return { ready: true, msg: `Image ${iLabel} → ${spaceLabel(info.destSpace)}.` }
+}
+
+// Live dataset↔chain status. `ready` gates Transform Data: the dataset must be able to
+// supply the chain's HEAD input space (device channels, or colorimetry for a PCS input).
+function dataMethodStatus({ dataParsed, dataSummary, dataErr, info, checking, prefer }) {
+  if (dataErr) return { ready: false, blocked: true, msg: null } // shown in the slot
+  if (!dataParsed || !dataSummary) return { ready: false, msg: null }
+  if (checking) return { ready: false, msg: null }
+  if (!info?.ok) return { ready: false, msg: null }
+  const kind = spaceKind(info.sourceSpace)
+  const cLabel = spaceLabel(info.sourceSpace)
+  const dLabel = spaceLabel(info.destSpace)
+  if (kind === 'device') {
+    const dev = dataSummary.kinds.find((k) => k.kind === 'device')
+    if (!dev) return { ready: false, blocked: true, msg: `Chain needs ${cLabel} device data — this dataset has none.` }
+    if (dev.channels.length !== info.sourceSamples) {
+      return { ready: false, blocked: true,
+        msg: `Dataset has ${dev.channels.length} device channel(s); the chain needs ${info.sourceSamples} (${cLabel}).` }
+    }
+    return { ready: true, msg: `Data ${dev.channels.length}-ch → ${dLabel}.` }
+  }
+  // PCS input — need a colorimetry source.
+  const srcs = dataSummary.colorimetrySources
+  if (!srcs.length) return { ready: false, blocked: true, msg: `Chain needs ${cLabel} colorimetry — this dataset has no Lab/XYZ/spectral.` }
+  if (info.sourceSamples !== 3) return { ready: false, blocked: true, msg: `Chain input ${cLabel} is not a 3-channel PCS.` }
+  const use = srcs.includes(prefer) ? prefer : srcs[0]
+  return { ready: true, msg: `Data ${PREFER_LABELS[use] || use} → ${dLabel}.` }
+}
+
+// Compact chip text under a dataset filename: patch count + kinds.
+function datasetChipText(summary) {
+  if (!summary) return ''
+  const kinds = summary.kinds.map((k) => k.kind === 'device' ? `${k.channels.length}ch`
+    : k.kind === 'spectral' ? 'spec' : k.kind).join('+')
+  return `${summary.patchCount} · ${summary.format.toUpperCase()} · ${kinds}`
+}
+
+// Full dataset-properties line (design decision #5).
+function datasetSummaryText(summary, t) {
+  const parts = []
+  parts.push(summary.cxfVariant || summary.format.toUpperCase())
+  parts.push(`${summary.patchCount} ${t('dm_patches') || 'patches'}`)
+  for (const k of summary.kinds) parts.push(`${k.label} (${k.encoding})`)
+  if (summary.duplicates.dupeRows > 0) {
+    const de = summary.duplicates.de
+    parts.push((t('dm_dupes', { n: summary.duplicates.dupeRows }) || `${summary.duplicates.dupeRows} duplicates`)
+      + (de ? ` · ΔE≈${de.mean.toFixed(2)}` : ''))
+  }
+  return parts.join(' · ')
+}
+
+// Explanatory text for an invalid chain, from the authoritative chainInfo result.
 function chainError(info, t) {
   if (!info) return t('pl_unknown') || 'The chain could not be analysed.'
   const detail = info.error || ''

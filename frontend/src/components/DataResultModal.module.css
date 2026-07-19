@@ -1,0 +1,70 @@
+/* (c) 2026 William Li — Transform-Data result modal (Link-Pipeline data methods). */
+
+.backdrop {
+  position: fixed; inset: 0; z-index: 1200;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  width: min(880px, 100%);
+  max-height: 88vh;
+  display: flex; flex-direction: column;
+}
+
+.head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 16px 18px 10px;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+}
+.title { margin: 0; font-size: 1.02rem; font-weight: 700; color: var(--text); }
+.sub { margin: 3px 0 0; font-size: 0.8rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.close {
+  border: none; background: transparent; cursor: pointer; flex: none;
+  font-size: 1.5rem; line-height: 1; color: var(--text-muted); padding: 0 4px;
+}
+.close:hover { color: var(--error); }
+
+.tableWrap { overflow: auto; padding: 8px 18px; flex: 1 1 auto; min-height: 0; }
+.table { border-collapse: collapse; font-size: 0.8rem; font-variant-numeric: tabular-nums; width: 100%; }
+.table th, .table td {
+  padding: 4px 10px; text-align: right; white-space: nowrap;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+}
+.table th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--surface); color: var(--text-muted);
+  font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em;
+}
+.table td { color: var(--text); }
+.table th:first-child, .table td:first-child { text-align: left; }
+/* Output columns tinted so the input→output split is visible at a glance. */
+.destCol { background: var(--accent-tint); }
+.table th.destCol { background: var(--accent-tint-strong, var(--accent-tint)); color: var(--accent-dark, var(--accent)); }
+
+.more { margin: 8px 2px 2px; font-size: 0.78rem; color: var(--text-muted); font-style: italic; }
+
+.foot {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 18px; border-top: 1px solid var(--border-soft, var(--border));
+}
+.saveAs { display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--text-muted); }
+.saveAs select {
+  padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius, 8px);
+  background: var(--surface); color: var(--text); font-size: 0.82rem;
+}
+.doneBtn {
+  margin-left: auto;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: var(--radius, 8px); padding: 7px 14px; cursor: pointer; font-size: 0.86rem;
+}
+.doneBtn:hover { border-color: var(--accent); }
+
+@media (max-width: 700px) {
+  .backdrop { padding: 0; }
+  .modal { width: 100%; max-height: 100vh; height: 100vh; border-radius: 0; }
+}

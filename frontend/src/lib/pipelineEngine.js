@@ -69,13 +69,125 @@ export async function buildLink(chainBytes, opts = {}) {
   if (typeof mod.buildLink !== 'function') {
     throw new Error('The DeviceLink engine is not built into this WASM module yet.')
   }
-  const intent = Number.isInteger(opts.intent) ? opts.intent : 1   // relative colorimetric
+  const intents = opts.intents ?? 1        // array (per-profile) or scalar; default relative
+  const firstInput = opts.firstInput ?? true   // head-transform direction (true = device→PCS)
   const grid = Number.isInteger(opts.grid) ? opts.grid : 0         // 0 = auto by channel count
   let out
-  try { out = mod.buildLink(chainBytes, intent, grid) }
+  try { out = mod.buildLink(chainBytes, intents, firstInput, grid) }
   catch (e) { throw toError(mod, e) }
   if (!out || !out.length) throw new Error('The DeviceLink engine returned no profile.')
   return out instanceof Uint8Array ? out : new Uint8Array(out)
+}
+
+// icRenderingIntent enum (ICC) — the value picked per transform (and the global
+// default). 0 perceptual · 1 relative colorimetric · 2 saturation · 3 absolute.
+export const RENDERING_INTENTS = [
+  { id: 0, label: 'Perceptual', short: 'Perc' },
+  { id: 1, label: 'Relative Colorimetric', short: 'Rel' },
+  { id: 2, label: 'Saturation', short: 'Sat' },
+  { id: 3, label: 'Absolute Colorimetric', short: 'Abs' },
+]
+
+// icFloatColorEncoding enum (IccCmm.h) — the C++ applyValues clamps out-of-range,
+// but the JS side names them so the data methods can pass the auto-detected encoding.
+export const ENCODING = {
+  value: 0,
+  percent: 1,
+  unitFloat: 2,
+  float: 3,
+  '8Bit': 4,
+  '16Bit': 5,
+  '16BitV2': 6,
+}
+
+/**
+ * Run a LIST of colours (a dropped dataset) through the chain — profiletool's
+ * iccApplyNamedCmm equivalent (Transform Data). Unlike applyToImage, source values
+ * carry a real encoding (percent / 8-bit / PCS Lab-XYZ value units), so the WASM
+ * routes each sample through ToInternalEncoding / FromInternalEncoding.
+ * @param {Uint8Array[]} chainBytes ordered profile byte buffers
+ * @param {Float32Array|number[]} samples row-major nSamples × nSrc source values
+ * @param {number} nSrc source channels per sample
+ * @param {{intent?:number, srcEncoding?:string|number, dstEncoding?:string|number}} [opts]
+ * @returns {Promise<{destSamples:number, srcSpace:string, dstSpace:string, values:Float32Array}>}
+ */
+export async function transformData(chainBytes, samples, nSrc, opts = {}) {
+  const mod = await loadConstruct()
+  if (typeof mod.applyValues !== 'function') {
+    throw new Error('The data-transform engine is not built into this WASM module yet.')
+  }
+  const src = samples instanceof Float32Array ? samples : Float32Array.from(samples)
+  if (nSrc < 1) throw new Error('The data has no colour channels.')
+  if (src.length % nSrc !== 0) throw new Error('Data value count is not a multiple of the channel count.')
+  const intents = opts.intents ?? 1
+  const firstInput = opts.firstInput ?? true
+  const encNum = (e, dflt) =>
+    Number.isInteger(e) ? e : e in ENCODING ? ENCODING[e] : dflt
+  const srcEnc = encNum(opts.srcEncoding, ENCODING.unitFloat)
+  const dstEnc = encNum(opts.dstEncoding, ENCODING.value)
+  let res
+  try { res = mod.applyValues(chainBytes, new Uint8Array(src.buffer), nSrc, intents, firstInput, srcEnc, dstEnc) }
+  catch (e) { throw toError(mod, e) }
+  if (!res || !res.ok) throw new Error(res?.error || 'Data transform failed.')
+  const values = res.values instanceof Float32Array ? res.values : new Float32Array(res.values)
+  return { destSamples: res.destSamples, srcSpace: res.srcSpace, dstSpace: res.dstSpace, values }
+}
+
+// Observer / illuminant / M-condition option values, shared with the UI controls.
+// Illuminant ints are icIlluminant enum values (only D50/D65/D93/A have built-in
+// SPDs in iccDEV — the only ones exposed). Observer 1 = CIE 1931 2°, 2 = 1964 10°.
+export const OBSERVERS = [
+  { id: 1, label: '2° (1931)' },
+  { id: 2, label: '10° (1964)' },
+]
+export const ILLUMINANTS = [
+  { id: 1, label: 'D50' },
+  { id: 2, label: 'D65' },
+  { id: 3, label: 'D93' },
+  { id: 6, label: 'A' },
+]
+export const M_CONDITIONS = [
+  { id: 0, label: 'M0' },
+  { id: 1, label: 'M1' },
+  { id: 2, label: 'M2' },
+  { id: 3, label: 'M3' },
+]
+
+/**
+ * Convert spectral reflectance rows → CIE XYZ (relative colorimetry, Y=1) using
+ * iccDEV's canonical CIccColorimetricCalculator (the ~/code/spectral reference
+ * class). Reflectance must be in [0,1] FACTORS — scale percent→unit before calling.
+ * @param {number[][]} reflRows  each row is nBands reflectance factors
+ * @param {{startNm:number, endNm:number, observer?:number, illuminant?:number, mCond?:number}} opts
+ * @returns {Promise<{ xyz: number[][], white: number[] }>} XYZ rows + adopted white
+ */
+export async function spectralToXYZ(reflRows, opts) {
+  const mod = await loadConstruct()
+  if (typeof mod.spectralToXYZ !== 'function') {
+    throw new Error('The spectral engine is not built into this WASM module yet.')
+  }
+  const n = reflRows.length
+  if (!n) return { xyz: [], white: [0, 0, 0] }
+  const nBands = reflRows[0].length
+  const flat = new Float32Array(n * nBands)
+  for (let r = 0; r < n; r++) {
+    const row = reflRows[r]
+    for (let b = 0; b < nBands; b++) flat[r * nBands + b] = Number(row[b]) || 0
+  }
+  let res
+  try {
+    res = mod.spectralToXYZ(new Uint8Array(flat.buffer), n, nBands,
+      opts.startNm, opts.endNm,
+      Number.isInteger(opts.observer) ? opts.observer : 1,
+      Number.isInteger(opts.illuminant) ? opts.illuminant : 1,
+      Number.isInteger(opts.mCond) ? opts.mCond : 0)
+  } catch (e) { throw toError(mod, e) }
+  if (!res || !res.ok) throw new Error(res?.error || 'Spectral conversion failed.')
+  const vals = res.values instanceof Float32Array ? res.values : new Float32Array(res.values)
+  const xyz = []
+  for (let r = 0; r < n; r++) xyz.push([vals[r * 3], vals[r * 3 + 1], vals[r * 3 + 2]])
+  const w = res.white instanceof Float32Array ? res.white : new Float32Array(res.white)
+  return { xyz, white: [w[0], w[1], w[2]] }
 }
 
 /**
@@ -87,14 +199,14 @@ export async function buildLink(chainBytes, opts = {}) {
  * @returns {Promise<{ok:boolean, error?:string, failedStage?:number, empty?:boolean,
  *   sourceSpace?:string, destSpace?:string, sourceSamples?:number, destSamples?:number}>}
  */
-export async function chainInfo(chainBytes, intent = 1) {
+export async function chainInfo(chainBytes, intents = 1, firstInput = true) {
   const mod = await loadConstruct()
   if (typeof mod.chainInfo !== 'function') {
     // Older WASM without the export — don't block the UI, just skip validation.
     return { ok: true, unavailable: true }
   }
   try {
-    const r = mod.chainInfo(chainBytes, Number.isInteger(intent) ? intent : 1)
+    const r = mod.chainInfo(chainBytes, intents, firstInput)
     return r || { ok: false, error: 'No result from chain analysis.' }
   } catch (e) {
     return { ok: false, error: toError(mod, e).message }
@@ -110,9 +222,14 @@ export async function chainInfo(chainBytes, intent = 1) {
  * @param {{intent?: number}} [opts]
  * @returns {Promise<{bytes: Uint8Array, filename: string}>}
  */
+// Pixels processed per chunk. Bounds WASM memory: a chunk is nSrc/nDst × this × 4
+// bytes each way (~16 MB at 4 channels), so an arbitrarily large image never needs
+// its whole float raster resident (which std::bad_alloc'd on big CMYK TIFFs).
+const IMG_CHUNK_PIXELS = 1_000_000
+
 export async function applyToImage(chainBytes, file, opts = {}) {
   const mod = await loadConstruct()
-  if (typeof mod.applyImage !== 'function') {
+  if (typeof mod.imageApplyBegin !== 'function') {
     throw new Error('The image engine is not built into this WASM module yet.')
   }
   const { decodeImage, encodeImage } = await import('./imageCodec.js')
@@ -121,29 +238,45 @@ export async function applyToImage(chainBytes, file, opts = {}) {
   try { img = await decodeImage(bytes) }                       // TIFF/PNG/JPEG, any space
   catch (e) { throw new Error(`Could not decode “${file.name}”: ${e.message}`) }
 
-  // Raw samples (native-endian 8/16-bit) → Float32 [0,1] in the source device channels.
   const nSrc = img.channels
   const nPixels = img.width * img.height
-  const src = new Float32Array(nPixels * nSrc)
-  const s = img.samples
-  if (img.bitDepth === 16) {
-    for (let i = 0; i < src.length; i++) src[i] = (s[i * 2] | (s[i * 2 + 1] << 8)) / 65535
-  } else {
-    for (let i = 0; i < src.length; i++) src[i] = s[i] / 255
-  }
+  const intents = opts.intents ?? 1
+  const firstInput = opts.firstInput ?? true
 
-  const intent = Number.isInteger(opts.intent) ? opts.intent : 1
-  let res
-  try { res = mod.applyImage(chainBytes, new Uint8Array(src.buffer), nSrc, intent) }
+  // Build the CMM once; then stream the raster through it in bounded chunks.
+  let begin
+  try { begin = mod.imageApplyBegin(chainBytes, nSrc, intents, firstInput) }
   catch (e) { throw toError(mod, e) }
-  if (!res || !res.ok) throw new Error(res?.error || 'Image processing failed.')
-  const nDst = res.destSamples
-  const dstF = res.pixels
+  if (!begin || !begin.ok) throw new Error(begin?.error || 'Image processing failed.')
+  const nDst = begin.nDst
 
+  const s = img.samples
+  const is16 = img.bitDepth === 16
   const out8 = new Uint8Array(nPixels * nDst)
-  for (let i = 0; i < out8.length; i++) {
-    const v = dstF[i]
-    out8[i] = (v <= 0 || Number.isNaN(v)) ? 0 : v >= 1 ? 255 : Math.round(v * 255)
+  try {
+    for (let p0 = 0; p0 < nPixels; p0 += IMG_CHUNK_PIXELS) {
+      const cnt = Math.min(IMG_CHUNK_PIXELS, nPixels - p0)
+      // This chunk's source pixels → Float32 [0,1] (converted from the decoded 8/16-bit
+      // samples on the fly, so the whole float image is never allocated at once).
+      const chunk = new Float32Array(cnt * nSrc)
+      const base = p0 * nSrc
+      if (is16) {
+        for (let k = 0; k < chunk.length; k++) { const j = (base + k) * 2; chunk[k] = (s[j] | (s[j + 1] << 8)) / 65535 }
+      } else {
+        for (let k = 0; k < chunk.length; k++) chunk[k] = s[base + k] / 255
+      }
+      let res
+      try { res = mod.imageApplyChunk(new Uint8Array(chunk.buffer)) }   // eslint-disable-line no-await-in-loop
+      catch (e) { throw toError(mod, e) }
+      const dstF = res.pixels
+      const ob = p0 * nDst
+      for (let k = 0; k < cnt * nDst; k++) {
+        const v = dstF[k]
+        out8[ob + k] = (v <= 0 || Number.isNaN(v)) ? 0 : v >= 1 ? 255 : Math.round(v * 255)
+      }
+    }
+  } finally {
+    try { mod.imageApplyEnd() } catch { /* ignore */ }
   }
 
   // Container by destination channel count: 1/3 → PNG (lossless); 4 → separated TIFF

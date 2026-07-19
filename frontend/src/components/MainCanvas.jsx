@@ -28,6 +28,8 @@ export default function MainCanvas({
   onIccProduced, onSave,
   // Link-tab makers (DL-LINK1 / DL-PIPELINE1):
   onCreateV4, onBuildLink, onApplyImages,
+  // Combine-tab maker state lifted to App (survives tab switches):
+  pipeline, setPipeline, v4Roles, setV4Roles,
   // SpecSep tab (DL-PIPELINE1):
   onAssembleSpec,
 }) {
@@ -88,7 +90,14 @@ export default function MainCanvas({
   // The whole panel is a drop target for the active tab. Clear the highlight only
   // when the pointer actually leaves the panel subtree (not when crossing into a
   // child), so it doesn't flicker over the embedded viewer.
-  const panelDropProps = {
+  //
+  // EXCEPTION: the Link (Combine) tab. Its maker cards (Observer Change, Link
+  // Pipeline) each own their drop area, so a panel-wide drop target here just lit up
+  // the whole canvas and let profiles land on empty space — confusing. On Link we
+  // drop the panel target entirely; the cards handle their own drops (and still
+  // accumulate onto the tab via onAccumulate). Profiles can also still be dropped on
+  // the tab button and the accumulator strip.
+  const panelDropProps = activeTab === 'Link' ? {} : {
     onDragOver: (e) => { if (acceptDrag(e)) { e.preventDefault(); setPanelDrag(true) } },
     onDragLeave: (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setPanelDrag(false) },
     onDrop: (e) => routeDrop(activeTab, e),
@@ -157,7 +166,9 @@ export default function MainCanvas({
         {activeTab === 'Link' && (
           <LinkPanel t={t} getEntry={getEntry} onCreateV4={onCreateV4}
                      onBuildLink={onBuildLink} onApplyImages={onApplyImages}
-                     onAccumulate={(ids) => onDropOnTab('Link', ids)} />
+                     onAccumulate={(ids) => onDropOnTab('Link', ids)}
+                     pipeline={pipeline} setPipeline={setPipeline}
+                     v4Roles={v4Roles} setV4Roles={setV4Roles} />
         )}
         {activeTab === 'SpecSep' && <SpecSepPanel onAssemble={onAssembleSpec} />}
       </div>
@@ -202,12 +213,15 @@ function ProfilePanel({ entry, t, initialTab, changedTagIds, onXmlChanged, onJso
 // the pool onto the card) into a new profile / transform. DL-LINK1 = the V4 Display
 // Maker (fixed role slots); DL-PIPELINE1 = the Pipeline builder (an ordered chain →
 // DeviceLink or image processing). Both drop results into the pool the same way.
-function LinkPanel({ t, getEntry, onCreateV4, onBuildLink, onApplyImages, onAccumulate }) {
+function LinkPanel({ t, getEntry, onCreateV4, onBuildLink, onApplyImages, onAccumulate,
+                    pipeline, setPipeline, v4Roles, setV4Roles }) {
   return (
     <div className={styles.linkCanvas}>
-      <V4DisplayMaker getEntry={getEntry} onCreate={onCreateV4} />
+      <V4DisplayMaker getEntry={getEntry} onCreate={onCreateV4}
+                      roles={v4Roles} setRoles={setV4Roles} />
       <PipelineBuilder getEntry={getEntry} onBuildLink={onBuildLink}
-                       onApplyImages={onApplyImages} onAccumulate={onAccumulate} />
+                       onApplyImages={onApplyImages} onAccumulate={onAccumulate}
+                       pipeline={pipeline} setPipeline={setPipeline} />
     </div>
   )
 }

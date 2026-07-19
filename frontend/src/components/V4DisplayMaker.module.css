@@ -5,7 +5,12 @@
   border-radius: var(--radius-lg, 12px);
   background: var(--surface);
   padding: 16px 18px;
-  max-width: 560px;                 /* leaves the rest of the Link canvas for other makers */
+  /* Own row in the Combine canvas, spanning the canvas width minus a 5% margin on
+     each side (≈90% wide) — matches the Link Pipeline card. */
+  flex: 1 1 100%;
+  max-width: none;
+  margin: 0 5%;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 12px;

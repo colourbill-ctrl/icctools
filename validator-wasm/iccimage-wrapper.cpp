@@ -398,6 +398,96 @@ Bytes findProfileStreamImpl(int id) {
   }
 }
 
+// ── STREAMING probe — geometry + colour space from the HEADER only (no pixels) ──
+// Validates an image and reports { ok, width, height, channels, bitDepth, photometric }
+// reading only the header/IFD/SOF via the same ranged reader, so a huge image can be
+// accepted/rejected (type + dimensions) without loading its raster. `channels` is the
+// count decodeImage would PRODUCE (alpha stripped, palette expanded), so the caller can
+// match it against the chain's source-channel count.
+emscripten::val probeTiffStream(Reader& r) {
+  emscripten::val res = emscripten::val::object();
+  r.seek(0);
+  TIFF* t = TIFFClientOpen("p", "r", (thandle_t)&r, rcRead, rcWrite, rcSeek, rcClose, rcSize, rcMap, rcUnmap);
+  if (!t) { res.set("ok", false); res.set("error", std::string("Not a readable TIFF.")); return res; }
+  std::uint32_t w = 0, h = 0; std::uint16_t spp = 1, bps = 8, photo = 1;
+  TIFFGetField(t, TIFFTAG_IMAGEWIDTH, &w);
+  TIFFGetField(t, TIFFTAG_IMAGELENGTH, &h);
+  TIFFGetFieldDefaulted(t, TIFFTAG_SAMPLESPERPIXEL, &spp);
+  TIFFGetFieldDefaulted(t, TIFFTAG_BITSPERSAMPLE, &bps);
+  TIFFGetFieldDefaulted(t, TIFFTAG_PHOTOMETRIC, &photo);
+  TIFFClose(t);
+  res.set("ok", true); res.set("width", (int)w); res.set("height", (int)h);
+  res.set("channels", (int)spp); res.set("bitDepth", (int)bps); res.set("photometric", (int)photo);
+  return res;
+}
+emscripten::val probePngStream(Reader& r) {
+  emscripten::val res = emscripten::val::object();
+  r.seek(0);
+  std::uint8_t sig[8];
+  if (r.read(sig, 8) != 8 || png_sig_cmp(sig, 0, 8)) { res.set("ok", false); res.set("error", std::string("Not a PNG.")); return res; }
+  png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+  if (!png) { res.set("ok", false); res.set("error", std::string("libpng init failed.")); return res; }
+  png_infop info = png_create_info_struct(png);
+  if (!info) { png_destroy_read_struct(&png, nullptr, nullptr); res.set("ok", false); res.set("error", std::string("libpng init failed.")); return res; }
+  if (setjmp(png_jmpbuf(png))) { png_destroy_read_struct(&png, &info, nullptr); res.set("ok", false); res.set("error", std::string("PNG header read failed.")); return res; }
+  png_set_read_fn(png, &r, pngStreamRead);
+  png_set_sig_bytes(png, 8);
+  png_read_info(png, info);
+  png_uint_32 w = 0, h = 0; int bd = 8, ct = 0;
+  png_get_IHDR(png, info, &w, &h, &bd, &ct, nullptr, nullptr, nullptr);
+  png_destroy_read_struct(&png, &info, nullptr);
+  int ch;   // channels decodePng produces (alpha stripped, palette → RGB)
+  switch (ct) {
+    case PNG_COLOR_TYPE_GRAY:       ch = 1; break;
+    case PNG_COLOR_TYPE_GRAY_ALPHA: ch = 1; break;
+    case PNG_COLOR_TYPE_PALETTE:    ch = 3; break;
+    case PNG_COLOR_TYPE_RGB:        ch = 3; break;
+    case PNG_COLOR_TYPE_RGB_ALPHA:  ch = 3; break;
+    default:                        ch = 3; break;
+  }
+  res.set("ok", true); res.set("width", (int)w); res.set("height", (int)h);
+  res.set("channels", ch); res.set("bitDepth", ct == PNG_COLOR_TYPE_GRAY && bd < 8 ? 8 : bd);
+  res.set("photometric", ch >= 3 ? 2 : 1);
+  return res;
+}
+emscripten::val probeJpegStream(Reader& r) {
+  emscripten::val res = emscripten::val::object();
+  r.seek(0);
+  struct jpeg_decompress_struct cinfo; JpegErr jerr;
+  cinfo.err = jpeg_std_error(&jerr.pub); jerr.pub.error_exit = jpegErrorExit; jerr.pub.emit_message = jpegEmit;
+  if (setjmp(jerr.jmp)) { jpeg_destroy_decompress(&cinfo); res.set("ok", false); res.set("error", std::string("JPEG header read failed.")); return res; }
+  jpeg_create_decompress(&cinfo);
+  StreamSrc src;
+  src.pub.init_source = jsmInit; src.pub.fill_input_buffer = jsmFill; src.pub.skip_input_data = jsmSkip;
+  src.pub.resync_to_restart = jpeg_resync_to_restart; src.pub.term_source = jsmTerm;
+  src.pub.bytes_in_buffer = 0; src.pub.next_input_byte = nullptr; src.r = &r;
+  cinfo.src = (struct jpeg_source_mgr*)&src;
+  jpeg_read_header(&cinfo, TRUE);
+  const int w = cinfo.image_width, h = cinfo.image_height, ch = cinfo.num_components;
+  const bool cmyk = (cinfo.jpeg_color_space == JCS_CMYK || cinfo.jpeg_color_space == JCS_YCCK);
+  jpeg_destroy_decompress(&cinfo);
+  res.set("ok", true); res.set("width", w); res.set("height", h);
+  res.set("channels", ch); res.set("bitDepth", 8);
+  res.set("photometric", cmyk ? 5 : (ch >= 3 ? 2 : 1));
+  return res;
+}
+emscripten::val probeImageStreamImpl(int id) {
+  Reader r; r.id = id;
+  std::uint8_t magic[8]; r.seek(0);
+  const std::size_t got = r.read(magic, sizeof(magic));
+  const Bytes head(magic, magic + got);
+  switch (detectFormat(head)) {
+    case Fmt::Tiff: return probeTiffStream(r);
+    case Fmt::Png:  return probePngStream(r);
+    case Fmt::Jpeg: return probeJpegStream(r);
+    default: {
+      emscripten::val res = emscripten::val::object();
+      res.set("ok", false); res.set("error", std::string("Unrecognised image format."));
+      return res;
+    }
+  }
+}
+
 // ── TIFF decode → raw samples ───────────────────────────────────────────────
 // Returns the image as contiguous, native-endian samples (8- or 16-bit) plus the
 // embedded profile if present. Uses scanline reads; de-planarizes separate planes.
@@ -682,6 +772,16 @@ emscripten::val findProfileStream(int sourceId) {
   if (prof.empty()) return emscripten::val::null();
   return makeUint8Array(prof.data(), prof.size());
 }
+// Streaming probe: header-only geometry + colour space (validate an image without
+// loading its pixels). Never throws — a bad image is a normal {ok:false} result.
+emscripten::val probeImage(int sourceId) {
+  try { return probeImageStreamImpl(sourceId); }
+  catch (...) {
+    emscripten::val r = emscripten::val::object();
+    r.set("ok", false); r.set("error", std::string("Could not read the image header."));
+    return r;
+  }
+}
 emscripten::val decodeImage(emscripten::val bytesVal) {
   try { return decodeImageImpl(toBytes(bytesVal)); }
   catch (const std::exception& e) {
@@ -712,6 +812,7 @@ emscripten::val encodeImage(std::string format, int width, int height, int chann
 EMSCRIPTEN_BINDINGS(iccimage) {
   emscripten::function("findProfile", &findProfile);
   emscripten::function("findProfileStream", &findProfileStream);
+  emscripten::function("probeImage", &probeImage);
   emscripten::function("decodeImage", &decodeImage);
   emscripten::function("encodeImage", &encodeImage);
 }

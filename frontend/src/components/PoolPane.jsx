@@ -15,6 +15,7 @@ export const POOL_DND_MIME = 'application/x-profiletool-pool-ids'
 const WIDTH_KEY = 'profiletool.poolWidth'
 const COLLAPSED_KEY = 'profiletool.poolCollapsed'
 const SORT_KEY = 'profiletool.poolSort'
+const GROUPS_KEY = 'profiletool.poolGroupsCollapsed'   // which type sections are collapsed
 const MIN_W = 220, MAX_W = 620, DEFAULT_W = 320
 
 // Name-sort modes cycled by the header button: 'none' keeps load order; 'asc'
@@ -35,10 +36,19 @@ export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, 
     const w = parseInt(localStorage.getItem(WIDTH_KEY) || '', 10)
     return Number.isFinite(w) ? Math.min(MAX_W, Math.max(MIN_W, w)) : DEFAULT_W
   })
+  // Which type sections (by class key) are collapsed — persisted across sessions.
+  const [collapsedGroups, setCollapsedGroups] = useState(() => {
+    try { const a = JSON.parse(localStorage.getItem(GROUPS_KEY) || '[]'); return new Set(Array.isArray(a) ? a : []) }
+    catch { return new Set() }
+  })
 
   useEffect(() => { localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0') }, [collapsed])
   useEffect(() => { localStorage.setItem(SORT_KEY, sort) }, [sort])
   useEffect(() => { localStorage.setItem(WIDTH_KEY, String(width)) }, [width])
+  useEffect(() => { localStorage.setItem(GROUPS_KEY, JSON.stringify([...collapsedGroups])) }, [collapsedGroups])
+  const toggleGroup = useCallback((key) => setCollapsedGroups((s) => {
+    const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n
+  }), [])
 
   const cycleSort = useCallback(() => {
     setSort((s) => SORT_MODES[(SORT_MODES.indexOf(s) + 1) % SORT_MODES.length])
@@ -54,6 +64,12 @@ export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, 
     return [...entries].sort((a, b) =>
       dir * a.filename.localeCompare(b.filename, undefined, { numeric: true, sensitivity: 'base' }))
   }, [entries, sort])
+
+  // Group the (already-ordered) list into sections by profile CLASS (Output,
+  // ColorSpace, …). Because we group the SORTED list, the sort button orders each
+  // type's sub-list independently. Class is read from the header signature (offset
+  // 12) for language/format stability.
+  const sections = useMemo(() => groupByClass(shownEntries), [shownEntries])
 
   // Drag-to-resize the right edge.
   const dragState = useRef(null)
@@ -179,32 +195,47 @@ export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, 
             <p className={styles.emptySub}>{t('pool_empty_sub') || 'or an image (TIFF/PNG/JPEG) to extract its embedded profile — files stay on your device.'}</p>
           </div>
         ) : (
-          <ul className={styles.list}>
-            {shownEntries.map((e) => (
-              <li
-                key={e.id}
-                className={`${styles.row} ${selectedIds.has(e.id) ? styles.rowSel : ''}`}
-                draggable
-                onDragStart={(ev) => onRowDragStart(e.id, ev)}
-                onClick={(ev) => onSelect(e.id, ev)}
-                title={e.filename}
-              >
-                <div className={styles.rowMain}>
-                  <span className={styles.rowName}>{e.filename}</span>
-                  <button className={styles.remove} title={t('pool_remove') || 'Remove'}
-                          aria-label={t('pool_remove') || 'Remove'}
-                          onClick={(ev) => { ev.stopPropagation(); onRemove(e.id) }}>×</button>
-                </div>
-                <div className={styles.badges}>
-                  {e.meta.partial && <span className={`${styles.badge} ${styles.badgeWarn}`}>partial</span>}
-                  {e.meta.profileClass && <span className={styles.badge}>{shortClass(e.meta.profileClass)}</span>}
-                  {e.meta.colorSpace && <span className={styles.badge}>{e.meta.colorSpace.trim()}</span>}
-                  {e.meta.version && <span className={styles.badgeDim}>v{e.meta.version}</span>}
-                  {e.meta.sizeBytes ? <span className={styles.badgeDim}>{formatSize(e.meta.sizeBytes)}</span> : null}
-                </div>
-              </li>
-            ))}
-          </ul>
+          sections.map((sec) => {
+            const groupCollapsed = collapsedGroups.has(sec.key)
+            return (
+            <section key={sec.key} className={styles.group}>
+              <button type="button" className={styles.groupHead}
+                      onClick={() => toggleGroup(sec.key)} aria-expanded={!groupCollapsed}>
+                <span className={styles.groupCaret} aria-hidden="true">{groupCollapsed ? '▸' : '▾'}</span>
+                <span className={styles.groupLabel}>{sec.label}</span>
+                <span className={styles.groupCount}>{sec.items.length}</span>
+              </button>
+              {!groupCollapsed && (
+              <ul className={styles.list}>
+                {sec.items.map((e) => (
+                  <li
+                    key={e.id}
+                    className={`${styles.row} ${selectedIds.has(e.id) ? styles.rowSel : ''}`}
+                    draggable
+                    onDragStart={(ev) => onRowDragStart(e.id, ev)}
+                    onClick={(ev) => onSelect(e.id, ev)}
+                    title={e.filename}
+                  >
+                    <div className={styles.rowMain}>
+                      <span className={styles.rowName}>{e.filename}</span>
+                      <button className={styles.remove} title={t('pool_remove') || 'Remove'}
+                              aria-label={t('pool_remove') || 'Remove'}
+                              onClick={(ev) => { ev.stopPropagation(); onRemove(e.id) }}>×</button>
+                    </div>
+                    <div className={styles.badges}>
+                      {e.meta.partial && <span className={`${styles.badge} ${styles.badgeWarn}`}>partial</span>}
+                      {e.meta.profileClass && <span className={styles.badge}>{shortClass(e.meta.profileClass)}</span>}
+                      {e.meta.colorSpace && <span className={styles.badge}>{e.meta.colorSpace.trim()}</span>}
+                      {e.meta.version && <span className={styles.badgeDim}>v{e.meta.version}</span>}
+                      {e.meta.sizeBytes ? <span className={styles.badgeDim}>{formatSize(e.meta.sizeBytes)}</span> : null}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              )}
+            </section>
+            )
+          })
         )}
       </div>
 
@@ -218,4 +249,42 @@ export default function PoolPane({ entries, selectedIds, onSelect, onLoadFiles, 
 function shortClass(s) {
   const m = String(s).match(/\(([^)]{1,8})\)\s*$/)
   return m ? m[1] : s
+}
+
+// Header device/profile class signature (offset 12), read from bytes — not the
+// localized string — so section grouping is language/format-stable.
+function poolClassSig(bytes) {
+  if (!bytes || bytes.length < 16) return ''
+  return String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15])
+}
+// Class signature → pool section (label + display order along the device pipeline).
+const CLASS_SECTIONS = {
+  scnr: { label: 'Input', order: 1 },
+  mntr: { label: 'Display', order: 2 },
+  prtr: { label: 'Output', order: 3 },
+  link: { label: 'DeviceLink', order: 4 },
+  spac: { label: 'ColorSpace', order: 5 },
+  abst: { label: 'Abstract', order: 6 },
+  nmcl: { label: 'Named Color', order: 7 },
+  cenc: { label: 'Color Encoding', order: 8 },
+  'mid ': { label: 'Multiplex ID', order: 9 },
+  mlnk: { label: 'Multiplex Link', order: 10 },
+  mvis: { label: 'Multiplex Vis', order: 11 },
+}
+// Group a (pre-ordered) entry list into class sections. Because the input is already
+// sorted, each section's sub-list inherits that order — so the sort button orders
+// within every type independently. Unknown classes fall to the end, labelled by sig.
+function groupByClass(entries) {
+  const groups = new Map()
+  for (const e of entries) {
+    const key = poolClassSig(e.currentBytes) || '????'
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(e)
+  }
+  return [...groups.entries()]
+    .map(([key, items]) => {
+      const def = CLASS_SECTIONS[key]
+      return { key, items, order: def ? def.order : 99, label: def ? def.label : (key.trim() || 'Other') }
+    })
+    .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
 }

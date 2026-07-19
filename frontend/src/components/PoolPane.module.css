@@ -63,7 +63,25 @@
 .emptyHead { font-weight: 600; color: var(--text); margin: 0 0 4px; font-size: 14px; }
 .emptySub { font-size: 12px; margin: 0; line-height: 1.4; }
 
-.list { list-style: none; margin: 0; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+/* ── type sections (grouped by profile class) ────────────────────── */
+.group { border-top: 1px solid var(--border-soft, var(--border)); }
+.group:first-child { border-top: none; }
+.groupHead {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; padding: 7px 12px 4px;
+  position: sticky; top: 0; z-index: 1;
+  background: var(--surface);
+  border: none; cursor: pointer; text-align: left; font: inherit;
+}
+.groupHead:hover .groupLabel { color: var(--text); }
+.groupCaret { font-size: 0.6rem; line-height: 1; color: var(--text-muted); width: 9px; flex: none; }
+.groupLabel { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.groupCount {
+  font-size: 0.62rem; font-weight: 700; color: var(--text-muted);
+  background: var(--surface-alt); border-radius: 8px; padding: 0 6px; line-height: 1.5;
+}
+
+.list { list-style: none; margin: 0; padding: 4px 6px; display: flex; flex-direction: column; gap: 4px; }
 .row {
   padding: 7px 9px; border-radius: var(--radius); cursor: pointer;
   border: 1px solid transparent; background: var(--surface-alt);
