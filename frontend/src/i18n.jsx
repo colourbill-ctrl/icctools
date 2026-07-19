@@ -197,6 +197,7 @@ export const I18N = {
     ss_go: 'Assemble & Save',
     ss_assembling: 'Assembling…',
     ss_done: 'Assembled {n} channels.',
+    ss_notimg: 'None of those look like images (TIFF, PNG or JPEG).',
     cancel: 'Cancel',
     reject_title: '{n} file(s) not loaded',
     reject_intro: 'These files are not ICC profiles, so they were not added to the pool:',

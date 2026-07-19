@@ -15,6 +15,22 @@ import styles from './SpecSepPanel.module.css'
 
 const IMG_RE = /\.(tiff?|png|jpe?g)$/i
 
+// Content sniff — the first bytes of a TIFF / PNG / JPEG. The iccSpecSepToTiff test
+// planes (tifffile.py's `spec_1`, `spec_2`, …) carry NO extension, yet our libtiff/libpng
+// decoder reads them fine (it works on bytes, not the name). So accept a file whose
+// CONTENT is a known raster even when its name has no image extension.
+async function looksLikeImage(file) {
+  try {
+    const b = new Uint8Array(await file.slice(0, 4).arrayBuffer())
+    if (b.length < 3) return false
+    if (b[0] === 0x49 && b[1] === 0x49 && b[2] === 0x2a && b[3] === 0x00) return true // TIFF LE (II*\0)
+    if (b[0] === 0x4d && b[1] === 0x4d && b[2] === 0x00 && b[3] === 0x2a) return true // TIFF BE (MM\0*)
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return true // PNG (\x89PNG)
+    if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return true                  // JPEG (\xFF\xD8\xFF)
+    return false
+  } catch { return false }
+}
+
 export default function SpecSepPanel({ onAssemble }) {
   const t = useT()
   const [files, setFiles] = useState([])          // ordered File[]
@@ -24,10 +40,15 @@ export default function SpecSepPanel({ onAssemble }) {
   const [notice, setNotice] = useState(null)
   const inputRef = useRef(null)
 
-  const add = useCallback((list) => {
-    const imgs = list.filter((f) => IMG_RE.test(f.name))
+  // Accept by name-extension OR content magic, so extensionless raster planes (the
+  // iccSpecSepToTiff harvest set) ingest as well as named .tif/.png/.jpg files.
+  const add = useCallback(async (list) => {
+    const checked = await Promise.all(list.map(async (f) =>
+      (IMG_RE.test(f.name) || (await looksLikeImage(f))) ? f : null))
+    const imgs = checked.filter(Boolean)
     if (imgs.length) { setFiles((c) => [...c, ...imgs]); setError(null); setNotice(null) }
-  }, [])
+    else if (list.length) setError(t('ss_notimg') || 'None of those look like images (TIFF, PNG or JPEG).')
+  }, [t])
 
   const onDrop = useCallback((e) => {
     e.preventDefault(); e.stopPropagation(); setOver(false)
@@ -70,7 +91,10 @@ export default function SpecSepPanel({ onAssemble }) {
       >
         <span className={styles.zoneIcon} aria-hidden="true">🧩</span>
         <span className={styles.zoneText}>{t('ss_drop') || 'Drop spectral images here (or click to choose)'}</span>
-        <input ref={inputRef} type="file" multiple accept=".tif,.tiff,.png,.jpg,.jpeg,image/tiff,image/png,image/jpeg"
+        {/* No `accept` filter: the harvest planes are extensionless, which most pickers
+            would hide. We content-sniff every file in `add()` instead, so a non-image is
+            rejected with a clear message rather than silently dropped. */}
+        <input ref={inputRef} type="file" multiple
                className={styles.hidden} onChange={(e) => { add(Array.from(e.target.files || [])); e.target.value = '' }} />
       </div>
 
