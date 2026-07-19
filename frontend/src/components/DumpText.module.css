@@ -1,0 +1,14 @@
+/* (c) 2026 William Li */
+.showFull {
+  margin: 6px 8px 4px 0;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 4px);
+  background: var(--surface-alt);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.showFull:hover { border-color: var(--accent); }
+.truncNote { font-size: 11px; color: var(--text-muted); }

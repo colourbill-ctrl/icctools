@@ -2,6 +2,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import HeaderTable from './HeaderTable.jsx'
 import TagTable from './TagTable.jsx'
+import { preloadPlotly } from './viz/plotly.js'
 import { useT } from '../i18n.jsx'
 import { TAB_DEFS as TABS } from '../lib/tabs.js'
 import styles from './ProfileViewer.module.css'
@@ -36,6 +37,11 @@ export default function ProfileViewer({
   // names a hidden/unknown tab the `active` fallback below lands on Header.
   const [activeTab, setActiveTab] = useState(initialTab || 'Header')
   const t = useT()
+
+  // Warm the Plotly chunk on idle once a profile is open, so the first plot (a
+  // tag's curves, or an Analysis chart) doesn't stall the click on the ~3.5 MB
+  // module parse. Cheap no-op if already loading/loaded.
+  useEffect(() => { if (bytes) preloadPlotly() }, [bytes])
 
   // The upper-right pill reflects the Validation (Profile Assessment WG) result.
   // We run the report up front so the pill is present without opening the tab;

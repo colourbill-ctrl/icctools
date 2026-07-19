@@ -1,0 +1,30 @@
+/* (c) 2026 William Li */
+/* The sized plot box — children (a Plotly div, an SVG, …) fill it 100%. */
+.box {
+  position: relative;
+  width: 100%;
+  min-height: 120px;
+}
+
+/* Bottom drag bar to change the plot height (chardata's 3D-plot pattern): a
+   horizontal row of grip dots, gray at rest, accent on hover/drag. Full-width so
+   it's an easy grab target; ns-resize cursor signals the vertical drag. */
+.handle {
+  height: 12px;
+  margin-top: 2px;
+  cursor: ns-resize;
+  border: 1px solid var(--border);
+  border-radius: 0 0 var(--radius) var(--radius);
+  background-color: var(--surface-alt);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='30' height='5' viewBox='0 0 30 5'><circle cx='3' cy='2.5' r='1.4' fill='%23999'/><circle cx='9' cy='2.5' r='1.4' fill='%23999'/><circle cx='15' cy='2.5' r='1.4' fill='%23999'/><circle cx='21' cy='2.5' r='1.4' fill='%23999'/><circle cx='27' cy='2.5' r='1.4' fill='%23999'/></svg>");
+  transition: background-color 0.15s;
+  touch-action: none;   /* let pointer events drive the drag, not the browser's scroll */
+}
+.handle:hover,
+.handle.dragging {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='30' height='5' viewBox='0 0 30 5'><circle cx='3' cy='2.5' r='1.4' fill='white'/><circle cx='9' cy='2.5' r='1.4' fill='white'/><circle cx='15' cy='2.5' r='1.4' fill='white'/><circle cx='21' cy='2.5' r='1.4' fill='white'/><circle cx='27' cy='2.5' r='1.4' fill='white'/></svg>");
+}

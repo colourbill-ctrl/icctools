@@ -1,13 +1,12 @@
 // (c) 2026 William Li
-import { useEffect, useState } from 'react'
-import { renderGraph, renderRaster, tagEvalInfo } from '../lib/vizPlot.js'
-import { decodeRaster } from '../lib/rasterDecode.js'
+import { renderGraph, tagEvalInfo } from '../lib/vizPlot.js'
 import { useT } from '../i18n.jsx'
 import Collapsible from './viz/Collapsible.jsx'
-import GraphSvg from './viz/GraphSvg.jsx'
-import RasterCanvas from './viz/RasterCanvas.jsx'
+import PlotlyGraph from './viz/PlotlyGraph.jsx'
 import TagEvaluator from './TagEvaluator.jsx'
 import { channelColor } from './viz/colors.js'
+import { useAsync } from './viz/useAsync.js'
+import VizWarnings from './viz/VizWarnings.jsx'
 import styles from './TagVisuals.module.css'
 
 // IccVizModel Kind enum (kept in sync with IccVizModel.hpp).
@@ -19,34 +18,18 @@ const ATOB_TAGS = new Set(['A2B0', 'A2B1', 'A2B2', 'A2B3'])
 const LAB_PRETTY = { L: 'L*', a: 'a*', b: 'b*' }
 const pretty = (label) => { const tail = String(label).split('_').pop(); return LAB_PRETTY[tail] || tail }
 
-// Generic cancellable async loader for the per-graph/raster WASM calls.
-function useAsync(fn, deps) {
-  const [state, setState] = useState({ loading: true })
-  useEffect(() => {
-    let cancelled = false
-    setState({ loading: true })
-    Promise.resolve().then(fn).then(
-      (data) => { if (!cancelled) setState({ loading: false, data }) },
-      (e) => { if (!cancelled) setState({ loading: false, error: e.message }) },
-    )
-    return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps)
-  return state
-}
-
 /**
  * Inline per-tag visualizations rendered inside the Tags-tab expanded detail.
  * Branches on tag type; for each it lays out the relevant graphs/rasters and the
  * evaluator above the raw Describe() dump (`dataNode`), wrapping that dump in a
  * collapsible (or leaving it always-visible) per the tag type.
  */
-export default function TagVisuals({ tag, bytes, descriptors = [], chromaDesc, gamutDesc, dataNode }) {
+export default function TagVisuals({ tag, bytes, descriptors = [], chromaDesc, dataNode }) {
   const t = useT()
   const isLut = descriptors.some((d) => d.kind === KIND.ClutImage || d.grp)
 
   if (isLut) {
-    return <LutVisuals tag={tag} bytes={bytes} descriptors={descriptors} gamutDesc={gamutDesc} dataNode={dataNode} t={t} />
+    return <LutVisuals tag={tag} bytes={bytes} descriptors={descriptors} dataNode={dataNode} t={t} />
   }
 
   if (tag.id === 'wtpt' && chromaDesc) {
@@ -77,7 +60,7 @@ export default function TagVisuals({ tag, bytes, descriptors = [], chromaDesc, g
       <>
         {trc && (
           <Collapsible title={t('viz_trc')} defaultOpen>
-            <GraphView bytes={bytes} id={trc.id} />
+            <GraphView bytes={bytes} id={trc.id} toneOption />
           </Collapsible>
         )}
         <Collapsible title={t('viz_curve_table')} defaultOpen={false}>{dataNode}</Collapsible>
@@ -104,12 +87,14 @@ export default function TagVisuals({ tag, bytes, descriptors = [], chromaDesc, g
 }
 
 // ── LUT tags (AToB / BToA / gamut / preview) ─────────────────────────────────
-function LutVisuals({ tag, bytes, descriptors, gamutDesc, dataNode, t }) {
+// The CLUT lattice image and the gamut in/out map are NOT rendered here anymore —
+// they live in the Analysis tab's "CLUT Image" / "Gamut Image" sections (each with
+// its own rendering-intent selector + zoom/pan). This view keeps the per-tag
+// curves, the point evaluator, and the raw dump.
+function LutVisuals({ tag, bytes, descriptors, dataNode, t }) {
   const info = useAsync(() => tagEvalInfo(bytes, tag.id), [bytes, tag.id])
-  const clut = descriptors.find((d) => d.kind === KIND.ClutImage)
-  // The gamut tag is a special 1-channel in/out-of-gamut map: its CLUT *is* the
-  // gamut image (colour-code it, not the generic CLUT view), and CIccXform can't
-  // expose its single output as an evaluable transform, so no evaluator.
+  // The gamut tag exposes no evaluable transform (single in/out channel), so no
+  // evaluator; it also has no curves, so it falls through to just the raw dump.
   const isGamut = tag.id === 'gamt'
   const isAToB = ATOB_TAGS.has(tag.id)
   const inputGrps = isAToB ? ['A'] : ['B', 'M']
@@ -138,18 +123,6 @@ function LutVisuals({ tag, bytes, descriptors, gamutDesc, dataNode, t }) {
         </Collapsible>
       )}
 
-      {clut && (
-        <Collapsible title={isGamut ? t('viz_gamut') : t('viz_clut')} defaultOpen>
-          <RasterView bytes={bytes} id={clut.id} gamut={isGamut} />
-        </Collapsible>
-      )}
-
-      {gamutDesc && (
-        <Collapsible title={t('viz_gamut')} defaultOpen>
-          <RasterView bytes={bytes} id={gamutDesc.id} gamut />
-        </Collapsible>
-      )}
-
       {!isGamut && (
         <Collapsible title={t('viz_evaluate')} defaultOpen>
           <TagEvaluator tag={tag} bytes={bytes} />
@@ -174,7 +147,7 @@ function CombinedCurves({ bytes, curves, spaceSig, labels }) {
   const merged = mergeCurveGraphs(state.data, spaceSig, labels)
   if (!merged) return null
   const warnings = state.data.flatMap(({ g }) => g.warnings || [])
-  return <><VizWarnings items={warnings} /><GraphSvg graph={merged} legend /></>
+  return <><VizWarnings items={warnings} /><PlotlyGraph graph={merged} legend toneOption storageKey="profiletool.tagCurveHeight" defaultH={300} /></>
 }
 
 function mergeCurveGraphs(items, spaceSig, labels) {
@@ -199,68 +172,12 @@ function mergeCurveGraphs(items, spaceSig, labels) {
   }
 }
 
-// Non-fatal diagnostics raised while a graph/raster still rendered (e.g. a CLUT
-// tile-count overflow). The engine carries these as data; we show them inline so
-// they aren't silently lost — the very thing the diagnostics restore was about.
-function VizWarnings({ items }) {
-  if (!items || !items.length) return null
-  return (
-    <div className={styles.itemWarning}>
-      {items.map((w, i) => <div key={i}>⚠ {w}</div>)}
-    </div>
-  )
-}
-
-// ── single graph / raster loaders ────────────────────────────────────────────
-function GraphView({ bytes, id, highlight }) {
+// ── single graph loader ──────────────────────────────────────────────────────
+// `toneOption` enables the X–Y / Tone-increase toggle (curves only, e.g. TRC).
+function GraphView({ bytes, id, highlight, toneOption = false }) {
   const t = useT()
   const state = useAsync(() => renderGraph(bytes, id), [bytes, id])
   if (state.loading) return <div className={styles.loading}>{t('viz_loading') || 'Loading…'}</div>
   if (state.error) return <div className={styles.itemError}>{state.error}</div>
-  return <><VizWarnings items={state.data.warnings} /><GraphSvg graph={state.data} highlight={highlight} /></>
-}
-
-function RasterView({ bytes, id, gamut = false }) {
-  const t = useT()
-  const state = useAsync(
-    () => renderRaster(bytes, id).then((r) => ({ raster: decodeRaster(r, { gamut }), warnings: r.warnings })),
-    [bytes, id, gamut],
-  )
-  if (state.loading) return <div className={styles.loading}>{t('viz_loading') || 'Loading…'}</div>
-  if (state.error) return <div className={styles.itemError}>{state.error}</div>
-  return (
-    <>
-      <VizWarnings items={state.data.warnings} />
-      <RasterCanvas raster={state.data.raster} caption={gamut ? <GamutLegend t={t} /> : undefined} />
-    </>
-  )
-}
-
-// Swatch colours mirror decodeGamut() in lib/rasterDecode.js: in-gamut neutral
-// and the deep end of the out-of-gamut red ramp.
-const GAMUT_NEUTRAL = '#e8ebef'
-const GAMUT_RED = 'rgb(155,12,12)'
-function swatch(color) {
-  return (
-    <span style={{
-      display: 'inline-block', width: 10, height: 10, borderRadius: 2,
-      background: color, border: '1px solid rgba(0,0,0,.25)',
-      verticalAlign: 'middle', marginRight: 4,
-    }} />
-  )
-}
-
-// Renders the localized "Neutral = in gamut · red = out of gamut" caption with a
-// colour swatch in front of each half (split on the ' · ' separator used in
-// every locale's viz_gamut_legend string).
-function GamutLegend({ t }) {
-  const parts = t('viz_gamut_legend').split('·')
-  const left = (parts[0] || '').trim()
-  const right = (parts[1] || '').trim()
-  return (
-    <span>
-      {swatch(GAMUT_NEUTRAL)}{left}
-      {right && <>{'  ·  '}{swatch(GAMUT_RED)}{right}</>}
-    </span>
-  )
+  return <><VizWarnings items={state.data.warnings} /><PlotlyGraph graph={state.data} highlight={highlight} toneOption={toneOption} storageKey="profiletool.tagGraphHeight" defaultH={320} /></>
 }

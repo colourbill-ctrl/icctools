@@ -81,11 +81,27 @@
   align-self: end;   /* baseline-align with the select beside it */
 }
 
-/* "Specified gamut" line between the round-trip table and the PRMG histogram. */
+/* "Specified gamut" / worst-Lab line between the round-trip table and histogram. */
 .rtGamut {
   font-size: 0.85rem;
   color: var(--text);
   margin: 14px 0 6px;
+}
+
+/* Sample-count suffix on the ΔE-distribution heading. */
+.histCount { font-weight: 400; color: var(--text-muted); font-size: 0.82rem; }
+
+/* Dynamic, code-grounded description of the selected round-trip type. Sits right
+   under the two selectors and re-renders whenever the type selection changes. */
+.typeDesc {
+  margin: -2px 0 14px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface-alt);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.45;
 }
 
 /* ── Profile Statistics table ─────────────────────────────────────────────── */

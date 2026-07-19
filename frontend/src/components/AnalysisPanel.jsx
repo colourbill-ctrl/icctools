@@ -1,12 +1,31 @@
 // (c) 2026 William Li
 import { useEffect, useState } from 'react'
-import { enumerateVisualizations, renderGraph, tagEvalInfo, gamutVolume, roundTripDE, roundTrip } from '../lib/vizPlot.js'
+import { enumerateVisualizations, renderGraph, tagEvalInfo, gamutVolume, roundTripStats } from '../lib/vizPlot.js'
 import { channelColor } from './viz/colors.js'
 import { labToRgb } from '../lib/rasterDecode.js'
 import Collapsible from './viz/Collapsible.jsx'
-import GraphSvg from './viz/GraphSvg.jsx'
+import PlotlyGraph from './viz/PlotlyGraph.jsx'
+import RtHistogram from './viz/RtHistogram.jsx'
+import RasterView from './viz/RasterView.jsx'
 import { useT } from '../i18n.jsx'
 import styles from './AnalysisPanel.module.css'
+
+// ── CLUT / Gamut image tables ────────────────────────────────────────────────
+// The CLUT lattice images (per LUT table) and the gamut in/out map used to live
+// inline in each tag's detail; they now have their own Analysis sections, each
+// with a rendering-intent selector. IccVizModel Kind::ClutImage (in sync with
+// IccVizModel.hpp) marks a raster; the gamut tag ('gamt') is the special gamut map.
+const KIND_CLUT = 5
+// LUT tag signature → rendering intent (both device→PCS AToB and PCS→device BToA
+// tables, plus preview). The signature itself disambiguates direction in the label.
+const LUT_INTENT = {
+  A2B0: 'perceptual', A2B1: 'relative', A2B2: 'saturation', A2B3: 'absolute',
+  B2A0: 'perceptual', B2A1: 'relative', B2A2: 'saturation', B2A3: 'absolute',
+  pre0: 'perceptual', pre1: 'relative', pre2: 'saturation',
+}
+// Display order for the intent selector; unknown sigs sort last (stable).
+const LUT_ORDER = ['A2B0', 'A2B1', 'A2B2', 'A2B3', 'B2A0', 'B2A1', 'B2A2', 'B2A3', 'pre0', 'pre1', 'pre2']
+const lutRank = (sig) => { const i = LUT_ORDER.indexOf(sig); return i < 0 ? 99 : i }
 
 // Whole-profile analyses. Each analysis is a receiver for data produced by the
 // iccviz IccVizModel and plotted in the app's own style.
@@ -41,325 +60,274 @@ function neutralTraceColor(spaceSig, series, idx, count) {
 }
 
 // ── Profile Statistics ────────────────────────────────────────────────────────
-// Whole-profile metrics per rendering intent: gamut volume (device→PCS) and B2A
-// round-trip accuracy. Computed lazily (8 WASM calls, ~1-2s) and cached per
-// profile so re-opening the section / tab is instant. Intents whose tags are
-// absent are skipped (the engine returns an error we swallow).
+// Whole-profile metrics for ONE selected rendering intent: the gamut volume
+// (device→PCS) and a chosen round-trip accuracy metric. Both the rendering intent
+// AND the round-trip *type* are picked from listboxes; the table, histogram and
+// description all update on selection (design doc DL-A1, refined 2026-07-18 to two
+// listboxes + P90 + a below-table histogram + a dynamic type description).
+//
+// Per the project principle, the iccRoundTrip CLI's console layout is NOT the
+// authority — all four types are presented in one uniform in-app table (min / mean
+// / P90 / max + a cumulative ≤1/2/3/5/10 histogram + worst-error colour), even
+// though the CLI prints different fields for each. The metrics are grounded in the
+// underlying colour math; the presentation is ours.
+
+// Rendering intents, in ICC order. `tag` is the device→PCS (AToB) table whose
+// gamut volume we measure for that intent (absolute reuses the relative table).
 const STATS_INTENTS = [
   { intent: 0, tag: 'A2B0', key: 'intent_perceptual', fallback: 'Perceptual' },
   { intent: 1, tag: 'A2B1', key: 'intent_relative',   fallback: 'Relative Colorimetric' },
   { intent: 2, tag: 'A2B2', key: 'intent_saturation', fallback: 'Saturation' },
   { intent: 3, tag: 'A2B1', key: 'intent_absolute',   fallback: 'Absolute Colorimetric' },
 ]
-const statsCache = new WeakMap()   // bytes -> rows[]
+
+// The four round-trip types behind the type listbox. `desc*` is a short,
+// code-grounded explanation shown beside the selector; it updates with the
+// selection. `usesMpe` marks the types the use-MPE toggle actually affects — RT0's
+// iccviz engine ignores it, so the checkbox is a no-op there.
+const RT_TYPES = [
+  {
+    key: 'RT0', usesMpe: false,
+    labelKey: 'analysis_rt_type_rt0', labelFallback: 'In-gamut overview (RT0)',
+    descKey: 'analysis_rt_desc_rt0',
+    descFallback: 'iccviz overview: a device-value grid is taken to PCS, back to device, and to PCS again; ΔE*ab is measured between the two PCS passes. A fast in-gamut stability check.',
+  },
+  {
+    key: 'RT1', usesMpe: true,
+    labelKey: 'analysis_rt_type_rt1', labelFallback: 'Inversion + gamut (RT1)',
+    descKey: 'analysis_rt_desc_rt1',
+    descFallback: 'iccRoundTrip Round Trip 1: ΔE*ab between each device colour’s PCS and its PCS after one Lab → device → Lab round trip. Reflects inversion accuracy and gamut mapping.',
+  },
+  {
+    key: 'RT2', usesMpe: true,
+    labelKey: 'analysis_rt_type_rt2', labelFallback: 'Reproducibility (RT2)',
+    descKey: 'analysis_rt_desc_rt2',
+    descFallback: 'iccRoundTrip Round Trip 2: ΔE*ab between the first and second round trips — how stable a repeated PCS round trip is (reproducibility, independent of the first trip’s gamut clipping).',
+  },
+  {
+    key: 'PRMG', usesMpe: true,
+    labelKey: 'analysis_rt_type_prmg', labelFallback: 'PRMG interoperability',
+    descKey: 'analysis_rt_desc_prmg',
+    descFallback: 'iccRoundTrip PRMG: PCS colours inside the Perceptual Reference Medium Gamut are round-tripped once (Lab → device → Lab); the ΔE*ab distribution indicates cross-profile interoperability.',
+  },
+]
+
+// Gamut volume depends only on the intent; round-trip stats on (intent, use-MPE).
+// Cache each separately so toggling use-MPE doesn't recompute the (expensive)
+// gamut boundary, and so re-opening the tab / re-selecting is instant.
+const gamutCache = new WeakMap()    // bytes -> Map<intent, {volume,degenerate}|{error}>
+const rtStatsCache = new WeakMap()  // bytes -> Map<`${intent}:${useMpe}`, {data}|{error}>
 
 function ProfileStatsSection({ bytes, t }) {
-  const [state, setState] = useState(() => {
-    const cached = statsCache.get(bytes)
-    return cached ? { loading: false, rows: cached } : { loading: true, rows: [] }
-  })
+  const [intent, setIntent] = useState(1)   // relative colorimetric (iccRoundTrip default)
+  const [type, setType] = useState('RT0')   // in-gamut overview — the cheapest, most familiar
+  const [useMpe, setUseMpe] = useState(false)
+  const [gamut, setGamut] = useState({ loading: true })
+  const [rts, setRts] = useState({ loading: true })
 
+  // Gamut volume — depends only on the intent.
   useEffect(() => {
-    const cached = statsCache.get(bytes)
-    if (cached) { setState({ loading: false, rows: cached }); return }
     let cancelled = false
-    setState({ loading: true, rows: [] })
-    ;(async () => {
-      const rows = []
-      for (const it of STATS_INTENTS) {
-        let vol = null, degenerate = false, rt = null
-        try {
-          const g = await gamutVolume(bytes, it.tag, it.intent)
-          vol = g.volume; degenerate = !!g.degenerate   // iccviz flags a collapsed/unreliable gamut boundary
-        } catch { /* AToB tag absent */ }
-        try { rt = await roundTripDE(bytes, it.intent) } catch { /* AToB/BToA tags absent */ }
-        if (vol != null || rt != null) rows.push({ key: it.key, fallback: it.fallback, vol, degenerate, rt })
-      }
-      if (cancelled) return
-      statsCache.set(bytes, rows)
-      setState({ loading: false, rows })
-    })()
-    return () => { cancelled = true }
-  }, [bytes])
-
-  const fmtVol = (v) => (v == null ? '—' : Math.round(v).toLocaleString())
-  // Pad each round-trip column to a common width with figure spaces (U+2007 —
-  // digit-width under tabular-nums) so the values stay decimal-aligned even
-  // though the column is centre-aligned under its label.
-  const RT = [
-    { key: 'meanDE', label: t('stats_mean') || 'mean' },
-    { key: 'p90DE',  label: t('stats_p90')  || 'P90' },
-    { key: 'maxDE',  label: t('stats_max')  || 'max' },
-  ]
-  const rtPad = {}
-  for (const { key } of RT) {
-    const strs = state.rows.map((r) => (r.rt == null ? '—' : r.rt[key].toFixed(2)))
-    const w = strs.reduce((m, s) => Math.max(m, s.length), 0)
-    rtPad[key] = strs.map((s) => ' '.repeat(w - s.length) + s)
-  }
-
-  // iccviz sets `degenerate` when a gamut boundary collapsed / was mostly
-  // non-finite, so that intent's volume is unreliable — flag it (⚠ on the cell +
-  // a note below) rather than presenting a bogus number as trustworthy.
-  const degenerateMsg = t('stats_gamut_degenerate') ||
-    'The gamut boundary collapsed or was mostly undefined, so this gamut volume is unreliable.'
-  const anyDegenerate = state.rows.some((r) => r.degenerate)
-
-  return (
-    <Collapsible title={t('analysis_stats_heading') || 'Profile Statistics'} defaultOpen>
-      <p className={styles.sectionIntro}>
-        {t('analysis_stats_intro') ||
-          'Whole-profile metrics per rendering intent: the gamut volume enclosed by the device→PCS transform (ΔE*ab³), and the B2A round-trip accuracy — ΔE*ab of a Lab → device → Lab round trip through the profile.'}
-      </p>
-      {state.loading ? (
-        <div className={styles.loading}><span className={styles.spinner} /> {t('analysis_loading') || 'Analysing…'}</div>
-      ) : !state.rows.length ? (
-        <div className={styles.notApplicable}>
-          {t('analysis_stats_na') ||
-            'No device↔PCS CLUTs in this profile — profile statistics do not apply (e.g. a matrix/TRC display profile).'}
-        </div>
-      ) : (
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th rowSpan={2}>{t('stats_intent') || 'Rendering intent'}</th>
-              <th rowSpan={2} className={styles.statNum}>{t('stats_gamut_volume') || 'Gamut volume (ΔE³)'}</th>
-              <th colSpan={3} style={{ textAlign: 'center' }}>{t('stats_roundtrip') || 'Round-trip ΔE'}</th>
-            </tr>
-            <tr>
-              {RT.map(({ key, label }) => (
-                <th key={key} className={styles.statNumC}>{label}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {state.rows.map((r, i) => (
-              <tr key={r.key}>
-                <td>{t(r.key) || r.fallback}</td>
-                <td className={styles.statNum}>
-                  {fmtVol(r.vol)}
-                  {r.degenerate && <span className={styles.warnMark} title={degenerateMsg} aria-label={degenerateMsg}> ⚠</span>}
-                </td>
-                {RT.map(({ key }) => (
-                  <td key={key} className={styles.statNumC}>{rtPad[key][i]}</td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {anyDegenerate && <div className={styles.statWarning}>⚠ {degenerateMsg}</div>}
-    </Collapsible>
-  )
-}
-
-// ── Round-Trip (PRMG) ─────────────────────────────────────────────────────────
-// The IccProfLib-canonical round trip — parity with the `iccRoundTrip` CLI, and
-// distinct from the Profile-Statistics overview above (which uses iccviz's cheaper
-// single-direction bespoke metric). Seeds from the device cube and reports BOTH
-// directions plus the PRMG interoperability histogram, with live intent / MPE
-// controls. Computed lazily on first open (Collapsible mounts children on demand)
-// and cached per (profile, intent, useMpe) so re-selecting is instant.
-const RT_INTENTS = [
-  { intent: 0, key: 'intent_perceptual', fallback: 'Perceptual' },
-  { intent: 1, key: 'intent_relative',   fallback: 'Relative Colorimetric' },
-  { intent: 2, key: 'intent_saturation', fallback: 'Saturation' },
-  { intent: 3, key: 'intent_absolute',   fallback: 'Absolute Colorimetric' },
-]
-const rtCache = new WeakMap()   // bytes -> Map<`${intent}:${useMpe}`, { data } | { error }>
-
-function RoundTripSection({ bytes, t }) {
-  return (
-    <Collapsible title={t('analysis_rt_heading') || 'Round-Trip (PRMG)'}>
-      <p className={styles.sectionIntro}>
-        {t('analysis_rt_intro') ||
-          'Device-cube round trip through the profile, matching the iccRoundTrip reference tool. Round Trip 1 is the device→PCS→device error (ΔE*ab); Round Trip 2 is the PCS round-trip stability. The PRMG histogram reports interoperability against the Perceptual Reference Medium Gamut.'}
-      </p>
-      <RoundTripBody bytes={bytes} t={t} />
-    </Collapsible>
-  )
-}
-
-function RoundTripBody({ bytes, t }) {
-  const [intent, setIntent] = useState(1)      // default: relative colorimetric (CLI default)
-  const [useMpe, setUseMpe] = useState(false)  // default: colorimetric (lut) tags
-  const [state, setState] = useState({ loading: true })
-
-  useEffect(() => {
-    const cacheKey = `${intent}:${useMpe}`
-    let byKey = rtCache.get(bytes)
-    if (byKey && byKey.has(cacheKey)) { setState({ loading: false, ...byKey.get(cacheKey) }); return }
-    let cancelled = false
-    setState({ loading: true })
+    let byIntent = gamutCache.get(bytes)
+    if (byIntent && byIntent.has(intent)) { setGamut({ loading: false, ...byIntent.get(intent) }); return }
+    setGamut({ loading: true })
+    const info = STATS_INTENTS.find((s) => s.intent === intent) || STATS_INTENTS[1]
     ;(async () => {
       let result
-      try { result = { data: await roundTrip(bytes, intent, useMpe) } }
+      try {
+        const g = await gamutVolume(bytes, info.tag, intent)
+        // iccviz flags a collapsed/unreliable gamut boundary; carry that forward.
+        result = { volume: g.volume, degenerate: !!g.degenerate }
+      } catch (e) { result = { error: e.message } }   // AToB tag absent, etc.
+      if (!byIntent) { byIntent = new Map(); gamutCache.set(bytes, byIntent) }
+      byIntent.set(intent, result)
+      if (!cancelled) setGamut({ loading: false, ...result })
+    })()
+    return () => { cancelled = true }
+  }, [bytes, intent])
+
+  // Round-trip stats — one WASM call returns ALL four types for (intent, useMpe),
+  // so switching the *type* selector never recomputes (it just re-reads the cache).
+  useEffect(() => {
+    let cancelled = false
+    const cacheKey = `${intent}:${useMpe}`
+    let byKey = rtStatsCache.get(bytes)
+    if (byKey && byKey.has(cacheKey)) { setRts({ loading: false, ...byKey.get(cacheKey) }); return }
+    setRts({ loading: true })
+    ;(async () => {
+      let result
+      try { result = { data: await roundTripStats(bytes, intent, useMpe) } }
       catch (e) { result = { error: e.message } }
-      if (!byKey) { byKey = new Map(); rtCache.set(bytes, byKey) }
+      if (!byKey) { byKey = new Map(); rtStatsCache.set(bytes, byKey) }
       byKey.set(cacheKey, result)
-      if (!cancelled) setState({ loading: false, ...result })
+      if (!cancelled) setRts({ loading: false, ...result })
     })()
     return () => { cancelled = true }
   }, [bytes, intent, useMpe])
 
+  const typeMeta = RT_TYPES.find((x) => x.key === type) || RT_TYPES[0]
+
   return (
-    <>
+    <Collapsible title={t('analysis_stats_heading') || 'Profile Statistics'} defaultOpen>
+      <p className={styles.sectionIntro}>
+        {t('analysis_stats_intro2') ||
+          'Whole-profile metrics for one rendering intent: the gamut volume enclosed by the device→PCS transform (ΔE*ab³), and a round-trip accuracy metric. Choose the rendering intent and the round-trip type — the table and histogram update to match.'}
+      </p>
+
       <div className={styles.controls}>
         <label className={styles.control}>
           <span>{t('analysis_intent_label') || 'Rendering intent'}</span>
           <select value={intent} onChange={(e) => setIntent(Number(e.target.value))}>
-            {RT_INTENTS.map((it) => (
-              <option key={it.intent} value={it.intent}>{t(it.key) || it.fallback}</option>
+            {STATS_INTENTS.map((s) => (
+              <option key={s.intent} value={s.intent}>{t(s.key) || s.fallback}</option>
             ))}
           </select>
         </label>
-        <label className={`${styles.control} ${styles.controlInline}`}>
-          <input type="checkbox" checked={useMpe} onChange={(e) => setUseMpe(e.target.checked)} />
+        <label className={styles.control}>
+          <span>{t('analysis_rt_type_label') || 'Round-trip type'}</span>
+          <select value={type} onChange={(e) => setType(e.target.value)}>
+            {RT_TYPES.map((x) => (
+              <option key={x.key} value={x.key}>{t(x.labelKey) || x.labelFallback}</option>
+            ))}
+          </select>
+        </label>
+        <label className={`${styles.control} ${styles.controlInline}`}
+               title={typeMeta.usesMpe ? '' : (t('analysis_rt_mpe_na') || 'Has no effect on this round-trip type')}>
+          <input type="checkbox" checked={useMpe} disabled={!typeMeta.usesMpe}
+                 onChange={(e) => setUseMpe(e.target.checked)} />
           <span>{t('analysis_rt_usempe') || 'Use MPE (color) tags'}</span>
         </label>
       </div>
-      {state.loading ? (
-        <div className={styles.loading}><span className={styles.spinner} /> {t('analysis_loading') || 'Analysing…'}</div>
-      ) : state.error ? (
-        <div className={styles.notApplicable}>
-          {t('analysis_rt_na') ||
-            'This profile cannot be round-tripped — it lacks the device↔PCS transforms this metric needs (e.g. a one-way or abstract profile).'}
-        </div>
-      ) : (
-        <RoundTripResult data={state.data} t={t} />
-      )}
-    </>
+
+      {/* Dynamic, code-grounded description of the selected round-trip type. */}
+      <p className={styles.typeDesc}>{t(typeMeta.descKey) || typeMeta.descFallback}</p>
+
+      <StatsTable gamut={gamut} rts={rts} type={type} t={t} />
+    </Collapsible>
   )
 }
 
-// Renders one round-trip result object (already parsed + error-checked by the
-// vizPlot loader). Every field is treated as *untrusted shape* here: the object
-// crosses the WASM→JS boundary, so we guard each access rather than assume the
-// C++ always populated it — a future engine change or a partial result can't
-// throw a render-time TypeError and blank the whole Analysis tab.
-function RoundTripResult({ data, t }) {
-  // The #1405 wide-device-space guard: EvaluateProfile deliberately refuses a
-  // device space too wide to sample. It's a skip, not a failure — surface it as
-  // an informational note (mirrors the CLI printing the status and exiting 0).
-  if (data.status === 'tooManySamples') {
-    return (
-      <div className={styles.notApplicable}>
-        {t('analysis_rt_toomany') ||
-          'Round trip skipped: the device colour space is too wide to evaluate (too many samples).'}
-      </div>
-    )
+// Renders the gamut + round-trip stats table, the cumulative ΔE histogram, and the
+// per-type extras (worst-Lab, and the PRMG "specified gamut" line). Every value
+// crosses the WASM→JS boundary, so each field is shape-guarded before formatting —
+// a partial or malformed result degrades to '—' or a note, never a render-time
+// TypeError that would blank the whole Analysis tab.
+function StatsTable({ gamut, rts, type, t }) {
+  if (gamut.loading || rts.loading) {
+    return <div className={styles.loading}><span className={styles.spinner} /> {t('analysis_loading') || 'Analysing…'}</div>
   }
 
-  // RT1/RT2 are required on a successful result; if either is missing the result
-  // is malformed (not a real profile outcome), so fall back to the NA note
-  // rather than dereferencing undefined below.
-  const rt1 = data.roundTrip1, rt2 = data.roundTrip2
-  if (!rt1 || !rt2) {
-    return (
-      <div className={styles.notApplicable}>
-        {t('analysis_rt_na') ||
-          'This profile cannot be round-tripped — it lacks the device↔PCS transforms this metric needs (e.g. a one-way or abstract profile).'}
-      </div>
-    )
+  // A top-level round-trip failure (module load / JSON parse) means the whole
+  // metric is unavailable — distinct from a per-type "not applicable" below.
+  if (rts.error) {
+    return <div className={styles.notApplicable}>{t('analysis_rt_na') ||
+      'This profile cannot be round-tripped — it lacks the device↔PCS transforms this metric needs (e.g. a one-way or abstract profile).'}</div>
   }
 
-  // ΔE cells: '—' for a missing/non-numeric value (never a NaN or "undefined").
-  const fmt = (v) => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : '—')
-  // Worst-Lab triple: only format when it's the expected 3-number array.
+  // Shape guards: every number is validated before use; '—' for anything missing.
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+  const fmt2 = (v) => { const n = num(v); return n == null ? '—' : n.toFixed(2) }
+  const fmtVol = (v) => { const n = num(v); return n == null ? '—' : Math.round(n).toLocaleString() }
   const fmtLab = (lab) =>
     (Array.isArray(lab) && lab.length === 3 && lab.every((v) => typeof v === 'number' && Number.isFinite(v)))
-      ? lab.map((v) => v.toFixed(2)).join(', ')
-      : '—'
-  const rows = [
-    { label: t('analysis_rt_min')  || 'Min ΔE',  a: fmt(rt1.minDE),  b: fmt(rt2.minDE) },
-    { label: t('analysis_rt_mean') || 'Mean ΔE', a: fmt(rt1.meanDE), b: fmt(rt2.meanDE) },
-    { label: t('analysis_rt_max')  || 'Max ΔE',  a: fmt(rt1.maxDE),  b: fmt(rt2.maxDE) },
-  ]
+      ? lab.map((v) => v.toFixed(2)).join(', ') : null
 
-  // PRMG histogram. `prmg` is absent/`ok:false` when the PRMG pass was skipped
-  // (its status is independent of the round trip itself — the CLI still prints
-  // RT1/RT2 in that case), so everything below is gated on `prmg.ok && total`.
-  const prmg = data.prmg
-  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
-  const total = prmg ? num(prmg.total) : 0
-  // Share of samples at or under each ΔE threshold. Guard total>0 so we never
-  // divide by zero (a valid-but-empty PRMG pass) — show '—' instead of NaN.
-  const pct = (n) => (total > 0 ? (100 * num(n) / total).toFixed(1) + '%' : '—')
-  const buckets = prmg && prmg.ok ? [
-    { le: '1.0', n: num(prmg.de1) }, { le: '2.0', n: num(prmg.de2) }, { le: '3.0', n: num(prmg.de3) },
-    { le: '5.0', n: num(prmg.de5) }, { le: '10.0', n: num(prmg.de10) },
-  ] : []
+  const st = rts.data && rts.data.types ? rts.data.types[type] : null
+
+  // Per-type not-computed states. `st.ok === false` is a genuine "this type can't
+  // be evaluated for this profile" (not a hard error) — including the #1405
+  // wide-device-space skip, surfaced as its own gentler note.
+  if (!st) {
+    return <div className={styles.notApplicable}>{t('analysis_rt_na') ||
+      'This profile cannot be round-tripped — it lacks the device↔PCS transforms this metric needs.'}</div>
+  }
+  if (st.ok === false) {
+    // When BOTH the gamut volume and this round trip are unavailable, the profile
+    // simply has no device↔PCS CLUTs to analyse (e.g. a matrix/TRC display profile).
+    if (gamut.error && st.status !== 'tooManySamples') {
+      return <div className={styles.notApplicable}>{t('analysis_stats_na') ||
+        'No device↔PCS CLUTs in this profile — profile statistics do not apply (e.g. a matrix/TRC display profile).'}</div>
+    }
+    if (st.status === 'tooManySamples') {
+      return <div className={styles.notApplicable}>{t('analysis_rt_toomany') ||
+        'Round trip skipped: the device colour space is too wide to evaluate (too many samples).'}</div>
+    }
+    return <div className={styles.notApplicable}>
+      {(t('analysis_rt_type_na') || 'This round-trip type is not available for this profile.')}
+      {st.message ? ` (${st.message})` : ''}
+    </div>
+  }
+
+  const degenerateMsg = t('stats_gamut_degenerate') ||
+    'The gamut boundary collapsed or was mostly undefined, so this gamut volume is unreliable.'
+
+  // Distribution: `hist` is the WASM's integer-ΔE bin counts (bin i = [i, i+1));
+  // the RtHistogram turns it into relative + cumulative frequencies. `total` is the
+  // sample count (guarded so an empty distribution shows a note instead of a plot).
+  const total = num(st.total) || 0
+  const hist = Array.isArray(st.hist) ? st.hist : []
+
+  const worst = fmtLab(st.worstLab)
 
   return (
     <>
       <table className={styles.table}>
         <thead>
           <tr>
-            <th>{t('analysis_rt_metric') || 'Metric'}</th>
-            <th className={styles.statNumC} title={t('analysis_rt_rt1_desc') || 'device → PCS → device'}>
-              {t('analysis_rt_rt1') || 'Round Trip 1'}</th>
-            <th className={styles.statNumC} title={t('analysis_rt_rt2_desc') || 'PCS round-trip stability'}>
-              {t('analysis_rt_rt2') || 'Round Trip 2'}</th>
+            <th className={styles.statNum}>{t('stats_gamut_volume') || 'Gamut volume (ΔE³)'}</th>
+            <th className={styles.statNumC}>{t('analysis_rt_min') || 'Min ΔE'}</th>
+            <th className={styles.statNumC}>{t('stats_mean') || 'Mean ΔE'}</th>
+            <th className={styles.statNumC}>{t('stats_std') || 'Std Dev'}</th>
+            <th className={styles.statNumC}>{t('stats_p90') || 'P90 ΔE'}</th>
+            <th className={styles.statNumC}>{t('stats_max') || 'Max ΔE'}</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.label}>
-              <td>{r.label}</td>
-              <td className={styles.statNumC}>{r.a}</td>
-              <td className={styles.statNumC}>{r.b}</td>
-            </tr>
-          ))}
           <tr>
-            <td>{t('analysis_rt_worstlab') || 'Worst L, a, b'}</td>
-            <td className={styles.statNumC}>{fmtLab(rt1.maxLab)}</td>
-            <td className={styles.statNumC}>{fmtLab(rt2.maxLab)}</td>
+            <td className={styles.statNum}>
+              {gamut.error ? '—' : fmtVol(gamut.volume)}
+              {!gamut.error && gamut.degenerate &&
+                <span className={styles.warnMark} title={degenerateMsg} aria-label={degenerateMsg}> ⚠</span>}
+            </td>
+            <td className={styles.statNumC}>{fmt2(st.min)}</td>
+            <td className={styles.statNumC}>{fmt2(st.mean)}</td>
+            <td className={styles.statNumC}>{fmt2(st.std)}</td>
+            <td className={styles.statNumC}>{fmt2(st.p90)}</td>
+            <td className={styles.statNumC}>{fmt2(st.max)}</td>
           </tr>
         </tbody>
       </table>
 
-      <p className={styles.rtGamut}>
-        <strong>{t('analysis_rt_gamut') || 'Specified gamut'}:</strong>{' '}
-        {prmg && prmg.ok
-          ? (prmg.implied ? (t('analysis_rt_gamut_prmg') || 'Perceptual Reference Medium Gamut')
-                          : (t('analysis_rt_gamut_none') || 'Not specified'))
-          : (t('analysis_rt_gamut_na') || 'Not evaluated')}
-      </p>
+      {/* PRMG only: the "Specified Gamut" declaration (from the rendering-intent-
+          gamut tag; only meaningful for perceptual/saturation intents). */}
+      {type === 'PRMG' && (
+        <p className={styles.rtGamut}>
+          <strong>{t('analysis_rt_gamut') || 'Specified gamut'}:</strong>{' '}
+          {st.implied ? (t('analysis_rt_gamut_prmg') || 'Perceptual Reference Medium Gamut')
+                      : (t('analysis_rt_gamut_none') || 'Not specified')}
+        </p>
+      )}
 
-      {prmg && prmg.ok && total ? (
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th colSpan={3} style={{ textAlign: 'left' }}>
-                {t('analysis_rt_prmg_heading') || 'PRMG interoperability'}
-              </th>
-            </tr>
-            <tr>
-              <th>{t('analysis_rt_prmg_de') || 'Round-trip ΔE'}</th>
-              <th className={styles.statNumC}>{t('analysis_rt_count') || 'Count'}</th>
-              <th className={styles.statNumC}>{t('analysis_rt_pct') || 'Share'}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {buckets.map((bk) => (
-              <tr key={bk.le}>
-                <td>≤ {bk.le}</td>
-                <td className={styles.statNumC}>{bk.n.toLocaleString()}</td>
-                <td className={styles.statNumC}>{pct(bk.n)}</td>
-              </tr>
-            ))}
-            <tr>
-              <td>{t('analysis_rt_total') || 'Total'}</td>
-              <td className={styles.statNumC}>{total.toLocaleString()}</td>
-              <td className={styles.statNumC} />
-            </tr>
-          </tbody>
-        </table>
+      {/* ΔE distribution: relative-frequency bars + cumulative-frequency line
+          (chardata's Comparison-Statistics histogram), drawn from the WASM's
+          integer-ΔE bin counts. `total` gated so an empty distribution shows a note. */}
+      <p className={styles.rtGamut}>
+        <strong>{t('analysis_rt_hist_heading') || 'Round-trip ΔE distribution'}</strong>
+        {' '}<span className={styles.histCount}>({t('analysis_rt_total') || 'Total'}: {total.toLocaleString()})</span>
+      </p>
+      {total > 0 && Array.isArray(hist) && hist.length ? (
+        <RtHistogram hist={hist} histBinW={num(st.histBinW) || 0.1} total={total} />
       ) : (
         <div className={styles.notApplicable}>
-          {(t('analysis_rt_prmg_skipped') || 'PRMG not evaluated')}
-          {prmg && prmg.message ? `: ${prmg.message}` : ''}
+          {t('analysis_rt_hist_empty') || 'No round-trip samples fell inside the evaluated region.'}
         </div>
+      )}
+
+      {/* Worst-error colour: the device/PCS colour where this round trip fails hardest. */}
+      {worst && (
+        <p className={styles.rtGamut}>
+          <strong>{t('analysis_rt_worstlab') || 'Worst L, a, b'}:</strong> {worst}
+        </p>
       )}
     </>
   )
@@ -436,7 +404,86 @@ function NeutralPlot({ bytes, table, t }) {
   }, [bytes, table.id])
   if (state.loading) return <div className={styles.loading}>{t('viz_loading') || 'Loading…'}</div>
   if (state.error) return <div className={styles.itemError}>{state.error}</div>
-  return <GraphSvg graph={state.graph} legend resizable />
+  // Neutral inking is a multi-line plot — rendered with the shared Plotly stack
+  // (drag-resize bar via ResizablePlot, native legend toggles), replacing GraphSvg.
+  return <PlotlyGraph graph={state.graph} legend storageKey="profiletool.neutralHeight" defaultH={360} />
+}
+
+// ── CLUT Image / Gamut Image ──────────────────────────────────────────────────
+// Each shows one raster (a CLUT lattice image, or the gamut in/out map) chosen by
+// a rendering-intent selector, via the shared RasterView (native-pixel canvas with
+// zoom / pan / reset / corner-resize).
+
+// Human label for a LUT table in the intent selector, e.g. "Relative Colorimetric
+// — A2B1". Unknown signatures show the raw sig.
+function lutLabel(sig, t) {
+  const intent = LUT_INTENT[sig]
+  if (!intent) return sig
+  return `${t('intent_' + intent) || intent} — ${sig}`
+}
+
+// Default to the relative-colorimetric device→PCS table when present.
+function defaultTableId(tables) {
+  const pref = tables.find((x) => x.sig === 'A2B1') || tables[0]
+  return pref ? pref.id : undefined
+}
+
+function RasterSelect({ bytes, tables, gamut, t }) {
+  // Select by descriptor id (unique) so duplicate sigs, if any, never collide.
+  const [selId, setSelId] = useState(() => defaultTableId(tables))
+  const table = tables.find((x) => x.id === selId) || tables[0]
+  return (
+    <>
+      {tables.length > 1 && (
+        <div className={styles.controls}>
+          <label className={styles.control}>
+            <span>{t('analysis_intent_label') || 'Rendering intent'}</span>
+            <select value={table.id} onChange={(e) => setSelId(e.target.value)}>
+              {tables.map((x) => <option key={x.id} value={x.id}>{lutLabel(x.sig, t)}</option>)}
+            </select>
+          </label>
+        </div>
+      )}
+      {/* key on id so switching tables remounts the raster loader/canvas cleanly. */}
+      <RasterView key={table.id} bytes={bytes} id={table.id} gamut={gamut} />
+    </>
+  )
+}
+
+function ClutImageSection({ bytes, tables, t }) {
+  return (
+    <Collapsible title={t('analysis_clut_heading') || 'CLUT Image'} defaultOpen={false}>
+      <p className={styles.sectionIntro}>
+        {t('analysis_clut_intro') ||
+          'The colour lookup table (CLUT) of a device↔PCS transform, tiled into an image. Pick which rendering-intent table to view.'}
+      </p>
+      {!tables.length ? (
+        <div className={styles.notApplicable}>
+          {t('analysis_clut_na') || 'This profile has no CLUT-based device↔PCS tables to visualize.'}
+        </div>
+      ) : (
+        <RasterSelect bytes={bytes} tables={tables} gamut={false} t={t} />
+      )}
+    </Collapsible>
+  )
+}
+
+function GamutImageSection({ bytes, tables, t }) {
+  return (
+    <Collapsible title={t('analysis_gamut_heading') || 'Gamut Image'} defaultOpen={false}>
+      <p className={styles.sectionIntro}>
+        {t('analysis_gamut_intro') ||
+          'The gamut tag’s in/out-of-gamut map: neutral where a PCS colour is reproducible, red where it falls outside the device gamut.'}
+      </p>
+      {!tables.length ? (
+        <div className={styles.notApplicable}>
+          {t('analysis_gamut_na') || 'This profile has no gamut tag to visualize.'}
+        </div>
+      ) : (
+        <RasterSelect bytes={bytes} tables={tables} gamut t={t} />
+      )}
+    </Collapsible>
+  )
 }
 
 export default function AnalysisPanel({ bytes, profileClass }) {
@@ -444,22 +491,30 @@ export default function AnalysisPanel({ bytes, profileClass }) {
   const [status, setStatus] = useState('loading')   // loading | ready | error
   const [error, setError] = useState(null)
   const [neutralTags, setNeutralTags] = useState([]) // [{ sig, id, intent }] (neutral B2A graphs)
+  const [clutTables, setClutTables] = useState([])   // [{ sig, id }] CLUT lattice images
+  const [gamutTables, setGamutTables] = useState([]) // [{ sig, id }] gamut in/out maps
 
-  // One enumerate per profile feeds the neutral-axis graphs (per B2A table).
+  // One enumerate per profile feeds the neutral-axis graphs (per B2A table) and the
+  // CLUT / gamut image sections.
   useEffect(() => {
     let cancelled = false
-    setStatus('loading'); setError(null); setNeutralTags([])
+    setStatus('loading'); setError(null)
+    setNeutralTags([]); setClutTables([]); setGamutTables([])
     enumerateVisualizations(bytes)
       .then((list) => {
         if (cancelled) return
-        const neutral = []
+        const neutral = [], clut = [], gamut = []
         for (const d of list) {
           const sig = d.tagSig || (d.id.split(':')[1] || '')
           if (d.kind === KIND_NEUTRAL) {
             neutral.push({ sig, id: d.id, intent: B2A_INTENTS[sig] || sig })
+          } else if (d.kind === KIND_CLUT) {
+            // The gamut tag's raster is the gamut map; every other LUT tag's is a CLUT.
+            (sig === 'gamt' ? gamut : clut).push({ sig, id: d.id })
           }
         }
-        setNeutralTags(neutral)
+        clut.sort((a, b) => lutRank(a.sig) - lutRank(b.sig))
+        setNeutralTags(neutral); setClutTables(clut); setGamutTables(gamut)
         setStatus('ready')
       })
       .catch((e) => { if (!cancelled) { setError(e.message); setStatus('error') } })
@@ -478,8 +533,9 @@ export default function AnalysisPanel({ bytes, profileClass }) {
       <h2 className={styles.panelTitle}>{t('analysis_title') || 'Analysis'}</h2>
       <p className={styles.intro}>{t('analysis_intro') || 'Profile-wide quality analyses derived from the device→PCS transform.'}</p>
       <ProfileStatsSection bytes={bytes} t={t} />
-      <RoundTripSection bytes={bytes} t={t} />
       <NeutralSection bytes={bytes} profileClass={profileClass} tables={neutralTags} t={t} />
+      <ClutImageSection bytes={bytes} tables={clutTables} t={t} />
+      <GamutImageSection bytes={bytes} tables={gamutTables} t={t} />
     </div>
   )
 }

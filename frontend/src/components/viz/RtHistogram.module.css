@@ -1,0 +1,22 @@
+/* (c) 2026 William Li */
+/* Horizontal-scale control row above the histogram (chardata's Integer ΔE /
+   Auto-scale + Bins control). */
+.controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 4px 0 8px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.ctlLabel { font-weight: 700; }
+.radio { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+.radio input { cursor: pointer; }
+.binsWrap { display: flex; align-items: center; gap: 5px; }
+.binsInput {
+  width: 60px; padding: 3px 6px;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface); color: var(--text);
+  font-family: var(--font-sans); font-size: 0.8rem;
+}

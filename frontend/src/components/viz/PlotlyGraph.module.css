@@ -1,0 +1,15 @@
+/* (c) 2026 William Li */
+/* Optional control row above a PlotlyGraph (e.g. the curve X–Y / Tone-increase
+   toggle). Mirrors the RtHistogram control styling. */
+.controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 2px 0 6px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.ctlLabel { font-weight: 700; }
+.radio { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+.radio input { cursor: pointer; }

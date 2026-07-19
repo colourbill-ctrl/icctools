@@ -1,10 +1,11 @@
 // (c) 2026 William Li
 import { Fragment, useEffect, useState } from 'react'
-import { describeTag } from '../lib/validator.js'
+import { describeTag } from '../lib/describeClient.js'
 import { enumerateVisualizations } from '../lib/vizPlot.js'
 import { useT } from '../i18n.jsx'
 import { useNumberBase } from '../numberBase.jsx'
 import TagVisuals from './TagVisuals.jsx'
+import DumpText from './DumpText.jsx'
 import styles from './TagTable.module.css'
 
 // IccVizModel Kind enum values used here (ChromaticityXY / ClutImage).
@@ -58,22 +59,31 @@ export default function TagTable({ tags, bytes, changedTagIds, describable = tru
 
   // Fetch the verbosity-100 dump the first time a tag is expanded. Cancel
   // gracefully if the user re-clicks before the WASM call resolves.
+  //
+  // Deferred to idle: the describe of a large CLUT tag (a big AToB/BToA grid dumped
+  // as text) is a heavy synchronous WASM call. Running it eagerly here would block
+  // the main thread right after the click, so the row appears not to respond. The
+  // verbosity-75 text (from the validation JSON) is already shown meanwhile, and it
+  // upgrades to verbosity-100 once this resolves.
   useEffect(() => {
-    if (!describable || !openId || !bytes) return
+    if (!describable || !openId || !bytes) return undefined
     const cached = descCache[openId]
-    if (cached && (cached.text != null || cached.error != null)) return
+    if (cached && (cached.text != null || cached.error != null)) return undefined
     let cancelled = false
-    setDescCache(c => ({ ...c, [openId]: { loading: true } }))
-    describeTag(bytes, openId)
-      .then((text) => {
-        if (cancelled) return
-        setDescCache(c => ({ ...c, [openId]: { text, loading: false } }))
-      })
-      .catch((e) => {
-        if (cancelled) return
-        setDescCache(c => ({ ...c, [openId]: { error: e.message, loading: false } }))
-      })
-    return () => { cancelled = true }
+    const id = openId
+    setDescCache(c => ({ ...c, [id]: { loading: true } }))
+    const run = () => {
+      if (cancelled) return
+      describeTag(bytes, id)
+        .then((text) => { if (!cancelled) setDescCache(c => ({ ...c, [id]: { text, loading: false } })) })
+        .catch((e) => { if (!cancelled) setDescCache(c => ({ ...c, [id]: { error: e.message, loading: false } })) })
+    }
+    const hasIdle = typeof requestIdleCallback === 'function'
+    const handle = hasIdle ? requestIdleCallback(run, { timeout: 2000 }) : setTimeout(run, 0)
+    return () => {
+      cancelled = true
+      if (hasIdle) cancelIdleCallback(handle); else clearTimeout(handle)
+    }
     // descCache intentionally not in deps — we read it for the early-out,
     // but writes from the same effect would loop. Keying on openId+bytes
     // is enough because cache resets only when bytes change.
@@ -159,10 +169,9 @@ export default function TagTable({ tags, bytes, changedTagIds, describable = tru
                     bytes={bytes}
                     descriptors={viz?.byTag.get(tag.id) || []}
                     chromaDesc={viz?.chroma || null}
-                    gamutDesc={tag.id !== 'gamt' ? (viz?.gamut || null) : null}
                     dataNode={
                       <>
-                        <pre className={styles.detailBody}>{shown}</pre>
+                        <DumpText text={shown} className={styles.detailBody} />
                         {cached?.loading && (
                           <div className={styles.detailLoading} aria-live="polite">
                             {t('loading_full_description')}
