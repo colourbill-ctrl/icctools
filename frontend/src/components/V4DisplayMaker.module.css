@@ -1,0 +1,77 @@
+/* (c) 2026 William Li — V4 Display Maker card (Link-tab maker, DL-LINK1). */
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--surface);
+  padding: 16px 18px;
+  max-width: 560px;                 /* leaves the rest of the Link canvas for other makers */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+/* Whole card is one drop target — highlight on drag-over. */
+.cardDrag {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+.head { display: flex; flex-direction: column; gap: 4px; }
+.title { margin: 0; font-size: 1.02rem; font-weight: 700; color: var(--text); }
+.sub { margin: 0; font-size: 0.82rem; color: var(--text-muted); }
+
+.slots { display: flex; gap: 12px; flex-wrap: wrap; }
+
+.slot {
+  flex: 1 1 200px;
+  min-height: 60px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius, 8px);
+  background: var(--surface-alt);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: center;
+}
+.slotFilled { border-style: solid; border-color: var(--accent); background: var(--accent-tint); }
+
+.slotLabel { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); }
+.slotHint { font-size: 0.82rem; color: var(--text-muted); font-style: italic; }
+
+.slotChip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.slotName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.86rem; color: var(--text); }
+.slotX {
+  border: none; background: transparent; cursor: pointer;
+  font-size: 1.1rem; line-height: 1; color: var(--text-muted); padding: 0 2px; flex: none;
+}
+.slotX:hover { color: var(--error); }
+
+.nameRow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.nameInput {
+  flex: 1 1 200px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 8px);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+.nameInput:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-tint); }
+
+.cancel {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius, 8px);
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+.cancel:hover:not(:disabled) { border-color: var(--accent); }
+
+.warn { margin: 0; font-size: 0.8rem; color: var(--warning); }
+.error { margin: 0; font-size: 0.84rem; color: var(--error); }
+.notice { margin: 0; font-size: 0.84rem; color: var(--accent); }

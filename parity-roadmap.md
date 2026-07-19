@@ -378,14 +378,50 @@ The multi-select+verb model stands on its own; only the gamut engine's provenanc
     (extract embedded → pool).
   - **1 selected** → Inspect · Dump · To JSON · To XML · Round-Trip · Profile Plot ·
     PAWG · **Plot Gamut**.
-  - **2 selected** → **Plot Gamut** (compare) · **Make V4 Display** (`V5→V4`).
+  - **2 selected** → **Plot Gamut** (compare) · ~~**Make V4 Display** (`V5→V4`)~~ →
+    **MOVED to the Link tab per DL-LINK1 (2026-07-18)** — multi-profile *combining* is a
+    **Link-tab maker**, not a pool-selection verb. The Plot Gamut / compare rows stand.
   - **N>2 selected** → **Plot Gamut** (compare overlay).
 - **Role-pair (`V5→V4`) needs no manual role UI:** the tool's contract distinguishes the
   two by class — `argv[1]` = V5 **RGB display** (`mntr`), `argv[2]` = V5 **observer**
-  (`spac` ColorSpace-class PCC). Roles are **auto-inferred** from the selected pair
-  (confirm; error on ambiguous, e.g. two displays). The one asymmetric case collapses
-  back into plain multi-select + verb.
+  (`spac` ColorSpace-class PCC). Roles are **auto-inferred** from the dropped profiles
+  (newest-per-role replaces; the engine rejects off-contract inputs). See DL-LINK1.
 **Input:**
+
+### DL-LINK1 — Link-tab creation model (phase 1 + all pre-node-graph phases) · ✅ RESOLVED 2026-07-18
+**Supersedes** the "2-selected → Make V4 Display verb" reading in the DL-PHASE1 arity block
+(that framing predated the accumulator/tab pivot): multi-profile *combining* is **not** a
+pool-selection verb bar — it's a **Link-tab maker**.
+
+**General model (durable, user 2026-07-18):** a **"link"** = **taking 2+ profiles and
+combining them in an action to produce another profile** (of whatever type suits the result).
+All such creation happens in the **Link tab canvas**, which hosts one or more **maker areas**
+(cards). Each maker:
+- is a **single drag-and-drop target** with labelled sub-slots (one per input role). Dropping
+  a profile is **interpreted by role** (class/space) and **fills/replaces that role's slot** —
+  **newest-per-role wins**; the user drags straight from the Profiles pane onto the maker.
+- **gates** its produce button until every required slot is filled.
+- on produce: **prompts for a name**, runs the engine, and puts the result into **both** the
+  **pool** (→ Profiles pane row) **and** the **Link accumulator** (→ chiclet). Per the
+  data-store model there is **ONE data copy** in the pool; the pane row and the Link chiclet
+  are **handles** to the same id.
+- must **not** monopolise the canvas — multiple makers coexist (V4 Display Maker now; a
+  regular **DeviceLink** maker + others later).
+
+**Does NOT change single-input producers** (New from .cube/XML/JSON, Add-from-image): those
+stay as PoolPane CreateVerbs — they combine <2 profiles, so they aren't "links".
+
+**First maker — V4 Display Maker (item 5, `IccV5DspObsToV4Dsp`):**
+- Slots: **RGB display** (V5, class `mntr`, space `RGB `) + **Observer** (V5, class `spac`
+  ColorSpace-class PCC). Drop routing auto-assigns by class; newest-per-role replaces.
+- **Engine contract** (source `IccV5DspObsToV4Dsp.cpp` main): rejects (-2) any off-contract
+  input — the display needs a spectral-emission AToB1 MPE (curveSet + emissionMatrix, 3→3);
+  the observer needs spectralViewingConditions (usable observer) + customToStandardPcc (3→3).
+  UI routing is light/best-effort; the **engine is authoritative** and its rejection surfaces
+  as the maker's inline error. Output: a **V4 RGB matrix/TRC display** profile.
+- Engine build: new wasm wrapper replicating the tool's main via `CIccMemIO` (B2 construct
+  family, same pattern as B1 iccFromCube) → A/B vs native `iccV5DspObsToV4Dsp` → SHA256SUMS +
+  version bump.
 
 ### DL-A1 — Round-trip surfacing & controls · ✅ RESOLVED 2026-07-17
 **Q:** Where does the canonical `iccRoundTrip` (PRMG) metric live, and how does it
@@ -783,7 +819,12 @@ native CLI + a smoketest case.
    `addIccEntry` or reject "no embedded profile"). No C++ / no WASM rebuild. Round-tripped
    byte-exact against libjpeg/libpng/libtiff (PIL) output for all three formats.
 4. ✅ **New from .cube** (producer).
-5. **Make V4 Display** (`V5→V4`).
+5. ✅ **Make V4 Display** (`V5→V4`). **DONE 2026-07-18.** Link-tab **V4 Display Maker** (DL-LINK1)
+   + `v5DspObsToV4(dspBytes, obsBytes)` export in the `iccconstruct` wasm module
+   (`construct-wrapper.cpp`) — a faithful `CIccMemIO` replication of `IccV5DspObsToV4Dsp`
+   main(). A/B **byte-identical** to the native CLI on the CI pair (modulo timestamp +
+   profile ID); reject paths surface the engine's own messages. Smoketest
+   `v5tov4-smoketest.mjs`; artifacts rebuilt + SHA256SUMS refreshed.
 6. **Gamut compare** (**P1-late · beyond parity**): iccviz boundary mesh/slice + chardata 3D/2D
    renderers + **lcms2→`CIccCmm`**. Last in phase 1 — heaviest, and the only item needing the CMM swap.
 

@@ -8,6 +8,7 @@
 // canvas, canvas phase) are step-1 placeholders.
 import { useCallback, useState } from 'react'
 import ProfileViewer from './ProfileViewer.jsx'
+import V4DisplayMaker from './V4DisplayMaker.jsx'
 import { POOL_DND_MIME } from './PoolPane.jsx'
 import { useT } from '../i18n.jsx'
 import styles from './MainCanvas.module.css'
@@ -19,6 +20,8 @@ export default function MainCanvas({
   // Profile-tab viewer wiring (bound by App to the active Profile entry):
   profileEntry, initialTab, changedTagIds, onXmlChanged, onJsonChanged,
   onIccProduced, onSave,
+  // Link-tab makers (DL-LINK1):
+  onCreateV4,
 }) {
   const t = useT()
   const [dropTab, setDropTab] = useState(null)
@@ -109,7 +112,7 @@ export default function MainCanvas({
           />
         )}
         {activeTab === 'Compare' && <ComparePanel ids={activeIds} getEntry={getEntry} t={t} />}
-        {activeTab === 'Link' && <LinkPanel t={t} />}
+        {activeTab === 'Link' && <LinkPanel t={t} getEntry={getEntry} onCreateV4={onCreateV4} />}
       </div>
     </section>
   )
@@ -172,11 +175,18 @@ function ComparePanel({ ids, getEntry, t }) {
   )
 }
 
-function LinkPanel({ t }) {
+// The Link tab is a canvas of "maker" cards (DL-LINK1): each combines 2+ profiles
+// (dragged from the pool onto the card) into a new profile that lands in the pool +
+// this tab's accumulator. Phase 1 ships the V4 Display Maker; DeviceLink and other
+// makers slot in beside it (hence the makers grid, not a full-bleed single card).
+function LinkPanel({ t, getEntry, onCreateV4 }) {
   return (
-    <Empty icon="🔗"
-      head={t('link_soon') || 'Linking'}
-      sub={t('link_soon_sub') || 'DeviceLink production and multi-profile transforms arrive in a later phase.'} />
+    <div className={styles.linkCanvas}>
+      <V4DisplayMaker getEntry={getEntry} onCreate={onCreateV4} />
+      <div className={styles.makerSoon}>
+        {t('link_more_soon') || 'More link makers (DeviceLink, …) arrive here.'}
+      </div>
+    </div>
   )
 }
 

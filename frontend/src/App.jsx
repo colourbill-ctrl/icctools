@@ -271,6 +271,23 @@ export default function App() {
     setNewCubeOpen(false)
   }, [ingestSingle])
 
+  // Link-tab maker — V4 Display (DL-LINK1, item 5). Combine a pooled V5 display +
+  // V5 observer into a V4 display profile. The result goes into the pool AND the
+  // Link accumulator: ONE data copy, a handle in each place. No auto-download —
+  // the user saves from the pool/Profile view like any other entry. Throws the
+  // engine's specific rejection so the maker card surfaces it inline.
+  const createV4Display = useCallback(async (dspId, obsId, name) => {
+    const dsp = poolRef.current.get(dspId)
+    const obs = poolRef.current.get(obsId)
+    if (!dsp || !obs) throw new Error('One of the selected profiles is no longer in the pool.')
+    const { makeV4Display } = await import('./lib/v4display.js')
+    const bytes = await makeV4Display(dsp.currentBytes, obs.currentBytes)   // throws readable message
+    const stem = (name || 'display-v4').replace(/\.(icc|icm)$/i, '').replace(/[^\w.-]+/g, '_') || 'display-v4'
+    const id = await addIccEntry(`${stem}.icc`, bytes)   // → pool (Profiles pane handle)
+    setAccum((a) => ({ ...a, Link: uniq([...a.Link, id]) }))   // → Link accumulator handle
+    return id
+  }, [addIccEntry])
+
   // Pool-row selection: plain = single, ctrl/meta = toggle, shift = range.
   const onSelectRow = useCallback((id, e) => {
     const order = [...poolRef.current.keys()]
@@ -473,6 +490,7 @@ export default function App() {
             onJsonChanged={handleJsonChanged}
             onIccProduced={handleIccProduced}
             onSave={handleSave}
+            onCreateV4={createV4Display}
           />
 
           <footer className={styles.footer}>
