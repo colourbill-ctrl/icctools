@@ -51,7 +51,7 @@ export default function App() {
   // persist for the session — just like the accumulators above).
   // Link Pipeline config: ordered pool ids + a parallel per-transform rendering
   // intent, the head-transform direction, and the last global intent chosen.
-  const [pipeline, setPipeline] = useState({ chain: [], intents: [], headForward: true, globalIntent: 1 })
+  const [pipeline, setPipeline] = useState({ chain: [], intents: [], headForward: true, globalIntent: 1, invertReverse: false })
   const [v4Roles, setV4Roles] = useState({ dsp: null, obs: null })  // Observer-Change slots
   const [activeTab, setActiveTab] = useState('Profile')
   const [selectedIds, setSelectedIds] = useState(() => new Set())

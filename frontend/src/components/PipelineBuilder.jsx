@@ -17,9 +17,9 @@
 // Prefer-colorimetry-source listbox, and duplicate filtering are persisted controls.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { POOL_DND_MIME } from './PoolPane.jsx'
-import { spaceLabel, computeChainFlow } from '../lib/pipeline.js'
+import { spaceLabel, computeChainFlow, computeInvertPlan } from '../lib/pipeline.js'
 import {
-  chainInfo, transformData as engineTransformData, spectralToXYZ,
+  chainInfo, transformData as engineTransformData, invertData as engineInvertData, spectralToXYZ,
   OBSERVERS, ILLUMINANTS, RENDERING_INTENTS,
 } from '../lib/pipelineEngine.js'
 import {
@@ -71,6 +71,10 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
   const intents = pipeline.intents
   const headForward = pipeline.headForward
   const globalIntent = pipeline.globalIntent
+  // Invert Transform direction: false = invert the LAST chain stage (data enters at the
+  // first), true = invert the FIRST stage (chain reversed for the search engine).
+  const invertReverse = !!pipeline.invertReverse
+  const setInvertReverse = (val) => setPipeline((p) => ({ ...p, invertReverse: val }))
 
   // Append profiles to the chain (+ a matching intent = current global) and reflect
   // them in the accumulator. Every other mutation keeps chain/intents in lock-step.
@@ -198,6 +202,36 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
     return srcs.includes(prefer) ? prefer : srcs[0]
   }, [dataSummary, prefer])
   const hasSpectral = !!dataSummary?.kinds?.some((k) => k.kind === 'spectral')
+
+  // ── Invert Transform (iccApplySearch) ───────────────────────────────────────
+  // The engine order (reversed when the user inverts the FIRST stage) + its intents.
+  const engineChain = useMemo(() => (invertReverse ? [...chain].reverse() : chain), [chain, invertReverse])
+  const engineIntents = useMemo(() => (invertReverse ? [...intents].reverse() : intents), [intents, invertReverse])
+  const invPlan = useMemo(() => computeInvertPlan(stageEntries, invertReverse), [stageEntries, invertReverse])
+  // Authoritative source-space/connectivity for the SEARCH: the forward chainInfo of the
+  // engine-ordered chain, always in the natural device→PCS direction (firstInput=true) —
+  // the search reads its input in that source space and produces the inverted stage's
+  // device space, so forward chainInfo is the right, SAFE gate (searchInfo can trap on
+  // pathological v5 profiles, so we never call it passively). Independent of the head
+  // toggle, which only affects the forward DeviceLink/image/data paths.
+  const [invInfo, setInvInfo] = useState(null)
+  const [invChecking, setInvChecking] = useState(false)
+  const engineIntentsKey = engineIntents.join(',')
+  useEffect(() => {
+    if (broken || chain.length < 2 || chain.length > 3) { setInvInfo(null); setInvChecking(false); return }
+    let cancelled = false
+    setInvChecking(true)
+    const bytes = engineChain.map((id) => getEntry(id)?.currentBytes).filter(Boolean)
+    chainInfo(bytes, engineIntents, true)
+      .then((r) => { if (!cancelled) { setInvInfo(r); setInvChecking(false) } })
+      .catch(() => { if (!cancelled) { setInvInfo({ ok: false, error: 'Could not analyse the inversion.' }); setInvChecking(false) } })
+    return () => { cancelled = true }
+  }, [engineChain, broken, chain.length, engineIntentsKey, getEntry])   // eslint-disable-line react-hooks/exhaustive-deps
+  const invDataStatus = useMemo(
+    () => dataMethodStatus({ dataParsed, dataSummary, dataErr, info: invInfo, checking: invChecking, prefer }),
+    [dataParsed, dataSummary, dataErr, invInfo, invChecking, prefer],
+  )
+  const canInvert = !busy && invPlan.ok && invInfo?.ok === true && invDataStatus.ready
 
   // Accept an image: streaming probe (type + size + colour space), pixels NOT loaded.
   const acceptImage = useCallback(async (file) => {
@@ -416,6 +450,66 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
         srcEncoding: input.srcEncoding, dstEncoding,
         names, sourceHeaders: input.sourceHeaders, sourceCells: input.sourceCells,
         destHeaders: dHeaders, destCells, datasetName: dataParsed.name,
+      })
+    } catch (e) { setError(e?.message || String(e)) } finally { setBusy(false) }
+  }
+
+  // ── outcome: Invert Transform (iccApplySearch equivalent) ───────────────────
+  // Same dataset prep as Transform Data, but the LAST stage of the engine-ordered chain
+  // is inverted via search (Nelder-Mead) instead of run forward. The dataset must be in
+  // the search source space (invInfo.sourceSpace) — identical gating to Transform Data —
+  // and the produced device values carry a per-row cost (invertibility/metamerism index).
+  async function doInvertData() {
+    if (!canInvert || busy || !dataParsed || !invInfo?.ok) return
+    setBusy(true); setError(null); setNotice(null)
+    try {
+      const chainBytes = engineChain.map((id) => getEntry(id).currentBytes)
+      const need = { kind: spaceKind(invInfo.sourceSpace), nSrc: invInfo.sourceSamples }
+
+      let workParsed = dataParsed
+      const devCols = dataSummary.classification.device
+      if (filterDup && dataSummary.duplicates.dupeRows > 0 && devCols.length) {
+        workParsed = { ...dataParsed, rows: deduplicateRows(dataParsed.headers, dataParsed.rows, devCols, dupMethod) }
+      }
+
+      let spectralXYZRows = null
+      if (need.kind !== 'device' && effPrefer === 'spectral') {
+        const wcls = classifyColumns(workParsed.headers)
+        const nm = wcls.spectral.map((s) => s.nm)
+        const specKind = dataSummary.kinds.find((k) => k.kind === 'spectral')
+        const scale = specKind?.encoding === 'percent' ? 0.01 : 1
+        const specRows = workParsed.rows.map((row) => wcls.spectral.map((s) => (parseFloat(row[s.idx]) || 0) * scale))
+        const { xyz } = await spectralToXYZ(specRows, { startNm: nm[0], endNm: nm[nm.length - 1], observer, illuminant })
+        spectralXYZRows = xyz
+      }
+
+      const input = buildTransformInput(workParsed, need, need.kind === 'device' ? null : effPrefer, spectralXYZRows)
+      // The inverted stage produces a device space → percent tints; the search seeds from
+      // the inverted stage's forward intent (engineIntents' last), forward intents drive
+      // the rest of the chain.
+      const initIntent = engineIntents[engineIntents.length - 1] ?? globalIntent
+      const res = await engineInvertData(chainBytes, input.samples, input.nSrc, {
+        intents: engineIntents.slice(), initIntent, srcEncoding: input.srcEncoding, dstEncoding: 'percent', wantCost: true,
+      })
+
+      const nDst = res.destSamples
+      const dHeaders = destHeaders(res.dstSpace, nDst)
+      const destCells = input.sourceCells.map((_, i) => {
+        const row = []
+        for (let c = 0; c < nDst; c++) row.push(res.values[i * nDst + c])
+        return row
+      })
+      const nameIdx = classifyColumns(workParsed.headers).nameIdx
+      const names = nameIdx >= 0 ? workParsed.rows.map((r) => r[nameIdx]) : null
+      const costs = res.cost ? Array.from(res.cost) : null
+
+      setResult({
+        title: t('dm_invert_data') || 'Invert Transform',
+        srcSpace: res.srcSpace, dstSpace: res.dstSpace,
+        srcEncoding: input.srcEncoding, dstEncoding: 'percent',
+        names, sourceHeaders: input.sourceHeaders, sourceCells: input.sourceCells,
+        destHeaders: dHeaders, destCells, datasetName: dataParsed.name,
+        costs, costLabel: t('dm_cost') || 'ΔE cost',
       })
     } catch (e) { setError(e?.message || String(e)) } finally { setBusy(false) }
   }
@@ -663,6 +757,7 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
       {/* Outcome buttons live OUTSIDE the drop-highlight active area — a profile drag
           never lights them up, and dropping on a button never lands in the chain. */}
       {!naming ? (
+        <>
         <div className={styles.actions}>
           <button className="btn-primary" type="button" disabled={!canLink} onClick={beginNaming}>
             {t('pl_make_link') || 'Make DeviceLink'}
@@ -673,7 +768,37 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
           <button className="btn-primary" type="button" disabled={!canTransformData} onClick={doTransformData}>
             {busy && dataParsed ? (t('dm_transforming') || 'Transforming…') : (t('dm_transform_data') || 'Transform Data')}
           </button>
+          {/* Invert Transform (iccApplySearch): only meaningful for a 2–3 profile chain,
+              where the last (engine-ordered) stage is inverted via search. The direction
+              selector flips which physical end is inverted; the label states the space
+              the dataset must be in and the device space produced. */}
+          {chain.length >= 2 && chain.length <= 3 && (
+            <div className={styles.invertGroup}>
+              <button className="btn-primary" type="button" disabled={!canInvert} onClick={doInvertData}
+                      title={invPlan.ok
+                        ? (t('dm_invert_hint', { in: invPlan.dataSpace, out: invPlan.outSpace })
+                          || `Data in ${invPlan.dataSpace} → search ${invPlan.outSpace}`)
+                        : ''}>
+                {busy && dataParsed ? (t('dm_inverting') || 'Inverting…') : (t('dm_invert_data') || 'Invert Transform')}
+              </button>
+              <label className={styles.invertDir}>
+                <span>{t('dm_invert_which') || 'Invert'}</span>
+                <select value={invertReverse ? '1' : '0'} onChange={(e) => setInvertReverse(e.target.value === '1')}
+                        aria-label={t('dm_invert_which') || 'Which stage to invert'}>
+                  <option value="0">{t('dm_invert_last') || 'last stage'}{invPlan.ok ? ` → ${invPlan.outSpace}` : ''}</option>
+                  <option value="1">{t('dm_invert_first') || 'first stage'}</option>
+                </select>
+              </label>
+            </div>
+          )}
         </div>
+        {chain.length >= 2 && chain.length <= 3 && invPlan.ok && (
+          <p className={styles.invertNote}>
+            {t('dm_invert_note', { in: invPlan.dataSpace, out: invPlan.outSpace })
+              || `Inverting “${invPlan.invertedName}” — the dataset must be ${invPlan.dataSpace}; produces ${invPlan.outSpace} with a per-patch invertibility cost.`}
+          </p>
+        )}
+        </>
       ) : (
         <div className={styles.nameRow}>
           <input ref={nameRef} className={styles.nameInput} value={name}

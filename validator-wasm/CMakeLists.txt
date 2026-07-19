@@ -286,7 +286,11 @@ if(BUILD_ICCCONSTRUCT)
     # imageApplyBegin/Chunk/End session (construct-wrapper.cpp), so a big CMYK TIFF no
     # longer needs the whole float image resident (which bad_alloc'd at 512 MB).
     -sMAXIMUM_MEMORY=1024MB
-    -sSTACK_SIZE=1MB
+    # 8 MB stack: the Invert Transform (iccApplySearch / CIccCmmSearch) drives a
+    # Nelder-Mead search whose cost function recurses through the inverted profile's
+    # transform tree per iteration; deep v5/MPE transforms overflowed the former 1 MB
+    # stack and hard-trapped the module. Everything else here is shallow.
+    -sSTACK_SIZE=8MB
     -sDYNAMIC_EXECUTION=0
     # Same exception-unwrap exports as iccjson so JS reads the throw's .what().
     -sEXPORTED_RUNTIME_METHODS=getExceptionMessage,decrementExceptionRefcount

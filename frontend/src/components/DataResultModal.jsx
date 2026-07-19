@@ -25,16 +25,23 @@ export default function DataResultModal({ open, onClose, result }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
-  // Unified preview table: [name?] + source cols + dest cols.
+  // Unified preview table: [name?] + source cols + dest cols + [cost?]. The cost column
+  // (Invert Transform's per-patch invertibility residual) is appended after the produced
+  // device columns when present.
   const table = useMemo(() => {
     if (!result) return null
-    const { names, sourceHeaders, sourceCells, destHeaders, destCells } = result
+    const { names, sourceHeaders, sourceCells, destHeaders, destCells, costs, costLabel } = result
     const hasName = names && names.some((n) => n)
-    const headers = [...(hasName ? ['Sample'] : []), ...sourceHeaders, ...destHeaders]
+    const hasCost = Array.isArray(costs) && costs.length === sourceCells.length
+    const headers = [
+      ...(hasName ? ['Sample'] : []), ...sourceHeaders, ...destHeaders,
+      ...(hasCost ? [costLabel || 'cost'] : []),
+    ]
     const rows = sourceCells.map((sc, i) => [
       ...(hasName ? [names[i] || ''] : []),
       ...sc.map(fmtCell),
       ...(destCells[i] || []).map(fmtCell),
+      ...(hasCost ? [fmtCell(costs[i])] : []),
     ])
     return { headers, rows, hasName, srcCount: sourceHeaders.length }
   }, [result])
@@ -55,12 +62,18 @@ export default function DataResultModal({ open, onClose, result }) {
       await saveTextFile(text, `${base}-transformed.json`, 'application/json')
       return
     }
-    // Flat table for CSV/CGATS: name? + source + dest columns.
+    // Flat table for CSV/CGATS: name? + source + dest columns + [cost?].
+    const { costs, costLabel } = result
     const hasName = names && names.some((n) => n)
-    const headers = [...(hasName ? ['SAMPLE_NAME'] : []), ...sourceHeaders, ...destHeaders]
+    const hasCost = Array.isArray(costs) && costs.length === sourceCells.length
+    const headers = [
+      ...(hasName ? ['SAMPLE_NAME'] : []), ...sourceHeaders, ...destHeaders,
+      ...(hasCost ? [(costLabel || 'cost').replace(/\s+/g, '_')] : []),
+    ]
     const rows = sourceCells.map((sc, i) => [
       ...(hasName ? [names[i] || ''] : []),
       ...sc, ...(destCells[i] || []),
+      ...(hasCost ? [costs[i]] : []),
     ])
     if (format === 'cgats') {
       await saveTextFile(toCGATS({ headers, rows }, { title: base }), `${base}-transformed.txt`, 'text/plain')

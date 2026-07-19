@@ -141,6 +141,39 @@ export function computeChainFlow(entries, headForward = true) {
 }
 
 /**
+ * Plan an Invert Transform (iccApplySearch): the LAST stage of the ENGINE-ORDERED chain
+ * is inverted via search; the dataset enters at the first stage and the inverted stage's
+ * device space is produced. `reverse` flips which physical end is inverted (the direction
+ * selector) by reversing the order fed to the engine. Returns the 2–3 gate + endpoint
+ * labels for the UI; the authoritative source-space + connectivity check stays with the
+ * forward `chainInfo` run on the engine-ordered bytes (search and forward share spaces).
+ *
+ * @param {Array<{filename?:string, currentBytes?:Uint8Array}|null>} entries chain order
+ * @param {boolean} reverse invert the FIRST physical stage instead of the last
+ * @returns {{ok:boolean, count:number, tooMany:boolean, unknown?:boolean,
+ *   dataSpace?:string, outSpace?:string, invertedIdx?:number, invertedName?:string,
+ *   sourceName?:string}}
+ */
+export function computeInvertPlan(entries, reverse = false) {
+  const list = entries || []
+  const n = list.length
+  if (n < 2 || n > 3) return { ok: false, count: n, tooMany: n > 3 }
+  // Engine order: reversed puts the physical FIRST stage last (= inverted).
+  const ordered = reverse ? [...list].slice().reverse() : list.slice()
+  const facts = ordered.map((e) => (e ? profileFacts(e) : null))
+  if (facts.some((f) => !f || !f.known)) return { ok: false, count: n, tooMany: false, unknown: true }
+  const invertedIdx = reverse ? 0 : n - 1                 // physical index of the inverted stage
+  return {
+    ok: true, count: n, tooMany: false,
+    dataSpace: spaceLabel(facts[0].data),                 // device space the dataset must be in
+    outSpace: spaceLabel(facts[facts.length - 1].data),   // inverted stage's device output
+    invertedIdx,
+    invertedName: list[invertedIdx]?.filename || null,
+    sourceName: list[reverse ? n - 1 : 0]?.filename || null,
+  }
+}
+
+/**
  * Analyse an ordered chain of pool entries → outcomes + source/dest labels.
  * @param {Array<{id:string, filename:string, currentBytes?:Uint8Array}>} entries
  */

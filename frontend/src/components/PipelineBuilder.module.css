@@ -219,7 +219,13 @@
 .ctlCheck input { accent-color: var(--accent); }
 
 /* ── outcome buttons row ─────────────────────────────────────────── */
-.actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+/* Invert Transform button + its direction selector, grouped so they wrap together. */
+.invertGroup { display: inline-flex; gap: 8px; align-items: center; }
+.invertDir { display: inline-flex; gap: 5px; align-items: center; font-size: 0.8rem; color: var(--muted, #667); }
+.invertDir select { font-size: 0.8rem; padding: 3px 5px; }
+.invertNote { margin: 6px 0 0; font-size: 0.8rem; color: var(--muted, #667); }
 
 .error { margin: 0; font-size: 0.84rem; color: var(--error); }
 .notice { margin: 0; font-size: 0.84rem; color: var(--accent); }

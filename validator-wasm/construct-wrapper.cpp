@@ -35,6 +35,7 @@
 #include "IccMpeBasic.h"
 #include "IccMpeSpectral.h"
 #include "IccColorimetry.h"   // CIccColorimetricCalculator — canonical spectral→XYZ (data methods)
+#include "IccCmmSearch.h"     // CIccCmmSearch — inverse (search) CMM for Invert Transform
 #include "IccUtil.h"
 
 #include <emscripten/bind.h>
@@ -1049,6 +1050,217 @@ emscripten::val spectralToXYZ(std::string reflBytes, int nSamples, int nBands,
   }
 }
 
+// ── Invert Transform (iccApplySearch) ─────────────────────────────────────────
+// iccApplySearch inverts the LAST profile of a 2- or 3-profile chain via a
+// Nelder-Mead search (CIccCmmSearch, IccProfLib level). The forward profiles carry
+// data → PCS; the search then finds the last profile's DEVICE values that reproduce
+// that PCS appearance. This is the reverse of buildLink/applyValues (which only run a
+// chain forward): here one profile has no forward table for the direction we want, so
+// the CMM optimizes device values against the target instead.
+//
+// Orchestration mirrors CIccConnectCmm::CreateSearch: add every profile forward via
+// the BASE CIccCmm::AddXform (the CIccCmmSearch::AddXform override is scoped past —
+// CreateSearch does the same), then SetDstInitProfile() on a SECOND copy of the last
+// profile to seed the search's starting guess (the CLI's -INIT arg). Because AddXform
+// takes ownership, the last profile's bytes are read TWICE (once for the forward chain,
+// once for the init seed) — exactly as CreateSearch re-opens the file.
+
+// Assemble the search CMM from `chainVal` (2 or 3 profile byte arrays, in the order the
+// UI presents them — element 0 is the data-source profile, the last is inverted).
+// Returns nullptr into `err` on failure. Keeps the extra init-copy profile alive via the
+// CMM (SetDstInitProfile takes ownership). initIntent seeds the reverse search.
+static CIccCmmSearch* buildSearchCmm(emscripten::val chainVal,
+                                     emscripten::val intentsVal, int initIntentArg,
+                                     std::string& err) {
+  const unsigned n = chainVal["length"].as<unsigned>();
+  if (n < 2 || n > 3) {
+    err = "Invert Transform needs exactly 2 or 3 profiles in the chain.";
+    return nullptr;
+  }
+  const std::vector<icRenderingIntent> intents = parseIntents(intentsVal, n);
+  const icRenderingIntent initIntent = clampIntent(initIntentArg);
+
+  std::unique_ptr<CIccCmmSearch> pCmm(new CIccCmmSearch());
+
+  // Forward chain — add every profile via the base AddXform (bypass the search override).
+  // Read the LAST profile's bytes separately afterward for the init seed.
+  std::vector<std::uint8_t> lastBuf;
+  for (unsigned i = 0; i < n; ++i) {
+    std::vector<std::uint8_t> buf =
+      emscripten::convertJSArrayToNumberVector<std::uint8_t>(chainVal[i]);
+    if (buf.empty() || buf.size() > kMaxIccBytes) {
+      err = "A chained profile is empty or too large.";
+      return nullptr;
+    }
+    if (i == n - 1) lastBuf = buf;   // keep for the init-seed copy
+    CIccProfile* p = ReadIccProfile(buf.data(), (icUInt32Number)buf.size());
+    if (!p) { err = "A chained profile could not be read."; return nullptr; }
+    // Call the VIRTUAL CIccCmmSearch::AddXform override (NOT the base): it registers
+    // each profile into m_pSrcProfile / m_pDstProfile / m_pMidProfile by attach order
+    // (and takes ownership — freeing on rejection), which Begin() then wires into the
+    // forward chain + reverse search. The base overload would leave those unset.
+    icStatusCMM stat = pCmm->AddXform(p, intents[i], icInterpTetrahedral,
+                                      NULL, icXformLutColor, true, NULL);
+    if (stat) {
+      err = "Cannot add profile " + std::to_string(i + 1) + ": " + CIccCmm::GetStatusText(stat);
+      return nullptr;
+    }
+  }
+
+  // Seed the reverse search with a SECOND copy of the last profile (CreateSearch re-opens
+  // the same file). SetDstInitProfile takes ownership of this copy.
+  CIccProfile* pInit = ReadIccProfile(lastBuf.data(), (icUInt32Number)lastBuf.size());
+  if (!pInit) { err = "Could not re-read the profile to invert."; return nullptr; }
+  pCmm->SetDstInitProfile(pInit, initIntent, icInterpTetrahedral, NULL, icXformLutColor, true);
+
+  icStatusCMM stat = pCmm->Begin();
+  if (stat) {
+    err = std::string("The chain cannot be inverted: ") + CIccCmm::GetStatusText(stat);
+    return nullptr;
+  }
+  return pCmm.release();
+}
+
+// Cheap gate for the UI (mirrors chainInfo): assemble the search CMM, report the source
+// space the dropped dataset MUST be in and the device space the invert produces. Never
+// throws — a rejected chain is a normal result. `reverse` lets the UI flip which end is
+// inverted (the directionality selector) by reversing the profile array before assembly.
+emscripten::val searchInfoImpl(emscripten::val chainVal, emscripten::val intentsVal,
+                               int initIntent) {
+  emscripten::val r = emscripten::val::object();
+  const unsigned n = chainVal.isArray() ? chainVal["length"].as<unsigned>() : 0;
+  r.set("count", (int)n);
+  if (n < 2 || n > 3) {
+    r.set("ok", false);
+    r.set("tooMany", n > 3);
+    r.set("message", n > 3
+      ? std::string("Invert Transform supports at most 3 profiles; this chain has ") + std::to_string(n) + "."
+      : std::string("Invert Transform needs at least 2 profiles."));
+    return r;
+  }
+  std::string err;
+  std::unique_ptr<CIccCmmSearch> pCmm(buildSearchCmm(chainVal, intentsVal, initIntent, err));
+  if (!pCmm) {
+    r.set("ok", false);
+    r.set("tooMany", false);
+    r.set("message", err);
+    return r;
+  }
+  const icColorSpaceSignature srcSpace = pCmm->GetSourceSpace();
+  const icColorSpaceSignature dstSpace = pCmm->GetDestSpace();
+  r.set("ok", true);
+  r.set("tooMany", false);
+  r.set("srcSpace", sigToStr(srcSpace));
+  r.set("dstSpace", sigToStr(dstSpace));
+  r.set("srcSamples", (int)icGetSpaceSamples(srcSpace));
+  r.set("dstSamples", (int)icGetSpaceSamples(dstSpace));
+  return r;
+}
+
+emscripten::val searchInfo(emscripten::val chainVal, emscripten::val intents, int initIntent) {
+  try { return searchInfoImpl(chainVal, intents, initIntent); }
+  catch (...) {
+    emscripten::val r = emscripten::val::object();
+    r.set("ok", false); r.set("tooMany", false);
+    r.set("message", std::string("Could not analyze the chain for inversion."));
+    return r;
+  }
+}
+
+// invertValues — run a colour LIST through the inverse (search) chain (Invert Transform).
+// srcBytes: raw bytes of a Float32Array, nSamples × nSrcCh, row-major, in `srcEncodeArg`
+// (icFloatColorEncoding). nSrcCh must equal the search SOURCE samples (GetSourceSpace).
+// Per row, exactly as iccApplySearch.cpp: ToInternalEncoding(srcSpace) → Apply (search)
+// → FromInternalEncoding(dstSpace, dstEncode). When wantCost, also reports the per-row
+// search residual (GetApplyCost) — an index of how well the target inverts / metamerism
+// (0 = exact; larger = the target needs a metameric trade-off the device cannot resolve).
+// Returns { ok, destSamples, srcSpace, dstSpace, values:Float32Array, cost?:Float32Array }.
+emscripten::val invertValuesImpl(emscripten::val chainVal, std::string srcBytes, int nSrcCh,
+                                 emscripten::val intentsVal, int initIntent,
+                                 int srcEncodeArg, int dstEncodeArg, bool wantCost) {
+  if (nSrcCh < 1) throw std::runtime_error("The data has no colour channels.");
+  if (srcBytes.size() % (std::size_t)(nSrcCh * 4) != 0)
+    throw std::runtime_error("Malformed value buffer.");
+  const std::size_t nSamples = srcBytes.size() / (std::size_t)(nSrcCh * 4);
+  if (nSamples == 0) throw std::runtime_error("The dataset is empty.");
+  // The inverse search is ~1000× costlier per patch than a forward apply (Nelder-Mead
+  // iterates the forward transform many times), so cap far tighter than applyValues.
+  if (nSamples > 200000ULL)
+    throw std::runtime_error("Too many patches to invert (over 200,000); inversion is a heavy per-patch search.");
+
+  const icFloatColorEncoding srcEncode = clampEncoding(srcEncodeArg);
+  const icFloatColorEncoding dstEncode = clampEncoding(dstEncodeArg);
+
+  std::string err;
+  std::unique_ptr<CIccCmmSearch> theCmm(buildSearchCmm(chainVal, intentsVal, initIntent, err));
+  if (!theCmm) throw std::runtime_error(err);
+
+  icColorSpaceSignature srcSpace = theCmm->GetSourceSpace();
+  const icColorSpaceSignature dstSpace = theCmm->GetDestSpace();
+  const int nSrc = (int)icGetSpaceSamples(srcSpace);
+  const int nDst = (int)icGetSpaceSamples(dstSpace);
+  if (nSrc != nSrcCh)
+    throw std::runtime_error("This data has " + std::to_string(nSrcCh)
+      + " channel(s) but the inversion source space needs " + std::to_string(nSrc) + ".");
+  if (nDst < 1) throw std::runtime_error("The inversion has an unusable output space.");
+
+  // As iccApplySearch: don't interpret device data as PCS-encoded. Remap a PCS source to
+  // its device-encoded sibling and skip unit-clipping for float PCS input.
+  bool bClip = true;
+  if (srcSpace == icSigXYZData || srcSpace == icSigLabData) {
+    if (srcSpace == icSigXYZData) srcSpace = icSigDevXYZData;
+    else                          srcSpace = icSigDevLabData;
+    if (srcEncode == icEncodeFloat) bClip = false;
+  }
+
+  const float* src = reinterpret_cast<const float*>(srcBytes.data());
+  std::vector<float> dst((std::size_t)nSamples * nDst);
+  std::vector<float> cost;
+  if (wantCost) cost.resize(nSamples);
+  std::vector<icFloatNumber> pixel(icIntMax(nSrc, nDst) + 16, 0);
+  std::vector<icFloatNumber> internalSrc(nSrc + 16), internalDst(nDst + 16), extDst(nDst);
+
+  for (std::size_t s = 0; s < nSamples; ++s) {
+    for (int c = 0; c < nSrc; ++c) pixel[c] = (icFloatNumber)src[s * nSrc + c];
+    if (CIccCmm::ToInternalEncoding(srcSpace, srcEncode, internalSrc.data(), pixel.data(), bClip))
+      throw std::runtime_error("Could not encode a source colour for the inversion input space.");
+    if (wantCost) {
+      icFloatNumber dCost = -1;
+      theCmm->GetApplyCost(dCost, internalSrc.data());
+      cost[s] = (float)dCost;
+    }
+    if (theCmm->Apply(internalDst.data(), internalSrc.data()))
+      throw std::runtime_error("The inverse search failed on a patch.");
+    if (CIccCmm::FromInternalEncoding(dstSpace, dstEncode, extDst.data(), internalDst.data()))
+      throw std::runtime_error("Could not encode an inverted colour.");
+    for (int c = 0; c < nDst; ++c) dst[s * nDst + c] = (float)extDst[c];
+  }
+
+  emscripten::val r = emscripten::val::object();
+  r.set("ok", true);
+  r.set("destSamples", nDst);
+  r.set("srcSpace", sigToStr(theCmm->GetSourceSpace()));
+  r.set("dstSpace", sigToStr(dstSpace));
+  r.set("values", makeFloat32Array(dst.data(), dst.size()));
+  if (wantCost) r.set("cost", makeFloat32Array(cost.data(), cost.size()));
+  return r;
+}
+
+emscripten::val invertValues(emscripten::val chainVal, std::string srcBytes, int nSrcCh,
+                             emscripten::val intents, int initIntent,
+                             int srcEncode, int dstEncode, bool wantCost) {
+  try {
+    return invertValuesImpl(chainVal, srcBytes, nSrcCh, intents, initIntent,
+                            srcEncode, dstEncode, wantCost);
+  } catch (const std::runtime_error&) {
+    throw;
+  } catch (const std::exception& e) {
+    throw std::runtime_error(std::string("Invert Transform failed: ") + e.what());
+  } catch (...) {
+    throw std::runtime_error("Invert Transform failed with an unknown error");
+  }
+}
+
 } // namespace
 
 EMSCRIPTEN_BINDINGS(iccconstruct) {
@@ -1062,4 +1274,6 @@ EMSCRIPTEN_BINDINGS(iccconstruct) {
   emscripten::function("imageApplyEnd", &imageApplyEnd);
   emscripten::function("applyValues", &applyValues);
   emscripten::function("spectralToXYZ", &spectralToXYZ);
+  emscripten::function("searchInfo", &searchInfo);
+  emscripten::function("invertValues", &invertValues);
 }

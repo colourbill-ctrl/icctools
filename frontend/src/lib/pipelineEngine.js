@@ -133,6 +133,73 @@ export async function transformData(chainBytes, samples, nSrc, opts = {}) {
   return { destSamples: res.destSamples, srcSpace: res.srcSpace, dstSpace: res.dstSpace, values }
 }
 
+/**
+ * Cheap gate for the Invert Transform (iccApplySearch): assemble the SEARCH CMM
+ * (2–3 profiles, last one inverted) and report the source space the dropped dataset
+ * MUST match plus the device space the inversion produces. Never throws — a chain that
+ * can't be inverted (wrong length / won't connect) is a normal, explained result.
+ * @param {Uint8Array[]} chainBytes ordered profile byte buffers (last = inverted)
+ * @param {{intents?:number|number[], initIntent?:number}} [opts]
+ * @returns {Promise<{ok:boolean, count:number, tooMany?:boolean, message?:string,
+ *   srcSpace?:string, dstSpace?:string, srcSamples?:number, dstSamples?:number}>}
+ */
+export async function searchInfo(chainBytes, opts = {}) {
+  const mod = await loadConstruct()
+  if (typeof mod.searchInfo !== 'function') {
+    return { ok: false, count: chainBytes.length, unavailable: true,
+      message: 'The inversion engine is not built into this WASM module yet.' }
+  }
+  const intents = opts.intents ?? 1
+  const initIntent = Number.isInteger(opts.initIntent) ? opts.initIntent : 1
+  try {
+    const r = mod.searchInfo(chainBytes, intents, initIntent)
+    return r || { ok: false, count: chainBytes.length, message: 'No result from inversion analysis.' }
+  } catch (e) {
+    return { ok: false, count: chainBytes.length, message: toError(mod, e).message }
+  }
+}
+
+/**
+ * Invert a LIST of colours through a 2–3 profile chain — profiletool's iccApplySearch
+ * equivalent (Invert Transform). The forward profiles carry the dropped data → PCS; the
+ * LAST profile is inverted via a Nelder-Mead search to recover its DEVICE values. The
+ * dataset must be in the search SOURCE space (see searchInfo). Optionally returns a
+ * per-row search residual (`cost`) — an index of how cleanly each target inverts.
+ * @param {Uint8Array[]} chainBytes ordered profile byte buffers (last = inverted)
+ * @param {Float32Array|number[]} samples row-major nSamples × nSrc source values
+ * @param {number} nSrc source channels per sample
+ * @param {{intents?:number|number[], initIntent?:number, srcEncoding?:string|number,
+ *   dstEncoding?:string|number, wantCost?:boolean}} [opts]
+ * @returns {Promise<{destSamples:number, srcSpace:string, dstSpace:string,
+ *   values:Float32Array, cost?:Float32Array}>}
+ */
+export async function invertData(chainBytes, samples, nSrc, opts = {}) {
+  const mod = await loadConstruct()
+  if (typeof mod.invertValues !== 'function') {
+    throw new Error('The inversion engine is not built into this WASM module yet.')
+  }
+  const src = samples instanceof Float32Array ? samples : Float32Array.from(samples)
+  if (nSrc < 1) throw new Error('The data has no colour channels.')
+  if (src.length % nSrc !== 0) throw new Error('Data value count is not a multiple of the channel count.')
+  const intents = opts.intents ?? 1
+  const initIntent = Number.isInteger(opts.initIntent) ? opts.initIntent : 1
+  const encNum = (e, dflt) =>
+    Number.isInteger(e) ? e : e in ENCODING ? ENCODING[e] : dflt
+  const srcEnc = encNum(opts.srcEncoding, ENCODING.value)
+  const dstEnc = encNum(opts.dstEncoding, ENCODING.value)
+  const wantCost = opts.wantCost !== false     // default on — the residual is cheap-ish and useful
+  let res
+  try {
+    res = mod.invertValues(chainBytes, new Uint8Array(src.buffer), nSrc,
+      intents, initIntent, srcEnc, dstEnc, wantCost)
+  } catch (e) { throw toError(mod, e) }
+  if (!res || !res.ok) throw new Error(res?.error || 'Invert Transform failed.')
+  const values = res.values instanceof Float32Array ? res.values : new Float32Array(res.values)
+  const out = { destSamples: res.destSamples, srcSpace: res.srcSpace, dstSpace: res.dstSpace, values }
+  if (res.cost) out.cost = res.cost instanceof Float32Array ? res.cost : new Float32Array(res.cost)
+  return out
+}
+
 // Observer / illuminant / M-condition option values, shared with the UI controls.
 // Illuminant ints are icIlluminant enum values (only D50/D65/D93/A have built-in
 // SPDs in iccDEV — the only ones exposed). Observer 1 = CIE 1931 2°, 2 = 1964 10°.
