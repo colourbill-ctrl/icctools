@@ -29,7 +29,7 @@ function isIcc(bytes) {
 
 // Add-from-image kinds: TIFF ("II*\0" / "MM\0*"), PNG (\x89PNG\r\n\x1a\n), JPEG
 // (\xFF\xD8\xFF). Classified as IMAGE so the loader routes them to
-// embedded-profile extraction (lib/embeddedProfile.js) instead of rejecting.
+// embedded-profile extraction (lib/imageCodec.js → iccimage WASM) instead of rejecting.
 function isImage(bytes) {
   if (bytes.length < 4) return false
   const [b0, b1, b2, b3] = bytes

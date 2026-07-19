@@ -640,7 +640,42 @@ not a new engine.
 **color-space ports** (connection validation); gap 4 → **SerializedWorkflow**.
 **Input:**
 
-### DL-CANVAS1 — Connectivity canvas (node-graph) as the linking mechanism · 🕓 LATER PHASE *(design sourced 2026-07-18; deferred per user — phase 1 = DL-PHASE1)*
+### DL-PIPELINE1 — Linear Pipeline builder (Phase-2 linking/apply UX, NOT a node graph) · ✅ RESOLVED 2026-07-19
+**Decision (user 2026-07-19):** Phase-2 linking + N-profile apply uses a **linear
+Pipeline builder**, NOT the node graph — **DL-CANVAS1 is deferred to POST-Phase-2.**
+**Why:** an I/O-topology re-analysis of every deferred tool (iccApplyToLink /
+iccApplyNamedCmm / iccApplyProfiles / iccApplySearch) showed each is a **linear chain**
+— ICC xforms compose associatively into one CMM (AddXform×N + Begin); no branching,
+merging, fan-out, or feedback. A node canvas's whole value (arbitrary DAG topology) is
+unused, so it's overkill (+ drops the `@xyflow/react` dep, TS→JS port, and free-form
+canvas surface). Only iccSpecSepToTiff is a fan-in (N images→1) — its own tab.
+**Tool I/O topology** (source audit, this session):
+| Tool | in → chain → out | topology |
+|---|---|---|
+| iccApplyToLink | — → N profiles → 1 DeviceLink profile | linear |
+| iccApplyNamedCmm | colour values → N profiles → colour values | linear |
+| iccApplyProfiles | image → N profiles → image | linear |
+| iccApplySearch | colour values → 2–3 profiles + weighted-PCC list → values | linear + conditions |
+| iccSpecSepToTiff | N spectral images → — → 1 multi-channel TIFF | fan-in (own tab) |
+**UX (mirrors the V4 Display Maker maker-card, DL-LINK1):** grab profiles from the
+Profiles pane / a tab accumulator → drop into an **ordered, reorderable chain**. Profile
+TYPE decides the outcome (lib/pipeline.js, reads header sigs @12/16/20): **Make
+DeviceLink** (always → pool + Link accumulator, like V4 profiles) and, when the chain
+starts AND ends in a picture space, **Process images** — an image drop zone goes LIVE
+(green) → drop OS images → run through chain → **download each** (images NEVER stored;
+store stays profiles-only). **Spec-sep = its own tab after Link** (drop N channel images,
+order, Assemble & Save → one TIFF). Engine seam = `lib/pipelineEngine.js`
+(buildLink/applyToImage/assembleSpecSep) — UI/naming/routing wired, WASM ports pending
+(BuildLink = iccApplyToLink core, IccProfLib-only, do first; Apply-image = IccLibConnect
+`CreateStandard` + browser raster decode; both memory-only). Per-stage intent/BPC/PCC =
+later enrichment (v1 = default rel-colorimetric). See [[phase2-pipeline-builder]].
+**LOG — HDR handling (phase backlog):** apply-to-image must preserve high-bit-depth /
+float / wide-gamut / PQ-HLG; raster decode+encode path needs HDR-aware handling
+(iccApplyProfiles' 32-bit-float TIFF path is the reference). Revisit before finalizing
+the image-apply engine.
+**Input:** RESOLVED — linear Pipeline builder; node graph → post-Phase-2.
+
+### DL-CANVAS1 — Connectivity canvas (node-graph) as the linking mechanism · 🕓 POST-PHASE-2 *(design sourced 2026-07-18; superseded for Phase 2 by DL-PIPELINE1 — the linear builder covers the whole deferred tool set; the canvas returns only if a future capability needs true DAG topology)*
 **Decision to adopt:** use a **node-graph "connectivity canvas"** — nouns (profiles /
 images / color-value sets, drawn from the pool) wired through engine nodes (apply /
 link / extract / metric) to sinks — as the concrete realization of DL-IA1 opt 4's

@@ -1,32 +1,55 @@
 // (c) 2026 William Li
 //
-// Centre canvas of the 2.x pool workbench: three tabs — Profile · Compare · Link.
-// Activation is by clicking a tab OR dragging profile(s) from the pool onto it
-// (P1-a). Each tab keeps its own accumulator (removable chiclets, P1-e): Profile
-// holds one (drag replaces / multi-drop → last wins); Compare & Link accumulate.
-// Profile embeds today's ProfileViewer; Compare (gamut, P1-b) and Link (node
-// canvas, canvas phase) are step-1 placeholders.
-import { useCallback, useState } from 'react'
+// Centre canvas of the 2.x pool workbench: four tabs — Profile · Compare · Link ·
+// SpecSep. Activation is by clicking a tab OR dragging profile(s) from the pool onto
+// it (P1-a). Profile/Compare/Link keep a pool accumulator (removable chiclets, P1-e):
+// Profile holds one (drag replaces / multi-drop → last wins); Compare & Link
+// accumulate. SpecSep is self-contained (it gathers IMAGES, not pooled profiles) so
+// it has no accumulator. Profile embeds today's ProfileViewer; Compare = gamut; Link
+// = maker cards (V4 Display + Pipeline); SpecSep = spectral image assembler.
+import { useCallback, useEffect, useState } from 'react'
 import ProfileViewer from './ProfileViewer.jsx'
 import ComparePanel from './ComparePanel.jsx'
 import V4DisplayMaker from './V4DisplayMaker.jsx'
+import PipelineBuilder from './PipelineBuilder.jsx'
+import SpecSepPanel from './SpecSepPanel.jsx'
 import { POOL_DND_MIME } from './PoolPane.jsx'
 import { useT } from '../i18n.jsx'
 import styles from './MainCanvas.module.css'
 
-const TABS = ['Profile', 'Compare', 'Link']
+const TABS = ['Profile', 'Compare', 'Link', 'SpecSep']
+// Tabs that gather IMAGES rather than pooled profiles — no pool accumulator bar.
+const NO_ACCUM = new Set(['SpecSep'])
 
 export default function MainCanvas({
   activeTab, onActivate, accum, getEntry, onDropOnTab, onDropFiles, onRemoveFromAccum,
   // Profile-tab viewer wiring (bound by App to the active Profile entry):
   profileEntry, initialTab, changedTagIds, onXmlChanged, onJsonChanged,
   onIccProduced, onSave,
-  // Link-tab makers (DL-LINK1):
-  onCreateV4,
+  // Link-tab makers (DL-LINK1 / DL-PIPELINE1):
+  onCreateV4, onBuildLink, onApplyImages,
+  // SpecSep tab (DL-PIPELINE1):
+  onAssembleSpec,
 }) {
   const t = useT()
   const [dropTab, setDropTab] = useState(null)
   const [panelDrag, setPanelDrag] = useState(false)
+
+  // Safety net for the drag-highlight state. When a drop lands on a Link maker card,
+  // the card stopPropagation()s it so it doesn't double-accumulate onto the tab — but
+  // that also prevents the panel's own onDrop (which clears panelDrag) from firing, so
+  // the highlight would stick on forever. `dragend` fires on the drag SOURCE at the end
+  // of EVERY drag (drop, cancel, or drop-outside) and is not affected by a child's
+  // stopPropagation, so clearing here always resets the highlight.
+  useEffect(() => {
+    const clear = () => { setPanelDrag(false); setDropTab(null) }
+    window.addEventListener('dragend', clear)
+    window.addEventListener('drop', clear)
+    return () => {
+      window.removeEventListener('dragend', clear)
+      window.removeEventListener('drop', clear)
+    }
+  }, [])
 
   const idsFor = (tab) => tab === 'Profile' ? (accum.Profile ? [accum.Profile] : []) : (accum[tab] || [])
 
@@ -53,6 +76,14 @@ export default function MainCanvas({
     onDragLeave: () => setDropTab((d) => (d === tab ? null : d)),
     onDrop: (e) => routeDrop(tab, e),
   })
+
+  // Accumulator chiclets are themselves drag SOURCES (same POOL_DND_MIME as pool
+  // rows), so a profile parked on a tab can be dragged down into a Link maker card
+  // (V4 slots / Pipeline chain) without going back to the pool. Single id per chiclet.
+  const onChicletDragStart = useCallback((id, e) => {
+    e.dataTransfer.setData(POOL_DND_MIME, JSON.stringify([id]))
+    e.dataTransfer.effectAllowed = 'copy'
+  }, [])
 
   // The whole panel is a drop target for the active tab. Clear the highlight only
   // when the pointer actually leaves the panel subtree (not when crossing into a
@@ -87,7 +118,9 @@ export default function MainCanvas({
         })}
       </nav>
 
-      {/* Accumulator chiclets for the active tab (also a drop target). */}
+      {/* Accumulator chiclets for the active tab (also a drop target). SpecSep is
+          image-only, so it shows no profile accumulator. */}
+      {!NO_ACCUM.has(activeTab) && (
       <div className={`${styles.accum} ${dropTab === activeTab ? styles.accumDrop : ''}`} {...dropProps(activeTab)}>
         {activeIds.length === 0 ? (
           <span className={styles.accumHint}>{t('accum_hint') || 'Drag profiles from the pool onto this tab'}</span>
@@ -95,7 +128,8 @@ export default function MainCanvas({
           const entry = getEntry(id)
           if (!entry) return null
           return (
-            <span key={id} className={styles.chiclet} title={entry.filename}>
+            <span key={id} className={styles.chiclet} title={entry.filename}
+                  draggable onDragStart={(e) => onChicletDragStart(id, e)}>
               <span className={styles.chicletName}>{entry.filename}</span>
               <button className={styles.chicletX} onClick={() => onRemoveFromAccum(activeTab, id)}
                       title={t('accum_remove') || 'Remove'} aria-label={t('accum_remove') || 'Remove'}>×</button>
@@ -103,6 +137,7 @@ export default function MainCanvas({
           )
         })}
       </div>
+      )}
 
       <div className={`${styles.panel} ${panelDrag ? styles.panelDrag : ''}`} role="tabpanel" {...panelDropProps}>
         {activeTab === 'Profile' && (
@@ -119,7 +154,12 @@ export default function MainCanvas({
                 sub={t('compare_empty_sub') || 'Drag one or more profiles onto the Compare tab.'} />
             : <ComparePanel ids={activeIds} getEntry={getEntry} t={t} />
         )}
-        {activeTab === 'Link' && <LinkPanel t={t} getEntry={getEntry} onCreateV4={onCreateV4} />}
+        {activeTab === 'Link' && (
+          <LinkPanel t={t} getEntry={getEntry} onCreateV4={onCreateV4}
+                     onBuildLink={onBuildLink} onApplyImages={onApplyImages}
+                     onAccumulate={(ids) => onDropOnTab('Link', ids)} />
+        )}
+        {activeTab === 'SpecSep' && <SpecSepPanel onAssemble={onAssembleSpec} />}
       </div>
     </section>
   )
@@ -158,17 +198,16 @@ function ProfilePanel({ entry, t, initialTab, changedTagIds, onXmlChanged, onJso
   )
 }
 
-// The Link tab is a canvas of "maker" cards (DL-LINK1): each combines 2+ profiles
-// (dragged from the pool onto the card) into a new profile that lands in the pool +
-// this tab's accumulator. Phase 1 ships the V4 Display Maker; DeviceLink and other
-// makers slot in beside it (hence the makers grid, not a full-bleed single card).
-function LinkPanel({ t, getEntry, onCreateV4 }) {
+// The Link tab is a canvas of "maker" cards: each combines profiles (dragged from
+// the pool onto the card) into a new profile / transform. DL-LINK1 = the V4 Display
+// Maker (fixed role slots); DL-PIPELINE1 = the Pipeline builder (an ordered chain →
+// DeviceLink or image processing). Both drop results into the pool the same way.
+function LinkPanel({ t, getEntry, onCreateV4, onBuildLink, onApplyImages, onAccumulate }) {
   return (
     <div className={styles.linkCanvas}>
       <V4DisplayMaker getEntry={getEntry} onCreate={onCreateV4} />
-      <div className={styles.makerSoon}>
-        {t('link_more_soon') || 'More link makers (DeviceLink, …) arrive here.'}
-      </div>
+      <PipelineBuilder getEntry={getEntry} onBuildLink={onBuildLink}
+                       onApplyImages={onApplyImages} onAccumulate={onAccumulate} />
     </div>
   )
 }

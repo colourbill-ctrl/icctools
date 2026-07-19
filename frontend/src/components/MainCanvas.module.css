@@ -60,7 +60,9 @@
   display: inline-flex; align-items: center; gap: 6px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
   padding: 3px 6px 3px 11px; max-width: 220px;
+  cursor: grab;
 }
+.chiclet:active { cursor: grabbing; }
 .chicletName { font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chicletX {
   border: none; background: transparent; cursor: pointer; color: var(--text-muted);

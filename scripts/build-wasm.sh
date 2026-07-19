@@ -33,8 +33,16 @@ if [ ! -f "$ICCDEV_ROOT/IccProfLib/IccProfile.h" ]; then
   exit 1
 fi
 
+# Stage Emscripten's zlib/libpng/libjpeg ports into the sysroot so the iccimage
+# module (libtiff via FetchContent + those ports) links them. zlib also satisfies
+# libtiff's find_package(ZLIB) for Deflate-compressed TIFFs. Cheap no-op once cached.
+embuilder build zlib libpng libjpeg >/dev/null 2>&1 || embuilder build zlib libpng libjpeg
+EM_SYSROOT="$(em-config CACHE)/sysroot"
+
 if [ ! -d "$BUILD_DIR" ]; then
-  emcmake cmake -S "$SRC_DIR" -B "$BUILD_DIR" -DICCDEV_ROOT="$ICCDEV_ROOT"
+  emcmake cmake -S "$SRC_DIR" -B "$BUILD_DIR" \
+    -DICCDEV_ROOT="$ICCDEV_ROOT" \
+    -DICCIMG_EM_SYSROOT="$EM_SYSROOT"
 fi
 cmake --build "$BUILD_DIR" -j"$(nproc)"
 
@@ -59,6 +67,9 @@ if [ -f "$BUILD_DIR/iccplot.mjs" ]; then
 fi
 if [ -f "$BUILD_DIR/iccpawg.mjs" ]; then
   ARTIFACTS+=(iccpawg.mjs iccpawg.wasm)
+fi
+if [ -f "$BUILD_DIR/iccimage.mjs" ]; then
+  ARTIFACTS+=(iccimage.mjs iccimage.wasm)
 fi
 
 if [ "${1:-}" = "--verify" ]; then

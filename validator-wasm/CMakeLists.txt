@@ -293,6 +293,73 @@ if(BUILD_ICCCONSTRUCT)
 endif()
 
 
+# ── iccimage (canonical image codecs: libtiff + libpng + libjpeg) ───────────
+# Replaces the hand-rolled JS image reader/writers (imageIO.js) and the JS
+# embedded-profile parsers (embeddedProfile.js) with real libraries compiled to
+# WASM — the tiffview reference (~/code/tiffview/tiff-wasm). libtiff via
+# FetchContent pinned to iccDEV's vendored 4.7.1 source (SOURCE_DIR = no network);
+# zlib/libpng/libjpeg via Emscripten ports (embuilder-staged by build-wasm.sh,
+# passed in through ICCIMG_EM_SYSROOT). Codec set mirrors tiffview: zlib(Deflate)
+# on, lzw/packbits/ccitt default-on, everything heavy off.
+option(BUILD_ICCIMAGE "Build the image-codec module (libtiff/libpng/libjpeg)" ON)
+
+if(BUILD_ICCIMAGE)
+  set(ICCIMG_EM_SYSROOT "" CACHE PATH "Emscripten sysroot with the staged zlib/png/jpeg ports")
+  if(ICCIMG_EM_SYSROOT)
+    # Point libtiff's find_package(ZLIB) at the Emscripten zlib port.
+    set(ZLIB_INCLUDE_DIR "${ICCIMG_EM_SYSROOT}/include" CACHE PATH "" FORCE)
+    set(ZLIB_LIBRARY "${ICCIMG_EM_SYSROOT}/lib/wasm32-emscripten/libz.a" CACHE FILEPATH "" FORCE)
+  endif()
+
+  set(ICCIMG_TIFF_SRC "${ICCDEV_ROOT}/third_party/libtiff")
+  if(NOT EXISTS "${ICCIMG_TIFF_SRC}/CMakeLists.txt")
+    message(FATAL_ERROR "libtiff source not found at ${ICCIMG_TIFF_SRC} (BUILD_ICCIMAGE)")
+  endif()
+
+  include(FetchContent)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  set(tiff-tools      OFF CACHE BOOL "" FORCE)
+  set(tiff-tests      OFF CACHE BOOL "" FORCE)
+  set(tiff-contrib    OFF CACHE BOOL "" FORCE)
+  set(tiff-docs       OFF CACHE BOOL "" FORCE)
+  set(tiff-deprecated OFF CACHE BOOL "" FORCE)
+  set(tiff-install    OFF CACHE BOOL "" FORCE)
+  set(cxx             OFF CACHE BOOL "" FORCE)
+  set(libdeflate      OFF CACHE BOOL "" FORCE)
+  set(zlib            ON  CACHE BOOL "" FORCE)
+  set(jpeg            OFF CACHE BOOL "" FORCE)
+  set(old-jpeg        OFF CACHE BOOL "" FORCE)
+  set(jbig            OFF CACHE BOOL "" FORCE)
+  set(lzma            OFF CACHE BOOL "" FORCE)
+  set(zstd            OFF CACHE BOOL "" FORCE)
+  set(webp            OFF CACHE BOOL "" FORCE)
+  set(pixarlog        OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(tiff SOURCE_DIR "${ICCIMG_TIFF_SRC}")
+  FetchContent_MakeAvailable(tiff)
+
+  add_executable(iccimage iccimage-wrapper.cpp)
+  target_link_libraries(iccimage PRIVATE TIFF::tiff)
+
+  target_compile_options(iccimage PRIVATE
+    -O3 -fexceptions -Wno-deprecated-declarations
+    -sUSE_ZLIB=1 -sUSE_LIBPNG=1 -sUSE_LIBJPEG=1)
+
+  target_link_options(iccimage PRIVATE
+    -O3 -fexceptions -lembind
+    -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createIccImageModule
+    -sENVIRONMENT=web,worker,node
+    -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=32MB -sMAXIMUM_MEMORY=2048MB -sSTACK_SIZE=1MB
+    -sDYNAMIC_EXECUTION=0
+    -sEXPORTED_RUNTIME_METHODS=getExceptionMessage,decrementExceptionRefcount
+    -sUSE_ZLIB=1 -sUSE_LIBPNG=1 -sUSE_LIBJPEG=1
+    # MEMFS: image bytes are staged in / results read back through MEMFS paths
+    # (simplest libtiff/libpng/libjpeg I/O; see iccimage-wrapper.cpp).
+    -sFORCE_FILESYSTEM=1)
+
+  set_target_properties(iccimage PROPERTIES SUFFIX ".mjs")
+endif()
+
+
 # ── iccplot (data-first visualization model, lazy-loaded) ──────────────────
 # Wraps the IccVizModel engine (profiletool/iccviz/IccVizModel.cpp) — a
 # standalone re-implementation of the iccProfileVisualize plots that returns DATA

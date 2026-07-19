@@ -1,0 +1,138 @@
+/* (c) 2026 William Li — Pipeline builder card (Link-tab, DL-PIPELINE1). */
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--surface);
+  padding: 16px 18px;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.cardDrag {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+.head { display: flex; flex-direction: column; gap: 4px; }
+.title { margin: 0; font-size: 1.02rem; font-weight: 700; color: var(--text); }
+.sub { margin: 0; font-size: 0.82rem; color: var(--text-muted); }
+
+/* ── empty drop hint ─────────────────────────────────────────────── */
+.dropHint {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius, 8px);
+  background: var(--surface-alt);
+  padding: 18px 10px;
+  text-align: center;
+  font-size: 0.86rem;
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+/* ── the ordered chain ───────────────────────────────────────────── */
+.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 2px; }
+.stageWrap { display: inline-flex; align-items: center; }
+.arrow { color: var(--text-muted); padding: 0 4px; font-size: 0.9rem; }
+
+.stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  border: 1px solid var(--accent);
+  background: var(--accent-tint);
+  border-radius: var(--radius, 8px);
+  padding: 5px 6px 5px 8px;
+}
+.stageBroken { border-color: var(--error); border-style: dashed; background: transparent; }
+.stageNum {
+  flex: none;
+  width: 17px; height: 17px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.68rem; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.stageName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; color: var(--text); }
+.stageCtl { display: inline-flex; align-items: center; gap: 1px; flex: none; }
+
+.mini, .miniX {
+  border: none; background: transparent; cursor: pointer;
+  line-height: 1; color: var(--text-muted); padding: 1px 3px; font-size: 0.95rem;
+}
+.mini:disabled { opacity: 0.3; cursor: default; }
+.mini:hover:not(:disabled) { color: var(--accent); }
+.miniX:hover { color: var(--error); }
+
+/* ── outcome summary row ─────────────────────────────────────────── */
+.summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.flow { font-size: 0.86rem; color: var(--text); }
+.flow b { color: var(--accent); }
+.checking { font-size: 0.84rem; color: var(--text-muted); font-style: italic; }
+.warn { margin: 0; font-size: 0.8rem; color: var(--warning); }
+.clear {
+  margin-left: auto;
+  border: none; background: transparent; cursor: pointer;
+  font-size: 0.8rem; color: var(--text-muted); text-decoration: underline;
+}
+.clear:hover { color: var(--error); }
+
+.outcome { display: flex; }
+
+.nameRow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; width: 100%; }
+.nameInput {
+  flex: 1 1 200px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 8px);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+.nameInput:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-tint); }
+.cancel {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius, 8px);
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+.cancel:hover:not(:disabled) { border-color: var(--accent); }
+
+/* ── image drop zone: idle (grey) vs live (green) ────────────────── */
+.imgZone {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius, 8px);
+  padding: 12px 14px;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.imgIdle { background: var(--surface-alt); opacity: 0.7; }
+.imgLive {
+  border-style: solid;
+  border-color: var(--pl-green, #3fa66a);
+  background: var(--pl-green-tint, rgba(63, 166, 106, 0.1));
+}
+.imgOver {
+  box-shadow: 0 0 0 3px var(--pl-green-tint, rgba(63, 166, 106, 0.18));
+  border-color: var(--pl-green, #3fa66a);
+}
+.imgIcon { font-size: 1.3rem; flex: none; }
+.imgText { font-size: 0.84rem; color: var(--text); }
+.imgIdle .imgText { color: var(--text-muted); font-style: italic; }
+.imgLive .imgText { color: var(--pl-green-text, #2c7a4d); font-weight: 600; }
+
+:global(body.dark) .imgLive { border-color: #4fbe80; background: rgba(79, 190, 128, 0.14); }
+:global(body.dark) .imgLive .imgText { color: #7fe0a6; }
+
+.error { margin: 0; font-size: 0.84rem; color: var(--error); }
+.notice { margin: 0; font-size: 0.84rem; color: var(--accent); }

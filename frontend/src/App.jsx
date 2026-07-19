@@ -20,7 +20,7 @@ import { computeChangedTagIds } from './lib/tagDiff.js'
 import { resolveTabAlias } from './lib/tabs.js'
 import { entryId, deriveMeta } from './lib/pool.js'
 import { classifyFile, ACCEPTED_KINDS, FileKind, rejectReason } from './lib/fileKind.js'
-import { extractEmbeddedProfile, extractEmbeddedProfileFromBlob } from './lib/embeddedProfile.js'
+import { findEmbeddedProfile, findEmbeddedProfileFromFile } from './lib/imageCodec.js'
 import { useT } from './i18n.jsx'
 import styles from './App.module.css'
 
@@ -44,7 +44,7 @@ const uniq = (arr) => [...new Set(arr)]
 
 export default function App() {
   const [pool, setPool] = useState(() => new Map())        // id -> entry
-  const [accum, setAccum] = useState({ Profile: null, Compare: [], Link: [] })
+  const [accum, setAccum] = useState({ Profile: null, Compare: [], Link: [], SpecSep: [] })
   const [activeTab, setActiveTab] = useState('Profile')
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [loading, setLoading] = useState(false)
@@ -94,10 +94,11 @@ export default function App() {
   }, [])
 
   // Classify one IN-MEMORY buffer and either load it or return a rejection. Used
-  // by the launch protocols (#url= / postMessage), where the bytes are already
-  // fully in hand, so there's no whole-image read to avoid — image bytes here go
-  // through the buffer-based extractor. File loads use ingestFile() instead, which
-  // streams. Both share the same accept policy + addIccEntry tail.
+  // by the launch protocols (#url= / postMessage), where the bytes are already fully
+  // in hand. An IMAGE buffer has its embedded ICC extracted via the canonical codecs
+  // (lib/imageCodec::findEmbeddedProfile). File loads use ingestFile() instead (which
+  // classifies from a front slice before reading the file whole). Both share the same
+  // accept policy + addIccEntry tail.
   const ingestOne = useCallback(async (filename, bytes) => {
     if (bytes.length > MAX_ICC_BYTES) {
       return { reject: { filename, reason: `too large (> ${MAX_ICC_BYTES / (1024*1024)} MB)` } }
@@ -109,7 +110,7 @@ export default function App() {
     // IMAGE: pull the embedded profile and ingest THAT (not the image). No
     // embedded profile → a clean rejection, same channel as any other reject.
     if (kind === FileKind.IMAGE) {
-      const profile = await extractEmbeddedProfile(bytes)
+      const profile = await findEmbeddedProfile(bytes)
       if (!profile) return { reject: { filename, reason: rejectReason(FileKind.IMAGE) } }
       bytes = profile
       filename = embeddedName(filename)
@@ -122,16 +123,15 @@ export default function App() {
     }
   }, [addIccEntry])
 
-  // Classify + load one File WITHOUT reading the whole thing up front. We sniff a
-  // small front slice to classify, then:
-  //  • IMAGE  → stream the embedded profile out of the File (reads only the
-  //             header/IFD/markers + the profile blob, never the raster). We do
-  //             NOT size-cap the container — a 400 MB TIFF with a 10 KB profile is
-  //             fine; the extractor's own 64 MB embedded cap + bounded reads guard
-  //             memory, and the extracted profile is size-checked below.
+  // Classify + load one File without reading the whole thing to *classify*. We sniff
+  // a small front slice for the magic, then:
+  //  • IMAGE  → STREAM the embedded ICC out of the File: a worker runs the canonical
+  //             codecs (libtiff/libpng/libjpeg) reading only the metadata region on
+  //             demand (lib/imageCodec.js::findEmbeddedProfileFromFile) — never the
+  //             pixels, so a huge image isn't loaded to grab its profile. The extracted
+  //             profile is size-checked below.
   //  • ICC    → size-cap the FILE (checked against file.size before allocating, so
   //             a huge file is rejected without ever reading it), then read whole.
-  // This is the memory-safe counterpart to ingestOne for user file loads.
   const ingestFile = useCallback(async (file) => {
     const name = file.name
     let head
@@ -144,8 +144,11 @@ export default function App() {
     if (!ACCEPTED_KINDS.has(kind)) return { reject: { filename: name, reason: rejectReason(kind) } }
 
     if (kind === FileKind.IMAGE) {
+      // STREAMING extraction: a worker reads only the image's metadata (header/IFD/
+      // markers + the profile blob) via libtiff/libpng/libjpeg — never the pixels — so
+      // a huge image never loads into memory just to grab its profile.
       let profile
-      try { profile = await extractEmbeddedProfileFromBlob(file) } catch { profile = null }
+      try { profile = await findEmbeddedProfileFromFile(file) } catch { profile = null }
       if (!profile) return { reject: { filename: name, reason: rejectReason(FileKind.IMAGE) } }
       if (profile.length > MAX_ICC_BYTES) {
         return { reject: { filename: name, reason: `embedded profile too large (> ${MAX_ICC_BYTES / (1024*1024)} MB)` } }
@@ -182,6 +185,7 @@ export default function App() {
       Profile: a.Profile === id ? null : a.Profile,
       Compare: a.Compare.filter((x) => x !== id),
       Link: a.Link.filter((x) => x !== id),
+      SpecSep: a.SpecSep.filter((x) => x !== id),
     }))
     setSelectedIds((s) => { const ns = new Set(s); ns.delete(id); return ns })
   }, [])
@@ -287,6 +291,48 @@ export default function App() {
     setAccum((a) => ({ ...a, Link: uniq([...a.Link, id]) }))   // → Link accumulator handle
     return id
   }, [addIccEntry])
+
+  // ── Pipeline (DL-PIPELINE1) — Link-tab ordered-chain maker ─────────────────
+  // A chain of pooled profiles bakes into a DeviceLink (→ pool + Link accumulator,
+  // like the V4 maker: ONE data copy, a handle in each place) OR runs raster images
+  // through the same transform (→ download each result; images are NEVER stored, so
+  // the pool stays profiles-only). The WASM engines (iccApplyToLink / iccApplyProfiles
+  // ports) land in a later stage; lib/pipelineEngine.js is the seam and today throws
+  // a clear pending message so the whole build → name → route flow is judgeable now.
+  const buildDeviceLink = useCallback(async (chainIds, name) => {
+    const entries = chainIds.map((id) => poolRef.current.get(id))
+    if (entries.some((e) => !e)) throw new Error('A chained profile is no longer in the pool.')
+    const { buildLink } = await import('./lib/pipelineEngine.js')
+    const bytes = await buildLink(entries.map((e) => e.currentBytes))
+    const stem = (name || 'devicelink').replace(/\.(icc|icm)$/i, '').replace(/[^\w.-]+/g, '_') || 'devicelink'
+    const id = await addIccEntry(`${stem}.icc`, bytes)              // → pool handle
+    setAccum((a) => ({ ...a, Link: uniq([...a.Link, id]) }))        // → Link accumulator handle
+    return id
+  }, [addIccEntry])
+
+  const applyImagesThroughChain = useCallback(async (chainIds, files) => {
+    const entries = chainIds.map((id) => poolRef.current.get(id))
+    if (entries.some((e) => !e)) throw new Error('A chained profile is no longer in the pool.')
+    const { applyToImage } = await import('./lib/pipelineEngine.js')
+    const chainBytes = entries.map((e) => e.currentBytes)
+    let done = 0
+    for (const file of files) {
+      // eslint-disable-next-line no-await-in-loop
+      const out = await applyToImage(chainBytes, file)
+      downloadBytes(out.bytes, out.filename)
+      done++
+    }
+    return done
+  }, [])
+
+  // Spectral assembler (SpecSep tab) — gather N single-channel images → one multi-
+  // channel TIFF, downloaded. Also engine-pending.
+  const assembleSpectral = useCallback(async (files) => {
+    const { assembleSpecSep } = await import('./lib/pipelineEngine.js')
+    const out = await assembleSpecSep(files)
+    downloadBytes(out.bytes, out.filename)
+    return files.length
+  }, [])
 
   // Pool-row selection: plain = single, ctrl/meta = toggle, shift = range.
   const onSelectRow = useCallback((id, e) => {
@@ -491,6 +537,9 @@ export default function App() {
             onIccProduced={handleIccProduced}
             onSave={handleSave}
             onCreateV4={createV4Display}
+            onBuildLink={buildDeviceLink}
+            onApplyImages={applyImagesThroughChain}
+            onAssembleSpec={assembleSpectral}
           />
 
           <footer className={styles.footer}>
@@ -562,4 +611,16 @@ function bytesEqual(a, b) {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
   return true
+}
+
+// Save bytes to the user's disk (browser download → their chosen folder). Used by
+// the pipeline image-processing + spectral-assembly outputs, which are NOT stored in
+// the pool. Mirrors the anchor-download pattern in handleSave/createFromCube.
+function downloadBytes(bytes, filename) {
+  const blob = new Blob([bytes], { type: 'application/octet-stream' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename || 'output.bin'
+  document.body.appendChild(a); a.click(); a.remove()
+  URL.revokeObjectURL(url)
 }

@@ -28,6 +28,7 @@
 // Tools/CmdLine/IccV5DspObsToV4Dsp/IccV5DspObsToV4Dsp.cpp). All of these compile
 // into the iccconstruct target via ICCPROFLIB_SOURCES (see CMakeLists.txt).
 #include "IccProfile.h"
+#include "IccCmm.h"
 #include "IccTag.h"
 #include "IccTagMPE.h"
 #include "IccTagLut.h"
@@ -41,6 +42,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -93,6 +95,13 @@ emscripten::val makeUint8Array(const std::uint8_t* data, std::size_t size) {
   u8.call<void>("set",
     emscripten::val(emscripten::typed_memory_view(size, data)));
   return u8;
+}
+
+// JS-heap copy of a float buffer, independent of the WASM heap (mirrors plot-wrapper).
+emscripten::val makeFloat32Array(const float* data, std::size_t count) {
+  emscripten::val f32 = emscripten::val::global("Float32Array").new_(count);
+  f32.call<void>("set", emscripten::val(emscripten::typed_memory_view(count, data)));
+  return f32;
 }
 
 // Best-effort cleanup so a long-lived module doesn't accumulate MEMFS temp files.
@@ -366,9 +375,359 @@ emscripten::val v5DspObsToV4(const std::string& dspBytes, const std::string& obs
   }
 }
 
+// ── DeviceLink from an ordered profile chain (Pipeline builder, DL-PIPELINE1) ──
+// In-memory port of iccApplyToLink's core (Tools/CmdLine/IccApplyToLink): assemble
+// the N-profile chain into one CIccCmm (AddXform×N + Begin), then sample that single
+// transform into a v4 lutAtoB CLUT and emit a 'link'-class profile. Inputs are read
+// straight from the byte buffers (ReadIccProfile memory overload — no MEMFS needed);
+// only the OUTPUT takes the SaveIccProfile→MEMFS→read-back hop the other producers
+// use (CIccProfile::Write needs a grow-on-write IO CIccMemIO lacks).
+//
+// v1 defaults, deliberately simple (matches DL-PIPELINE1 scope): every stage uses one
+// rendering intent (relative colorimetric), tetrahedral interpolation, input range
+// [0,1], v4.3 16-bit lutAtoB. Per-stage intent/BPC/PCC + v5 MPE links are a later
+// enrichment. The engine is authoritative on chain compatibility — a stage that does
+// not connect surfaces CIccCmm::GetStatusText (e.g. icCmmStatBadSpaceLink).
+
+// Auto CLUT grid: largest resolution whose node count (grid^nSrc) stays under a
+// budget, then pin the common device counts to conventional tables so a normal RGB/
+// CMYK chain gets a standard-size LUT rather than the max the budget allows.
+int chooseGrid(int nSrc) {
+  const double kNodeBudget = 1500000.0;
+  int g = 2;
+  for (int t = 3; t <= 255; ++t) {
+    double p = 1.0;
+    for (int k = 0; k < nSrc; ++k) p *= (double)t;
+    if (p > kNodeBudget) break;
+    g = t;
+  }
+  const int cap = (nSrc <= 1) ? 255 : (nSrc == 2) ? 128 : (nSrc == 3) ? 33 : (nSrc == 4) ? 17 : g;
+  if (g > cap) g = cap;
+  return g < 2 ? 2 : g;
+}
+
+emscripten::val buildLinkImpl(emscripten::val chainVal, int intentArg, int gridArg) {
+  const unsigned n = chainVal["length"].as<unsigned>();
+  if (n == 0) throw std::runtime_error("Add at least one profile to the chain.");
+
+  const icRenderingIntent intent =
+    (intentArg >= (int)icPerceptual && intentArg <= (int)icAbsoluteColorimetric)
+      ? (icRenderingIntent)intentArg : icRelativeColorimetric;
+
+  // Let the profiles fix the start/end spaces; bFirstInput=true = the first profile is
+  // used device→PCS (the chain's source), matching lib/pipeline.js's source-space rule.
+  CIccCmm theCmm(icSigUnknownData, icSigUnknownData, /*bFirstInput=*/true);
+
+  // profileSequenceDescTag is a REQUIRED tag for a DeviceLink profile (a link without
+  // it fails validation: "Critical tag(s) missing"). Build one entry per stage from
+  // that profile's header + technology, captured BEFORE AddXform takes ownership.
+  // Held in a unique_ptr so a mid-chain throw frees it; ownership transfers to the
+  // output profile via AttachTag(...release()) once the LUT is built.
+  std::unique_ptr<CIccTagProfileSeqDesc> pSeq(new CIccTagProfileSeqDesc());
+
+  for (unsigned i = 0; i < n; ++i) {
+    std::vector<std::uint8_t> buf =
+      emscripten::convertJSArrayToNumberVector<std::uint8_t>(chainVal[i]);
+    if (buf.empty())
+      throw std::runtime_error("A chained profile is empty.");
+    if (buf.size() > kMaxIccBytes)
+      throw std::runtime_error("A chained profile exceeds the size limit.");
+    // ReadIccProfile allocates; on AddXform SUCCESS the CMM takes ownership, and on
+    // FAILURE AddXform frees it (#1327) — so we never delete pXform ourselves, and
+    // theCmm's destructor (stack unwind on throw) frees all accepted stages.
+    CIccProfile* pXform = ReadIccProfile(buf.data(), (icUInt32Number)buf.size());
+    if (!pXform)
+      throw std::runtime_error("A chained profile could not be read as an ICC profile.");
+
+    // Record provenance for the profileSequenceDesc (mirrors CDevLinkWriter::iterate).
+    CIccProfileDescStruct psd;
+    psd.m_deviceMfg = pXform->m_Header.manufacturer;
+    psd.m_deviceModel = pXform->m_Header.model;
+    psd.m_attributes = pXform->m_Header.attributes;
+    psd.m_technology = (icTechnologySignature)0;
+    const CIccTag* pTech = pXform->FindTagConst(icSigTechnologyTag);
+    if (pTech && pTech->GetType() == icSigSignatureType)
+      psd.m_technology = (icTechnologySignature)((const CIccTagSignature*)pTech)->GetValue();
+    // The two desc members MUST carry a valid tag or the sequence fails to serialize
+    // (a default CIccProfileDescText has a null internal tag). Give each a
+    // textDescription, filled from the source profile's own mfg/model desc where
+    // present, else a placeholder. CIccProfileDescStruct deep-copies on push_back.
+    std::string mfgText = "Device Manufacturer", modelText = "Device Model";
+    if (CIccTag* pT = pXform->FindTag(icSigDeviceMfgDescTag)) {
+      std::string s; if (icGetTagText(pT, s) && !s.empty()) mfgText = s;
+    }
+    if (CIccTag* pT = pXform->FindTag(icSigDeviceModelDescTag)) {
+      std::string s; if (icGetTagText(pT, s) && !s.empty()) modelText = s;
+    }
+    psd.m_deviceMfgDesc.SetType(icSigTextDescriptionType);
+    if (CIccTagTextDescription* t = (CIccTagTextDescription*)psd.m_deviceMfgDesc.GetTag())
+      t->SetText(mfgText.c_str());
+    psd.m_deviceModelDesc.SetType(icSigTextDescriptionType);
+    if (CIccTagTextDescription* t = (CIccTagTextDescription*)psd.m_deviceModelDesc.GetTag())
+      t->SetText(modelText.c_str());
+    pSeq->m_Descriptions->push_back(psd);
+
+    icStatusCMM stat = theCmm.AddXform(pXform, intent, icInterpTetrahedral,
+                                       /*pPcc=*/NULL, icXformLutColor,
+                                       /*bUseD2BxB2DxTags=*/true, /*pHint=*/NULL);
+    if (stat)
+      throw std::runtime_error("Cannot link profile " + std::to_string(i + 1) + ": "
+                               + CIccCmm::GetStatusText(stat));
+  }
+
+  icStatusCMM stat = theCmm.Begin();
+  if (stat)
+    throw std::runtime_error(std::string("The chain does not connect: ")
+                             + CIccCmm::GetStatusText(stat));
+
+  const icColorSpaceSignature srcSpace = theCmm.GetSourceSpace();
+  const icColorSpaceSignature dstSpace = theCmm.GetDestSpace();
+  const int nSrc = (int)icGetSpaceSamples(srcSpace);
+  const int nDst = (int)icGetSpaceSamples(dstSpace);
+  if (nSrc < 1 || nDst < 1)
+    throw std::runtime_error("The chain has an unusable colour space.");
+  if (nSrc > 15 || nDst > 15)
+    throw std::runtime_error("Too many colour channels for a v4 DeviceLink (max 15).");
+
+  int grid = (gridArg > 0) ? gridArg : chooseGrid(nSrc);
+  if (grid < 2) grid = 2;
+  if (grid > 255) grid = 255;
+
+  // CWE-400 ceiling: nodes = grid^nSrc, guarded against 32-bit overflow + OOM.
+  unsigned long long nodes = 1;
+  for (int k = 0; k < nSrc; ++k) {
+    nodes *= (unsigned long long)grid;
+    if (nodes > 8000000ULL)
+      throw std::runtime_error("The DeviceLink table would be too large — reduce the input channel count.");
+  }
+
+  std::unique_ptr<CIccProfile> pIcc(new CIccProfile());
+  pIcc->InitHeader();
+  pIcc->m_Header.deviceClass = icSigLinkClass;
+  pIcc->m_Header.version = icVersionNumberV4_3;
+  pIcc->m_Header.colorSpace = srcSpace;
+  pIcc->m_Header.pcs = dstSpace;
+
+  CIccTagMultiLocalizedUnicode* pDesc = new CIccTagMultiLocalizedUnicode();
+  pDesc->SetText("DeviceLink created by profiletool");
+  pIcc->AttachTag(icSigProfileDescriptionTag, pDesc);
+  CIccTagMultiLocalizedUnicode* pCopy = new CIccTagMultiLocalizedUnicode();
+  pCopy->SetText("Copyright ICC");
+  pIcc->AttachTag(icSigCopyrightTag, pCopy);
+
+  // v4 lutAtoB: identity A/B curves + the sampled CLUT (mirrors CDevLinkWriter's v4 path).
+  CIccTagLutAtoB* pTagLut = new CIccTagLutAtoB();
+  pTagLut->Init((icUInt8Number)nSrc, (icUInt8Number)nDst);
+  LPIccCurve* pCurvesA = pTagLut->NewCurvesA();
+  for (int i = 0; i < nSrc; ++i) pCurvesA[i] = new CIccTagCurve();   // empty curve = identity
+  LPIccCurve* pCurvesB = pTagLut->NewCurvesB();
+  for (int i = 0; i < nDst; ++i) pCurvesB[i] = new CIccTagCurve();
+  CIccCLUT* pCLUT = pTagLut->NewCLUT((icUInt8Number)grid);
+  if (!pCLUT) { delete pTagLut; throw std::runtime_error("Could not allocate the DeviceLink table."); }
+  pIcc->AttachTag(icSigAToB0Tag, pTagLut);
+
+  // Required DeviceLink tag: the profile sequence populated during chain assembly.
+  pIcc->AttachTag(icSigProfileSequenceDescTag, pSeq.release());
+
+  // Sample the CMM at every grid node (input range [0,1]); last source channel varies
+  // fastest → matches CIccCLUT's row-major layout, so a sequential fill is correct.
+  icFloatNumber* pLut = pCLUT->GetData(0);
+  const icUInt32Number total = pCLUT->NumPoints();
+  std::vector<int> idx(nSrc, 0);
+  std::vector<icFloatNumber> src(nSrc, 0.0f), dst(nDst, 0.0f);
+  const icFloatNumber maxLut = (icFloatNumber)(grid - 1);
+  for (icUInt32Number c = 0; c < total; ++c) {
+    for (int si = 0; si < nSrc; ++si) src[si] = (icFloatNumber)idx[si] / maxLut;
+    theCmm.Apply(&dst[0], &src[0]);
+    std::memcpy(pLut, &dst[0], (std::size_t)nDst * sizeof(icFloatNumber));
+    pLut += nDst;
+    for (int j = nSrc - 1; j >= 0; ) {
+      if (++idx[j] >= grid) { idx[j] = 0; --j; } else break;
+    }
+  }
+
+  MemfsTemp tmp;
+  const std::string outPath = tmp.add(uniqueMemfsPath("link_out", "icc"));
+  if (!SaveIccProfile(outPath.c_str(), pIcc.get()))
+    throw std::runtime_error("Unable to serialize the DeviceLink.");
+  std::vector<std::uint8_t> bytes;
+  if (!readFile(outPath.c_str(), bytes))
+    throw std::runtime_error("Internal error reading back the DeviceLink.");
+  return makeUint8Array(bytes.data(), bytes.size());
+}
+
+// Exception-safe boundary (same shape as fromCube / v5DspObsToV4).
+emscripten::val buildLink(emscripten::val chainVal, int intent, int grid) {
+  try {
+    return buildLinkImpl(chainVal, intent, grid);
+  } catch (const std::runtime_error&) {
+    throw;
+  } catch (const std::exception& e) {
+    throw std::runtime_error(std::string("DeviceLink build failed: ") + e.what());
+  } catch (...) {
+    throw std::runtime_error("DeviceLink build failed with an unknown error");
+  }
+}
+
+// A 4-char space signature as a string ('RGB ', 'CMYK', 'Lab ', …) for the UI.
+std::string sigToStr(icColorSpaceSignature sig) {
+  const icUInt32Number v = (icUInt32Number)sig;
+  char b[5] = {
+    (char)((v >> 24) & 0xff), (char)((v >> 16) & 0xff),
+    (char)((v >> 8) & 0xff),  (char)(v & 0xff), 0
+  };
+  return std::string(b, 4);
+}
+
+// ── chainInfo — AUTHORITATIVE, cheap chain validation for the UI ──────────────
+// Runs the SAME CMM assembly buildLink does (AddXform×N + Begin) but stops there —
+// no LUT sampling, no profile write — so it is cheap enough to run on every chain
+// edit. Returns a plain object the Pipeline builder uses to gate outcomes + explain
+// invalid combinations, NEVER throwing (a bad chain is a normal result, not an
+// error): { ok, error?, failedStage?, sourceSpace?, destSpace?, sourceSamples?,
+// destSamples? }. failedStage is the 1-based stage that broke, or 0 for a Begin()
+// failure. This is the definitive connectivity answer — the header-signature guess
+// in lib/pipeline.js cannot know true CMM space-linking.
+emscripten::val chainInfoImpl(emscripten::val chainVal, int intentArg) {
+  emscripten::val r = emscripten::val::object();
+  const unsigned n = chainVal["length"].as<unsigned>();
+  if (n == 0) { r.set("ok", false); r.set("empty", true); return r; }
+
+  const icRenderingIntent intent =
+    (intentArg >= (int)icPerceptual && intentArg <= (int)icAbsoluteColorimetric)
+      ? (icRenderingIntent)intentArg : icRelativeColorimetric;
+
+  CIccCmm theCmm(icSigUnknownData, icSigUnknownData, /*bFirstInput=*/true);
+  for (unsigned i = 0; i < n; ++i) {
+    std::vector<std::uint8_t> buf =
+      emscripten::convertJSArrayToNumberVector<std::uint8_t>(chainVal[i]);
+    if (buf.empty() || buf.size() > kMaxIccBytes) {
+      r.set("ok", false); r.set("failedStage", (int)(i + 1));
+      r.set("error", std::string("Profile ") + std::to_string(i + 1) + " is empty or too large.");
+      return r;
+    }
+    CIccProfile* p = ReadIccProfile(buf.data(), (icUInt32Number)buf.size());
+    if (!p) {
+      r.set("ok", false); r.set("failedStage", (int)(i + 1));
+      r.set("error", std::string("Profile ") + std::to_string(i + 1) + " is not a readable ICC profile.");
+      return r;
+    }
+    icStatusCMM stat = theCmm.AddXform(p, intent, icInterpTetrahedral,
+                                       NULL, icXformLutColor, true, NULL);
+    if (stat) {
+      r.set("ok", false); r.set("failedStage", (int)(i + 1));
+      r.set("error", std::string(CIccCmm::GetStatusText(stat)));
+      return r;
+    }
+  }
+  icStatusCMM stat = theCmm.Begin();
+  if (stat) {
+    r.set("ok", false); r.set("failedStage", 0);
+    r.set("error", std::string(CIccCmm::GetStatusText(stat)));
+    return r;
+  }
+  const icColorSpaceSignature src = theCmm.GetSourceSpace();
+  const icColorSpaceSignature dst = theCmm.GetDestSpace();
+  r.set("ok", true);
+  r.set("sourceSpace", sigToStr(src));
+  r.set("destSpace", sigToStr(dst));
+  r.set("sourceSamples", (int)icGetSpaceSamples(src));
+  r.set("destSamples", (int)icGetSpaceSamples(dst));
+  return r;
+}
+
+emscripten::val chainInfo(emscripten::val chainVal, int intent) {
+  try {
+    return chainInfoImpl(chainVal, intent);
+  } catch (...) {
+    emscripten::val r = emscripten::val::object();
+    r.set("ok", false);
+    r.set("error", std::string("Could not analyse the chain."));
+    return r;
+  }
+}
+
+// ── applyImage — run a decoded raster through the chain (Pipeline "process images") ──
+// The image analogue of buildLink: assemble the chain into one CMM, then push every
+// pixel through it. The pixels are decoded IN THE BROWSER (no libtiff/format code in
+// WASM): srcBytes is the raw bytes of a Float32Array holding nPixels × nSrcCh samples
+// normalized to [0,1] in the chain's source device space, row-major. Returns the
+// destination pixels as a Float32Array (nDst per pixel, [0,1]) for the browser to
+// encode. Bytes-in/bytes-out only — the format layer stays in JS (lib/imageIO.js).
+emscripten::val applyImageImpl(emscripten::val chainVal, std::string srcBytes,
+                               int nSrcCh, int intentArg) {
+  const unsigned n = chainVal["length"].as<unsigned>();
+  if (n == 0) throw std::runtime_error("Add at least one profile to the chain.");
+  if (nSrcCh < 1) throw std::runtime_error("The image has no colour channels.");
+  if (srcBytes.size() % (std::size_t)(nSrcCh * 4) != 0)
+    throw std::runtime_error("Malformed pixel buffer.");
+  const std::size_t nPixels = srcBytes.size() / (std::size_t)(nSrcCh * 4);
+  if (nPixels == 0) throw std::runtime_error("The image is empty.");
+  if (nPixels > 64000000ULL)
+    throw std::runtime_error("The image is too large to process (over 64 megapixels).");
+
+  const icRenderingIntent intent =
+    (intentArg >= (int)icPerceptual && intentArg <= (int)icAbsoluteColorimetric)
+      ? (icRenderingIntent)intentArg : icRelativeColorimetric;
+
+  CIccCmm theCmm(icSigUnknownData, icSigUnknownData, /*bFirstInput=*/true);
+  for (unsigned i = 0; i < n; ++i) {
+    std::vector<std::uint8_t> buf =
+      emscripten::convertJSArrayToNumberVector<std::uint8_t>(chainVal[i]);
+    if (buf.empty() || buf.size() > kMaxIccBytes)
+      throw std::runtime_error("A chained profile is empty or too large.");
+    CIccProfile* p = ReadIccProfile(buf.data(), (icUInt32Number)buf.size());
+    if (!p) throw std::runtime_error("A chained profile could not be read.");
+    icStatusCMM stat = theCmm.AddXform(p, intent, icInterpTetrahedral,
+                                       NULL, icXformLutColor, true, NULL);
+    if (stat)
+      throw std::runtime_error("Cannot link profile " + std::to_string(i + 1) + ": "
+                               + CIccCmm::GetStatusText(stat));
+  }
+  icStatusCMM stat = theCmm.Begin();
+  if (stat)
+    throw std::runtime_error(std::string("The chain does not connect: ")
+                             + CIccCmm::GetStatusText(stat));
+
+  const int nSrc = (int)icGetSpaceSamples(theCmm.GetSourceSpace());
+  const int nDst = (int)icGetSpaceSamples(theCmm.GetDestSpace());
+  if (nSrc != nSrcCh)
+    throw std::runtime_error("This image has " + std::to_string(nSrcCh)
+      + " channel(s) but the chain expects a " + std::to_string(nSrc) + "-channel source image.");
+  if (nDst < 1) throw std::runtime_error("The chain has an unusable output space.");
+
+  const float* src = reinterpret_cast<const float*>(srcBytes.data());
+  std::vector<float> dst((std::size_t)nPixels * nDst);
+  // Per-pixel apply (icFloatNumber == float in this build). Straightforward + lets a
+  // later stage add progress/cancellation; the CMM is already Begin()'d.
+  for (std::size_t px = 0; px < nPixels; ++px)
+    theCmm.Apply(&dst[px * nDst], &src[px * nSrc]);
+
+  emscripten::val r = emscripten::val::object();
+  r.set("ok", true);
+  r.set("destSamples", nDst);
+  r.set("pixels", makeFloat32Array(dst.data(), dst.size()));
+  return r;
+}
+
+emscripten::val applyImage(emscripten::val chainVal, std::string srcBytes, int nSrcCh, int intent) {
+  try {
+    return applyImageImpl(chainVal, srcBytes, nSrcCh, intent);
+  } catch (const std::runtime_error&) {
+    throw;
+  } catch (const std::exception& e) {
+    throw std::runtime_error(std::string("Image processing failed: ") + e.what());
+  } catch (...) {
+    throw std::runtime_error("Image processing failed with an unknown error");
+  }
+}
+
 } // namespace
 
 EMSCRIPTEN_BINDINGS(iccconstruct) {
   emscripten::function("fromCube", &fromCube);
   emscripten::function("v5DspObsToV4", &v5DspObsToV4);
+  emscripten::function("buildLink", &buildLink);
+  emscripten::function("chainInfo", &chainInfo);
+  emscripten::function("applyImage", &applyImage);
 }
