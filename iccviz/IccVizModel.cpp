@@ -1635,6 +1635,12 @@ RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
   // Seed in-gamut Lab from a device interior grid via A2B, then round-trip each.
   std::vector<double> des;
   des.reserve((size_t)total);
+  // Track the worst-error colour as we go (the sorted `des` loses which Lab each ΔE
+  // came from). We record the first PCS pass (lab1) — the in-gamut colour that
+  // round-trips worst — so the UI can name it.
+  double worstDe = -1.0;
+  icFloatNumber worstLab[3] = {0.0f, 0.0f, 0.0f};
+  bool hasWorst = false;
   std::vector<icFloatNumber> dev(N, 0.0f), pcs1(nPcs, 0.0f), dev2(N, 0.0f), pcs2(nPcs, 0.0f);
   std::vector<int> idx(N, 0);
   for (;;) {
@@ -1645,7 +1651,14 @@ RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
     icFloatNumber lab1[3], lab2[3];
     if (pcsToLabFull(pcs1.data(), pcsSp, lab1) && pcsToLabFull(pcs2.data(), pcsSp, lab2)) {
       const double de = deltaEab(lab1, lab2);
-      if (std::isfinite(de)) des.push_back(de);
+      if (std::isfinite(de)) {
+        des.push_back(de);
+        if (de > worstDe) {
+          worstDe = de;
+          worstLab[0] = lab1[0]; worstLab[1] = lab1[1]; worstLab[2] = lab1[2];
+          hasWorst = true;
+        }
+      }
     }
     int d = 0;
     for (; d < N; ++d) { if (++idx[d] <= S) break; idx[d] = 0; }
@@ -1663,11 +1676,39 @@ RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
 
   r.ok = true;
   r.n = (int)des.size();
+  r.minDE = des.front();
   r.meanDE = mean;
   r.p90DE = des[p90i];
   r.maxDE = des.back();
   r.stdDE = std::sqrt(var);
   r.nColorants = N;
+  // Cumulative ≤1/2/3/5/10 counts from the sorted distribution. upper_bound gives
+  // the count of elements ≤ threshold in O(log n) each (des is already sorted).
+  r.nLE1  = (unsigned int)(std::upper_bound(des.begin(), des.end(),  1.0) - des.begin());
+  r.nLE2  = (unsigned int)(std::upper_bound(des.begin(), des.end(),  2.0) - des.begin());
+  r.nLE3  = (unsigned int)(std::upper_bound(des.begin(), des.end(),  3.0) - des.begin());
+  r.nLE5  = (unsigned int)(std::upper_bound(des.begin(), des.end(),  5.0) - des.begin());
+  r.nLE10 = (unsigned int)(std::upper_bound(des.begin(), des.end(), 10.0) - des.begin());
+  r.hasWorst = hasWorst;
+  r.worstLab[0] = worstLab[0]; r.worstLab[1] = worstLab[1]; r.worstLab[2] = worstLab[2];
+  // Fine (0.1-ΔE) histogram (bin i = [i·w, (i+1)·w)); top edge / over-range folds
+  // into the last bin. Base width and 2000-bin cap MUST match DeStats::kHistBinW /
+  // kMaxHistBins (roundtrip-eval.hpp) so RT0 re-bins in the UI exactly like the
+  // RT1/RT2/PRMG types. The UI aggregates these into integer or auto display bins.
+  {
+    const double kHistBinW = 0.1;   // == DeStats::kHistBinW
+    const int    kMaxHistBins = 2000;
+    int nbins = (int)std::ceil(des.back() / kHistBinW);
+    if (nbins < 1) nbins = 1;
+    if (nbins > kMaxHistBins) nbins = kMaxHistBins;
+    r.hist.assign(nbins, 0u);
+    for (double d : des) {
+      int bi = (int)std::floor(d / kHistBinW);
+      if (bi < 0) bi = 0;
+      if (bi >= nbins) bi = nbins - 1;
+      ++r.hist[bi];
+    }
+  }
   return r;
 }
 

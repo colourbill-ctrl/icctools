@@ -370,6 +370,51 @@ tab** — **gamut-volume → the `Compare` tab** (with the 3D/2D gamut plots); *
 stays in `Profile`** as its own per-intent table carrying this method listbox. Gamut and
 round-trip are no longer co-tabled.
 
+**Update (P1-c, 2026-07-18) — IMPLEMENTED. Supersedes the earlier "6f6e337 separate
+`Round-Trip (PRMG)` Collapsible" build**, which mistakenly followed the *superseded* GROUP-A
+item-5 plan rather than THIS decision. Round-trip is folded back into the **Profile
+Statistics** table (with gamut volume alongside), driven by **two listboxes** and a use-MPE
+checkbox:
+- **Rendering intent** is now its OWN listbox (no longer the row axis) — perceptual / relative
+  / saturation / absolute. The table shows the single selected intent.
+- **Round-trip type** listbox with **four** types, each an in-app representation of the same
+  colour math (NOT the CLI's console layout — the user is the judge of parity):
+  - **RT0** — `iccviz::RoundTripDE` in-gamut overview (device grid → PCS → device → PCS).
+  - **RT1** — device-cube `ΔE(deviceLab, round1)` (inversion + gamut).
+  - **RT2** — device-cube `ΔE(round1, round2)` (reproducibility).
+  - **PRMG** — Perceptual Reference Medium Gamut interoperability (in-app walk replicating
+    `CIccPRMG`; buckets identical by construction, plus min/mean/P90/max + worst-Lab).
+- **Uniform presentation for every type:** one table row `gamut volume | min | mean | P90 |
+  max`, then the **cumulative ΔE histogram (≤1/2/3/5/10, count + share)** *below the table*
+  (no per-row expander), a **worst-Lab** line, and (PRMG only) the specified-gamut line.
+- A **short, code-grounded description updates with the type selection**, shown beside the
+  selector.
+- **WASM:** single new entry `roundTripStats(bytes, intent, useMpe)` (plot-wrapper.cpp) returns
+  all four types for one intent → the type selector switches instantly; only intent/use-MPE
+  recompute (memoized JS-side). Engines extended: `DeStats` accumulator + refactored
+  `CIccMinMaxEval` (roundtrip-eval.hpp); `iccviz::RoundTripDE` gains min + buckets + worst-Lab.
+  The old `roundTrip`/`roundTripImpl` are removed. NOTE this **reverses** the GROUP-A rule "do
+  NOT extend `iccviz::RoundTripDE`" — today's uniform-histogram requirement supersedes it.
+- **i18n:** new `analysis_rt_type_*` / `analysis_rt_desc_*` / `analysis_stats_intro2` keys added
+  to `en`; all `t()` calls carry inline EN fallbacks so other locales render correctly. Full
+  12-locale fill deferred to task #31.
+
+**Update (P1-d, 2026-07-18):** the histogram is a **graph, not a table** — user directive:
+"don't implement histogram in table … look to chardata Comparison Statistics for the pattern."
+- The cumulative-frequency TABLE is removed; in its place a **Plotly** chart ported ~verbatim
+  from chardata's `renderCmpHist`: **relative-frequency bars (left axis) + cumulative-frequency
+  line (right axis)**, integer-ΔE bins. New component `components/viz/RtHistogram.jsx`.
+- **`std` (std-dev)** added as a comparison statistic (table column between Mean and P90).
+- **WASM** now also emits `std` + an integer-ΔE `hist[]` per type (`DeStats::stddev/integerHist`;
+  `iccviz::RoundTripResult.hist`); the coarse `buckets[]` are kept ONLY for the smoketest A/B.
+- **Plotly introduced** (`plotly.js-dist-min@2.27.0`, matching chardata), lazy-loaded as its own
+  code-split chunk (main bundle unchanged; ~3.5 MB Plotly loads on first histogram render). This
+  is deliberate groundwork for the **late-P1 gamut 3D/2D plots**, which are Plotly-heavy in
+  chardata. **CSP finding:** the histogram uses Plotly SVG traces only → **no CSP change** needed
+  (my earlier "CSP blocks Plotly" was wrong; `script-src 'self'` loads it, `style-src
+  'unsafe-inline'` covers its styles, SVG needs no `'unsafe-eval'`). Re-verify the eval question
+  when the WebGL 3D gamut plots land (chardata runs those with no `'unsafe-eval'`, so likely fine).
+
 ### DL-IA1 — App identity: inspector vs generator/transformer · ✅ RESOLVED 2026-07-18 (Option 4, staged)
 **Q:** profiletool is inspect-only today (drop profile → Header/Tags/Validation/
 Analysis). Group A fits (Analysis card) and Group C fits (image → embedded profile →

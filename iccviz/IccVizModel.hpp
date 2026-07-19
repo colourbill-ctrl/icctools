@@ -275,11 +275,26 @@ struct RoundTripResult {
   bool        ok         = false;
   std::string error;
   int         n          = 0;    // finite test points
+  double      minDE      = 0.0;  // ΔE*ab — smallest round-trip error seen
   double      meanDE     = 0.0;  // ΔE*ab
   double      p90DE      = 0.0;
   double      maxDE      = 0.0;
   double      stdDE      = 0.0;
   int         nColorants = 0;    // device channels
+  // Cumulative interoperability histogram — count of test points whose ΔE is at or
+  // under each threshold (so nLE1 ≤ nLE2 ≤ … ≤ n). These mirror the CIccPRMG
+  // ≤1/2/3/5/10 buckets so RT0 presents in the app with the SAME histogram shape as
+  // RT1/RT2/PRMG (the unified Profile-Statistics round-trip table). This is an
+  // in-app presentation choice — the iccRoundTrip CLI does not bucket this metric.
+  unsigned int nLE1 = 0, nLE2 = 0, nLE3 = 0, nLE5 = 0, nLE10 = 0;
+  // The in-gamut L*a*b* (first PCS pass) at the worst ΔE — lets the UI point at the
+  // colour where the round trip fails hardest. `hasWorst` guards the empty case.
+  bool        hasWorst   = false;
+  double      worstLab[3] = {0.0, 0.0, 0.0};
+  // Integer-ΔE histogram for the relative-/cumulative-frequency plot: bin i spans
+  // ΔE ∈ [i, i+1); top edge / over-range folds into the last bin. Same binning (and
+  // 200-bin cap) as the RT1/RT2/PRMG DeStats path so every type plots identically.
+  std::vector<unsigned int> hist;
 };
 
 // samplesPerAxis 0 → auto-pick the device seed grid from the colorant count.

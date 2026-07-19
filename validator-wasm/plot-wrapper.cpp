@@ -21,6 +21,7 @@
 #include "IccProfile.h"
 #include "IccCmm.h"
 #include "IccUtil.h"
+#include "IccTag.h"        // CIccTagSignature (PRMG "specified gamut" tag check)
 #include "IccTagLut.h"
 #include "IccPrmg.h"
 #include "roundtrip-eval.hpp"
@@ -487,13 +488,139 @@ std::string roundTripDE(const std::string& bytes, int intent) {
   catch (...) { return json{{"error", "roundTripDE threw an unknown exception"}}.dump(); }
 }
 
-// IccProfLib-canonical round trip — the parity port of `iccRoundTrip` (the CLI
-// tool). Distinct from iccviz::RoundTripDE above: this seeds from the *device
-// cube* (CIccEvalCompare), reports BOTH round-trip directions (RT1 device→PCS
-// error, RT2 PCS-stability error), and adds the PRMG interoperability histogram.
-// intent: 0 perceptual, 1 relative, 2 saturation, 3 absolute (ICC values).
-// useMpe: false = colorimetric (lut) tags, true = MPE/color tags.
-std::string roundTripImpl(const std::string& bytes, int intent, bool useMpe) {
+// ── round-trip statistics: one uniform shape for every "type" ────────────────
+// The Analysis-tab Profile-Statistics table presents FOUR round-trip metrics
+// through one control (design doc DL-A1). They come from three different engines
+// but are serialized identically here so the UI renders any of them the same way
+// (min / mean / P90 / max + a cumulative ≤1/2/3/5/10 histogram + a worst-error
+// colour). Per the project principle, the iccDEV CLI/WASM output is NOT the
+// authority — these in-app representations of the same underlying colour math are
+// the parity target the user signed off on.
+//
+//   RT0  = iccviz::RoundTripDE     — in-gamut overview (device grid → PCS →
+//                                    device → PCS, ΔE between the two PCS passes).
+//   RT1  = ΔE(deviceLab, round1)   — device-cube inversion + gamut error.
+//   RT2  = ΔE(round1, round2)      — device-cube reproducibility (PCS stability).
+//   PRMG = Perceptual Reference Medium Gamut interoperability (one Lab→device→Lab
+//          trip over the PRMG-interior PCS colours).
+
+// Serialize a DeStats (RT1/RT2/PRMG) to the uniform per-type shape. Taken by ref
+// because p90() reorders the sample buffer (harmless once we're done reading it).
+json deStatsToJson(DeStats& s) {
+  json j;
+  j["ok"] = true;
+  j["n"] = s.count();
+  j["total"] = s.count();
+  j["min"]  = s.minDE;
+  j["mean"] = s.mean();
+  j["std"]  = s.stddev();
+  j["p90"]  = s.p90();
+  j["max"]  = s.maxDE;
+  // Coarse cumulative counts at ΔE ≤ 1/2/3/5/10 — retained for the smoketest's A/B
+  // against CIccPRMG (the UI no longer tables these; it plots `hist` instead).
+  j["buckets"] = { s.nLE1, s.nLE2, s.nLE3, s.nLE5, s.nLE10 };
+  // Fine (0.1-ΔE) histogram for the relative-/cumulative-frequency plot; the UI
+  // re-aggregates it to integer or auto bins. `histBinW` is its bin width.
+  j["hist"] = s.fineHist();
+  j["histBinW"] = DeStats::kHistBinW;
+  if (s.any)   // no worst colour on an empty distribution — omit rather than emit 0,0,0
+    j["worstLab"] = { s.worstLab[0], s.worstLab[1], s.worstLab[2] };
+  return j;
+}
+
+// Serialize the iccviz overview result (RT0) into the SAME shape as deStatsToJson.
+json rt0ToJson(const iccviz::RoundTripResult& v) {
+  if (!v.ok) return json{{"ok", false}, {"message", v.error}};
+  json j;
+  j["ok"] = true;
+  j["n"] = v.n;
+  j["total"] = v.n;
+  j["min"]  = v.minDE;
+  j["mean"] = v.meanDE;
+  j["std"]  = v.stdDE;
+  j["p90"]  = v.p90DE;
+  j["max"]  = v.maxDE;
+  j["buckets"] = { v.nLE1, v.nLE2, v.nLE3, v.nLE5, v.nLE10 };
+  j["hist"] = v.hist;                    // fine 0.1-ΔE bins (see IccVizModel RoundTripDE)
+  j["histBinW"] = DeStats::kHistBinW;    // same base width as the DeStats path
+  if (v.hasWorst)
+    j["worstLab"] = { v.worstLab[0], v.worstLab[1], v.worstLab[2] };
+  return j;
+}
+
+// PRMG interoperability, computed IN-APP. Replicates CIccPRMG::EvaluateProfile
+// (IccPrmg.cpp) — sweep the PCS cube 0..1 step 0.01, keep points inside the
+// Perceptual Reference Medium Gamut (CIccPRMG::InGamut reads the spec chroma
+// table), measure ΔE of ONE Lab→device→Lab round trip — but accumulate a full
+// DeStats (min/mean/P90/max + worst-Lab) instead of only the CLI's cumulative
+// buckets, so PRMG presents like the other types. The bucket counts are identical
+// to CIccPRMG by construction: the sweep loop below is byte-for-byte the reference
+// loop (same icFloatNumber step accumulation, same InGamut test, same icDeltaE),
+// and the smoketest asserts our buckets == CIccPRMG's for a reference profile.
+json prmgStatsToJson(CIccProfile* pIcc, icRenderingIntent nIntent, bool useMpe) {
+  // Same profile-class guard CIccPRMG applies before evaluating (IccPrmg.cpp:214).
+  const icProfileClassSignature cls = pIcc->m_Header.deviceClass;
+  if (cls != icSigInputClass && cls != icSigDisplayClass &&
+      cls != icSigOutputClass && cls != icSigColorSpaceClass)
+    return json{{"ok", false}, {"message", "Profile class cannot be round-tripped"}};
+
+  // "Specified Gamut" declaration: only perceptual/saturation intents can declare
+  // PRMG (via the rendering-intent-gamut tag). Replicates IccPrmg.cpp:222-233 so we
+  // needn't run CIccPRMG's own (second, full) walk just to read this one flag.
+  bool implied = false;
+  if (nIntent == icPerceptual || nIntent == icSaturation) {
+    icTagSignature rigSig = static_cast<icTagSignature>(
+        icSigPerceptualRenderingIntentGamutTag + (static_cast<icUInt32Number>(nIntent) % 4));
+    CIccTag* pSigTag = pIcc->FindTag(rigSig);
+    if (pSigTag && pSigTag->GetType() == icSigSignatureType) {
+      CIccTagSignature* pSig = static_cast<CIccTagSignature*>(pSigTag);
+      if (pSig->GetValue() == icSigPerceptualReferenceMediumGamut)
+        implied = true;
+    }
+  }
+
+  // Build the Lab→device→Lab CMM (two AddXform legs at nIntent) exactly as
+  // CIccPRMG does. A profile lacking the needed device↔PCS transforms fails here.
+  CIccCmm Lab2Dev2Lab(icSigLabData, icSigLabData, false);
+  icXformLutType nLutType = useMpe ? icXformLutColor : icXformLutColorimetric;
+  if (Lab2Dev2Lab.AddXform(*pIcc, nIntent, icInterpLinear, NULL, nLutType, useMpe) != icCmmStatOk ||
+      Lab2Dev2Lab.AddXform(*pIcc, nIntent, icInterpLinear, NULL, nLutType, useMpe) != icCmmStatOk ||
+      Lab2Dev2Lab.Begin() != icCmmStatOk)
+    return json{{"ok", false}, {"message", "Profile lacks the transforms PRMG needs"}};
+
+  CIccPRMG prmg;   // used only for InGamut() (reads the static PRMG chroma table)
+  DeStats st;
+  icFloatNumber pcs[3], Lab1[3], Lab2[3];
+  // Verbatim replica of CIccPRMG's sweep — same icFloatNumber accumulation so the
+  // per-axis step count (and thus which boundary samples are included) matches the
+  // reference exactly. Do NOT "clean this up" to an integer counter: that changes
+  // the float rounding at the 1.0 boundary and would drift the bucket counts.
+  for (pcs[0] = 0.0; pcs[0] <= 1.0; pcs[0] += (icFloatNumber)0.01) {
+    for (pcs[1] = 0.0; pcs[1] <= 1.0; pcs[1] += (icFloatNumber)0.01) {
+      for (pcs[2] = 0.0; pcs[2] <= 1.0; pcs[2] += (icFloatNumber)0.01) {
+        std::memcpy(Lab1, pcs, 3 * sizeof(icFloatNumber));
+        icLabFromPcs(Lab1);
+        if (prmg.InGamut(Lab1)) {
+          Lab2Dev2Lab.Apply(Lab2, pcs);
+          icLabFromPcs(Lab2);
+          st.add(icDeltaE(Lab1, Lab2), Lab1);
+        }
+      }
+    }
+  }
+
+  json j = deStatsToJson(st);
+  j["implied"] = implied;
+  return j;
+}
+
+// Compute all four round-trip types for ONE rendering intent. Returns a bundle so
+// the UI's *type* selector switches instantly (no recompute); only changing the
+// intent or use-MPE toggle triggers a fresh call (memoized JS-side per
+// (profile,intent,useMpe)). intent: 0 perceptual / 1 relative / 2 saturation /
+// 3 absolute; useMpe: false = colorimetric (lut) tags, true = MPE/color tags
+// (applies to RT1/RT2/PRMG; RT0's iccviz engine ignores it).
+std::string roundTripStatsImpl(const std::string& bytes, int intent, bool useMpe) {
   if (bytes.size() > kMaxIccBytes)
     return json{{"error", "Profile exceeds size limit"}}.dump();
   CIccProfile* pIcc = parseCached(bytes);
@@ -501,56 +628,39 @@ std::string roundTripImpl(const std::string& bytes, int intent, bool useMpe) {
   if (intent < 0 || intent > 3) intent = 1;   // default: relative colorimetric
   icRenderingIntent nIntent = static_cast<icRenderingIntent>(intent);
 
-  CIccMinMaxEval eval;
-  icStatusCMM stat = eval.EvaluateProfile(pIcc, 0, nIntent, icInterpLinear, useMpe);
+  json types = json::object();
 
-  if (stat != icCmmStatOk) {
-    // Mirror iccRoundTrip.cpp:226-235 — distinguish a deliberate refusal
-    // ("Too many samples", the #1405 wide-device-space guard) from an outright
-    // failure. The guard is a *skipped, non-error* state, surfaced as its own
-    // status so the UI can say "not evaluated" rather than "error".
-    if (stat == icCmmStatTooManySamples)
-      return json{{"status", "tooManySamples"},
-                  {"message", CIccCmm::GetStatusText(stat)}}.dump();
-    return json{{"error", std::string("Unable to perform round trip: ") +
-                          CIccCmm::GetStatusText(stat)}}.dump();
+  // RT1 / RT2 — one device-cube walk (CIccMinMaxEval) yields both directions.
+  {
+    CIccMinMaxEval eval;
+    icStatusCMM stat = eval.EvaluateProfile(pIcc, 0, nIntent, icInterpLinear, useMpe);
+    if (stat == icCmmStatOk) {
+      types["RT1"] = deStatsToJson(eval.rt1);
+      types["RT2"] = deStatsToJson(eval.rt2);
+    } else {
+      // The #1405 wide-device-space guard is a *skip*, not an error — give it its
+      // own status so the UI says "not evaluated" rather than "error".
+      json note = (stat == icCmmStatTooManySamples)
+        ? json{{"ok", false}, {"status", "tooManySamples"}, {"message", CIccCmm::GetStatusText(stat)}}
+        : json{{"ok", false}, {"message", std::string("Round trip failed: ") + CIccCmm::GetStatusText(stat)}};
+      types["RT1"] = note;
+      types["RT2"] = note;
+    }
   }
 
-  // PRMG is a second, independent pass; its own status can differ (e.g. skipped)
-  // without failing the round trip — mirror the CLI, which still prints RT1/RT2.
-  CIccPRMG prmg;
-  icStatusCMM prmgStat = prmg.EvaluateProfile(pIcc, nIntent, icInterpLinear, useMpe);
-  bool prmgOk = prmgStat == icCmmStatOk;
+  // RT0 — iccviz in-gamut overview (its own engine; does not take useMpe).
+  types["RT0"] = rt0ToJson(iccviz::RoundTripDE(pIcc, nIntent));
 
-  json out = {
-    {"intent", intent},
-    {"useMpe", useMpe},
-    {"total", eval.m_nTotal},
-    {"roundTrip1", {
-      {"minDE", eval.minDE1}, {"meanDE", eval.GetMean1()}, {"maxDE", eval.maxDE1},
-      {"maxLab", {eval.maxLab1[0], eval.maxLab1[1], eval.maxLab1[2]}}}},
-    {"roundTrip2", {
-      {"minDE", eval.minDE2}, {"meanDE", eval.GetMean2()}, {"maxDE", eval.maxDE2},
-      {"maxLab", {eval.maxLab2[0], eval.maxLab2[1], eval.maxLab2[2]}}}},
-    {"status", "ok"},
-  };
+  // PRMG — in-app interoperability walk.
+  types["PRMG"] = prmgStatsToJson(pIcc, nIntent, useMpe);
 
-  if (prmgOk && prmg.m_nTotal) {
-    out["prmg"] = {
-      {"ok", true}, {"implied", prmg.m_bPrmgImplied},
-      {"de1", prmg.m_nDE1}, {"de2", prmg.m_nDE2}, {"de3", prmg.m_nDE3},
-      {"de5", prmg.m_nDE5}, {"de10", prmg.m_nDE10}, {"total", prmg.m_nTotal}};
-  } else {
-    out["prmg"] = {{"ok", false},
-                   {"message", CIccCmm::GetStatusText(prmgStat)}};
-  }
-  return out.dump();
+  return json{{"intent", intent}, {"useMpe", useMpe}, {"types", std::move(types)}}.dump();
 }
 
-std::string roundTrip(const std::string& bytes, int intent, bool useMpe) {
-  try { return roundTripImpl(bytes, intent, useMpe); }
-  catch (const std::exception& e) { return json{{"error", std::string("roundTrip threw: ") + e.what()}}.dump(); }
-  catch (...) { return json{{"error", "roundTrip threw an unknown exception"}}.dump(); }
+std::string roundTripStats(const std::string& bytes, int intent, bool useMpe) {
+  try { return roundTripStatsImpl(bytes, intent, useMpe); }
+  catch (const std::exception& e) { return json{{"error", std::string("roundTripStats threw: ") + e.what()}}.dump(); }
+  catch (...) { return json{{"error", "roundTripStats threw an unknown exception"}}.dump(); }
 }
 
 } // namespace
@@ -563,5 +673,5 @@ EMSCRIPTEN_BINDINGS(iccplot) {
   emscripten::function("evaluateTag", &evaluateTag);
   emscripten::function("gamutVolume", &gamutVolume);
   emscripten::function("roundTripDE", &roundTripDE);
-  emscripten::function("roundTrip", &roundTrip);
+  emscripten::function("roundTripStats", &roundTripStats);
 }

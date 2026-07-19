@@ -116,37 +116,38 @@ export async function gamutVolume(bytes, tagSig, intent) {
 }
 
 /**
- * B2A round-trip accuracy at a rendering intent (IccProfLib, no lcms2): in-gamut
- * L*a*b* seeded from a device grid via A2B, round-tripped Lab → device (B2A) →
- * Lab (A2B), reporting ΔE*ab. `intent`: 0 perceptual / 1 relative / 2 saturation
- * / 3 absolute. → { n, meanDE, p90DE, maxDE, stdDE, nColorants }.
+ * Round-trip statistics for ONE rendering intent, covering all four types the
+ * Analysis-tab Profile-Statistics table exposes through its type selector. One
+ * call returns every type so switching the selector is instant; only changing the
+ * intent or the use-MPE toggle needs a fresh call (memoize JS-side per
+ * (profile, intent, useMpe)).
+ *
+ * `intent`: 0 perceptual / 1 relative / 2 saturation / 3 absolute.
+ * `useMpe` : false = colorimetric (lut) tags, true = MPE/color tags (applies to
+ *            RT1/RT2/PRMG; RT0's iccviz engine ignores it).
+ *
+ * Every type shares ONE uniform shape (grounded in the underlying colour math,
+ * not the iccRoundTrip CLI's console layout — see design doc DL-A1):
+ *   { ok:true, n, total, min, mean, std, p90, max,
+ *     hist:[c0, c1, …],                 // integer-ΔE bin counts (bin i = [i, i+1))
+ *     buckets:[≤1, ≤2, ≤3, ≤5, ≤10],   // cumulative counts (kept for smoketest A/B)
+ *     worstLab:[L,a,b]?,                // omitted when the distribution is empty
+ *     implied?:bool }                   // PRMG only: "Specified Gamut" declaration
+ * or, when a type could not be computed:
+ *   { ok:false, message, status? }      // status:'tooManySamples' = #1405 skip
+ *
+ * → { intent, useMpe, types: { RT0, RT1, RT2, PRMG } }
+ *   RT0  = iccviz in-gamut overview (device grid → PCS → device → PCS)
+ *   RT1  = device-cube ΔE(deviceLab, round1)  — inversion + gamut
+ *   RT2  = device-cube ΔE(round1, round2)     — reproducibility
+ *   PRMG = Perceptual Reference Medium Gamut interoperability histogram
+ * A top-level `.error` (module/parse failure) still throws; per-type `ok:false`
+ * does NOT throw — the UI shows that type as "not evaluated".
  */
-export async function roundTripDE(bytes, intent) {
+export async function roundTripStats(bytes, intent, useMpe = false) {
   const mod = await loadModule()
   let out
-  try { out = mod.roundTripDE(bytes, intent) } catch (e) { throw toError(mod, e) }
-  const r = JSON.parse(out)
-  if (r.error) throw new Error(r.error)
-  return r
-}
-
-/**
- * IccProfLib-canonical round trip — the parity port of the `iccRoundTrip` CLI.
- * Seeds from the device cube and reports BOTH directions plus the PRMG
- * interoperability histogram. `intent`: 0 perceptual / 1 relative / 2 saturation
- * / 3 absolute; `useMpe`: false = colorimetric (lut) tags, true = MPE tags. →
- *   { intent, useMpe, total,
- *     roundTrip1: { minDE, meanDE, maxDE, maxLab:[L,a,b] },
- *     roundTrip2: { minDE, meanDE, maxDE, maxLab:[L,a,b] },
- *     prmg: { ok, implied, de1, de2, de3, de5, de10, total } | { ok:false, message },
- *     status: 'ok' }
- * `status:'tooManySamples'` (a skipped, non-error state — the #1405 wide-device
- * guard) is returned as-is, NOT thrown; only a true `.error` throws.
- */
-export async function roundTrip(bytes, intent, useMpe = false) {
-  const mod = await loadModule()
-  let out
-  try { out = mod.roundTrip(bytes, intent, useMpe) } catch (e) { throw toError(mod, e) }
+  try { out = mod.roundTripStats(bytes, intent, useMpe) } catch (e) { throw toError(mod, e) }
   const r = JSON.parse(out)
   if (r.error) throw new Error(r.error)
   return r
