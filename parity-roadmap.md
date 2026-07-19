@@ -296,6 +296,42 @@ date; `OPEN` entries carry the options so input can be dropped in by ID. IDs are
 referenced from the group sections above. Categories: **IA** app-identity/nav ·
 **A/B/C/D-UX** per-group user-experience · **ARCH** build/dependency.*
 
+### DL-GAMUT1 — Gamut compare: engine, renderer, scope · ✅ RESOLVED 2026-07-18 (revised same day)
+**Call.** The **Compare tab** is the sole home for gamut and overlays **1..N** profiles:
+a **3-D gamut shell** + a **2-D gamut slice** (NO volume/status table — user, 2026-07-18),
+all profile-derived (IccProfLib device→PCS→Lab, **no lcms2** — DL-SCOPE1).
+- **Engine seam.** New `iccviz::GamutBoundaryMesh` reuses the exact device→Lab path
+  `GamutVolume` already uses, but **keeps the per-face grid topology** and returns the
+  triangulated 2-skeleton of the device N-cube. WASM `gamutMesh` returns typed arrays.
+  The mesh is the reusable, upstream-clean iccviz API (DL-UPSTREAM1 / [[iccviz-upstream-migration-plan]]).
+- **Renderer = FAITHFUL Plotly port (revised, user 2026-07-18).** First cut hand-rolled a
+  CSP-safe 2-D-canvas 3-D and adapted the slice through the generic `PlotlyGraph` — user
+  rejected it ("not a good port", plot math displaced, wanted chardata's **2-D gamut slice
+  display** ported, not a canvas renderer). Now both are **bespoke faithful ports of chardata's
+  `renderPlot` / `renderSlicePlot`**: `viz/GamutPlot3D.jsx` = Plotly **WebGL** `mesh3d` shell +
+  `scatter3d` points + deduped-edge wireframe + custom axis lines through the **neutral origin
+  (0,0,0)**; `viz/GamutSlice2D.jsx` = SVG Plotly filled hull (`color+'33'`, width 2) + the Lab
+  point cloud **projected** onto the plane (±thickness, soft/hard falloff, in-plane brightening).
+  Plane→plot mapping matches chardata exactly (L* vertical for a*/b* slices). Point cloud = the
+  mesh vertices (chardata does the same for RGB) — no extra WASM.
+- **The 3-D "displaced from neutral" bug** (first cut) was a real one: `centroid` is `[L,a,b]`
+  but the canvas renderer read it as `[a,b,L]`, offsetting a* by L*'s midpoint. Moot now (Plotly).
+- **CSP widened.** Plotly-gl compiles shaders via `Function`, so `script-src` gains
+  **`'unsafe-eval'`** (`index.html` + CLAUDE.md security note). This is the ONE WebGL view; every
+  other plot stays SVG-only. WASM still `DYNAMIC_EXECUTION=0` (embind doesn't use the token).
+- **Scope.** Matrix/TRC profiles (AdobeRGB) now render — `GamutBoundaryMesh` builds device→PCS
+  from the PROFILE via profile-level `CIccXform::Create` (LUT or matrix/TRC), so it is
+  intent-driven, not AToB-tag-driven. WASM `gamutMesh(bytes, intent, steps)`.
+- **Gamut-volume placement (REVISED, user 2026-07-18).** The original P1-b "relocate gamut-volume
+  → Compare, Profile shows no gamut" is **SUPERSEDED**: Compare shows gamut GEOMETRY only (no
+  numbers — user removed the volume/status table), so the gamut-**volume** scalar STAYS in
+  **Profile/Analysis** (its only home). The split is: Compare = shape (shell + slice), Profile =
+  volume number. (Cancelled the "remove gamut-volume from Profile" task — it would have deleted
+  gamut volume from the app entirely.)
+- **Refinements (round 2).** Plots STACKED (3-D over 2-D); NO data points anywhere (3-D = shell +
+  wireframe, 2-D = boundary hull only); 3-D controls at chardata parity: colour solid/value/hue,
+  rotation turntable/orbit, roll + roll-sensitivity, drag-rotate sensitivity (live gl3d camera).
+
 ### DL-UPSTREAM1 — Upstream-contribution posture (project weak directive) · 🎯 STANDING 2026-07-18
 **Weak directive (a project goal, not a hard rule):** one of profiletool's goals is to
 **look for opportunities — as we did with iccviz — to increase iccDEV's functionality by
@@ -825,8 +861,31 @@ native CLI + a smoketest case.
    main(). A/B **byte-identical** to the native CLI on the CI pair (modulo timestamp +
    profile ID); reject paths surface the engine's own messages. Smoketest
    `v5tov4-smoketest.mjs`; artifacts rebuilt + SHA256SUMS refreshed.
-6. **Gamut compare** (**P1-late · beyond parity**): iccviz boundary mesh/slice + chardata 3D/2D
-   renderers + **lcms2→`CIccCmm`**. Last in phase 1 — heaviest, and the only item needing the CMM swap.
+6. **Gamut compare** (**P1-late · beyond parity**). **DONE 2026-07-18 (engine + renderer;
+   one P1-b sub-step pending).** The **Compare tab** now overlays 1..N profiles as a 3-D gamut
+   shell + a 2-D gamut slice + a gamut-volume/legend table (DL-GAMUT1 below).
+   - **Engine** — new public `iccviz::GamutBoundaryMesh(pIcc, aToBTag, intent, steps)`
+     (`IccVizModel.{hpp,cpp}`) triangulates the 2-skeleton of the device N-cube through the
+     **same IccProfLib device→PCS→Lab path `GamutVolume` uses** (CIccXform bInput=true) — keeping
+     the per-face grid topology instead of voxelising+discarding. WASM export `gamutMesh` in
+     `plot-wrapper.cpp` returns typed arrays (vertices Float32 / triangles Int32). **NO lcms2, no
+     CMakeLists change.** Smoketest `gamutmesh-smoketest.mjs` — well-formed for RGB (N=3) + CMYK
+     (N=4), both intents; iccplot rebuilt + SHA256SUMS refreshed.
+   - **Renderer** — `chardata has NO 2-D-canvas renderer to port` (correction to the earlier
+     premise: chardata draws its gamut with **Plotly/WebGL** mesh3d/scatter3d). We port its
+     **geometry** (engine-agnostic) and **build the display fresh**, CSP-safe: the 3-D shell on a
+     plain 2-D `<canvas>` (`viz/GamutMesh3D.jsx` — orthographic projection + painter's-sort +
+     flat shading, drag-rotate/zoom, 1..N overlay), the 2-D slice through the app's SVG-only
+     `PlotlyGraph` (`closedPath` + new opt-in `fill`). **No WebGL / no `'unsafe-eval'` / no new dep.**
+   - **Slice derived in JS** (`lib/gamutGeom.js`, `sliceHull`) from the transported mesh
+     (triangle-edge crossings + monotone-chain hull) — deviation from the literal "iccviz emits the
+     slice" spec: instant slider response, guaranteed mesh/slice consistency, minimal WASM surface.
+     The mesh is the reusable iccviz API ([[iccviz-upstream-migration-plan]]).
+   - **Scope (phase 1):** gamut derived from an **AToB LUT table** (same set the Analysis
+     gamut-volume works on) — **matrix/TRC** profiles show "no A2B table" (follow-up: device→PCS via
+     CMM-from-profile). **Pending P1-b sub-step:** remove the (now redundant) gamut-volume column from
+     the **Profile/Analysis** tab so Compare is the *sole* home for gamut — deferred until the Compare
+     gamut is eyeballed on :5173.
 
 *(`SpecSepToTiff` **deferred to the canvas phase** — P1-c: gathers N image nouns → an
 assembly node, a natural node-graph fit, not a phase-1 multi-select-verb fit.)*

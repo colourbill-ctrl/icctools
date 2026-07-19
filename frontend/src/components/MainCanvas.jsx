@@ -8,6 +8,7 @@
 // canvas, canvas phase) are step-1 placeholders.
 import { useCallback, useState } from 'react'
 import ProfileViewer from './ProfileViewer.jsx'
+import ComparePanel from './ComparePanel.jsx'
 import V4DisplayMaker from './V4DisplayMaker.jsx'
 import { POOL_DND_MIME } from './PoolPane.jsx'
 import { useT } from '../i18n.jsx'
@@ -111,7 +112,13 @@ export default function MainCanvas({
             onIccProduced={onIccProduced} onSave={onSave}
           />
         )}
-        {activeTab === 'Compare' && <ComparePanel ids={activeIds} getEntry={getEntry} t={t} />}
+        {activeTab === 'Compare' && (
+          activeIds.length === 0
+            ? <Empty icon="📊"
+                head={t('compare_empty_head') || 'Nothing to compare yet'}
+                sub={t('compare_empty_sub') || 'Drag one or more profiles onto the Compare tab.'} />
+            : <ComparePanel ids={activeIds} getEntry={getEntry} t={t} />
+        )}
         {activeTab === 'Link' && <LinkPanel t={t} getEntry={getEntry} onCreateV4={onCreateV4} />}
       </div>
     </section>
@@ -147,30 +154,6 @@ function ProfilePanel({ entry, t, initialTab, changedTagIds, onXmlChanged, onJso
         onJsonChanged={onJsonChanged}
         onIccProduced={onIccProduced}
       />
-    </div>
-  )
-}
-
-// Step-1 placeholder — gamut views (chardata 3D mesh + 2D slice, driven by
-// IccProfLib/iccviz) land in the P1-b build step; here we confirm the accumulated
-// set so the interaction is exercisable end to end.
-function ComparePanel({ ids, getEntry, t }) {
-  if (!ids.length) {
-    return (
-      <Empty icon="📊"
-        head={t('compare_empty_head') || 'Nothing to compare yet'}
-        sub={t('compare_empty_sub') || 'Drag one or more profiles onto the Compare tab.'} />
-    )
-  }
-  return (
-    <div className={styles.placeholder}>
-      <p className={styles.placeholderHead}>{t('compare_soon') || 'Gamut comparison'}</p>
-      <p className={styles.placeholderSub}>
-        {t('compare_soon_sub') || '3D gamut & 2D slice views are coming here. Accumulated:'}
-      </p>
-      <ul className={styles.placeholderList}>
-        {ids.map((id) => { const e = getEntry(id); return e ? <li key={id}>{e.filename}</li> : null })}
-      </ul>
     </div>
   )
 }

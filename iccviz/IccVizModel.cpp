@@ -1577,6 +1577,133 @@ GamutVolumeResult GamutVolume(CIccProfile* pIcc, icTagSignature aToBTag,
   return r;
 }
 
+// ── Gamut boundary mesh ───────────────────────────────────────────────────────
+// GamutBoundaryMesh — public entry (contract in IccVizModel.hpp). Triangulates the
+// 2-skeleton of the device N-cube through the profile's device→PCS transform into an
+// L*a*b* surface, keeping the per-face grid topology so we can return a drawable
+// shell. The device→Lab decode (icLabFromPcs / icXyzFromPcs+icXYZtoLab) matches
+// GamutVolume; the difference is the transform is built from the PROFILE rather than
+// a named AToB tag, so matrix/TRC profiles (which have no A2B LUT) render too.
+GamutMeshResult GamutBoundaryMesh(CIccProfile* pIcc, icRenderingIntent intent,
+                                  int samplesPerAxis) {
+  GamutMeshResult r;
+  auto fail = [&](const std::string& why) -> GamutMeshResult { r.ok = false; r.error = why; return r; };
+
+  if (!pIcc) return fail("null profile");
+
+  // Device→PCS transform built from the PROFILE (bInput=true = device→PCS side).
+  // icXformLutColor + bUseD2BTags=true pick the colorimetric device→PCS path for the
+  // intent; when the profile has no A2B LUT, Create falls back to its matrix/TRC model
+  // — that is what lets AdobeRGB / sRGB (matrix display profiles) produce a gamut.
+  CIccXform* x = CIccXform::Create(pIcc, /*bInput=*/true, intent, icInterpLinear,
+                                   /*pPcc=*/NULL, icXformLutColor, /*bUseD2BTags=*/true,
+                                   /*pHintManager=*/NULL, /*bOwnsProfile=*/false);
+  if (!x) return fail("could not build device→PCS transform");
+  x->ShareProfile();                                   // we do NOT own pIcc
+  if (x->Begin() != icCmmStatOk) { delete x; return fail("transform Begin failed"); }
+
+  const icColorSpaceSignature srcSp = x->GetSrcSpace();
+  const icColorSpaceSignature dstSp = x->GetDstSpace();
+  const int N     = x->GetNumSrcSamples();
+  const int dstCh = x->GetNumDstSamples();
+  if (isPcsSpace(srcSp))                                { delete x; return fail("tag input is not a device space"); }
+  if (dstSp != icSigLabData && dstSp != icSigXYZData)   { delete x; return fail("tag output is not a PCS"); }
+  if (N < 2 || N > kMaxInkChannels)                     { delete x; return fail("unsupported device channel count"); }
+  if (dstCh < 3)                                        { delete x; return fail("PCS output has < 3 channels"); }
+
+  // Render-oriented grid density: pick S so the whole mesh lands near ~8000 vertices
+  // (a shell dense enough to read, cheap enough to draw + ship), clamped to [6,36].
+  // Vertex count = (#2-faces)·(S+1)², where #2-faces = C(N,2)·2^(N-2). Higher-channel
+  // devices have more faces, so S auto-drops to hold the budget.
+  const long long nFaces = ((long long)N * (N - 1) / 2) * (1LL << (N - 2));  // C(N,2)·2^(N-2)
+  int S = samplesPerAxis;
+  if (S <= 0) {
+    int s = (int)std::floor(std::sqrt(8000.0 / (double)nFaces)) - 1;
+    S = s < 6 ? 6 : (s > 36 ? 36 : s);
+  }
+  if (S < 2) S = 2;
+  // Upper clamp on an explicitly-supplied S (the auto path already caps at 36). This is
+  // defense-in-depth: without it a crafted samplesPerAxis in the millions would overflow
+  // the 64-bit totalVerts below and could wrap to a small positive value that slips under
+  // the 2M ceiling, letting the enumeration loops run effectively unbounded. 1024 is far
+  // above any legitimate density request yet keeps totalVerts (≤ nFaces·1025² ≈ 9e11)
+  // well inside int64, so the ceiling check stays authoritative. (GamutVolume avoids the
+  // wrap differently — its ceiling is evaluated in double.)
+  if (S > 1024) S = 1024;
+  // CWE-400 ceiling: reject a crafted/huge mesh before allocating.
+  const long long vertsPerFace = (long long)(S + 1) * (S + 1);
+  const long long totalVerts   = nFaces * vertsPerFace;
+  if (totalVerts <= 0 || totalVerts > 2000000LL) { delete x; return fail("device boundary too large for mesh"); }
+
+  icStatusCMM st = icCmmStatOk;
+  CIccApplyXform* ap = x->GetNewApply(st);
+  if (!ap || st != icCmmStatOk) { delete ap; delete x; return fail("transform apply init failed"); }
+
+  r.vertices.reserve((std::size_t)totalVerts * 3);
+  r.triangles.reserve((std::size_t)nFaces * S * S * 6);
+  std::vector<icFloatNumber> src(N, 0.0f), dst(dstCh, 0.0f);
+
+  // Enumerate every 2-face of the device N-cube: choose two "free" axes (di<dj) and,
+  // for the remaining N-2 "fixed" axes, every 0/1 corner combination (2^(N-2) of them).
+  // Each 2-face is grid-sampled (S+1)² over its free axes and split into 2 triangles
+  // per quad — mirrors chardata's gamut-wasm buildIccGamutMesh, device→Lab via IccProfLib.
+  int fixedAxes[kMaxInkChannels];
+  for (int di = 0; di < N; ++di) {
+    for (int dj = di + 1; dj < N; ++dj) {
+      int nFixed = 0;
+      for (int d = 0; d < N; ++d) if (d != di && d != dj) fixedAxes[nFixed++] = d;
+      const int combos = 1 << nFixed;                  // 2^(N-2) corners of the fixed axes
+      for (int cmb = 0; cmb < combos; ++cmb) {
+        const int baseV = (int)(r.vertices.size() / 3);
+        // (S+1)² grid over the two free axes; fixed axes held at this corner.
+        for (int iu = 0; iu <= S; ++iu) {
+          for (int iv = 0; iv <= S; ++iv) {
+            for (int d = 0; d < N; ++d) src[d] = 0.0f;
+            src[di] = (icFloatNumber)iu / (icFloatNumber)S;
+            src[dj] = (icFloatNumber)iv / (icFloatNumber)S;
+            for (int f = 0; f < nFixed; ++f) src[fixedAxes[f]] = (cmb >> f) & 1 ? 1.0f : 0.0f;
+            x->Apply(ap, dst.data(), src.data());
+            icFloatNumber v[3] = { dst[0], dst[1], dst[2] };
+            if (dstSp == icSigLabData) {
+              icLabFromPcs(v);                          // internal PCS Lab → human L*a*b*
+            } else {
+              icXyzFromPcs(v);                          // internal PCS XYZ → human XYZ (D50)
+              icFloatNumber labv[3] = { 0, 0, 0 };
+              icXYZtoLab(labv, v, nullptr);             // nullptr white → D50
+              v[0] = labv[0]; v[1] = labv[1]; v[2] = labv[2];
+            }
+            // Keep non-finite vertices in place (as-is) so grid indexing stays valid;
+            // the renderer skips any triangle that references a non-finite vertex.
+            r.vertices.push_back((float)v[0]);
+            r.vertices.push_back((float)v[1]);
+            r.vertices.push_back((float)v[2]);
+          }
+        }
+        // Two triangles per grid quad. Vertex (iu,iv) sits at baseV + iu*(S+1) + iv.
+        const int stride = S + 1;
+        for (int iu = 0; iu < S; ++iu) {
+          for (int iv = 0; iv < S; ++iv) {
+            const int v00 = baseV + iu * stride + iv;
+            const int v01 = v00 + 1;
+            const int v10 = v00 + stride;
+            const int v11 = v10 + 1;
+            r.triangles.push_back(v00); r.triangles.push_back(v01); r.triangles.push_back(v11);
+            r.triangles.push_back(v00); r.triangles.push_back(v11); r.triangles.push_back(v10);
+          }
+        }
+      }
+    }
+  }
+  delete ap;
+  delete x;
+
+  if (r.vertices.size() < 9) return fail("no boundary samples");
+  r.nColorants     = N;
+  r.samplesPerAxis = S;
+  r.ok             = true;
+  return r;
+}
+
 // ── B2A round-trip accuracy ───────────────────────────────────────────────────
 // RoundTripDE — public entry (contract in IccVizModel.hpp). Seeds in-gamut L*a*b*
 // from a device interior grid via A2B, round-trips each Lab through B2A then A2B,

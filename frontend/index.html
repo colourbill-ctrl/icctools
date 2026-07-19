@@ -34,8 +34,18 @@
       <form action="//evil"> and POST data off-origin. Pinning it to 'self' closes
       that exfil path (defence-in-depth alongside the no-innerHTML invariant — see
       hooks/pre-commit, which rejects any innerHTML sink in frontend/src).
+
+      DELIBERATE WIDENING ('unsafe-eval', gamut 3-D, v2.x): the Compare-tab 3-D
+      gamut shell is a Plotly WebGL scene (mesh3d/scatter3d). Plotly's gl path
+      compiles shaders/regl via the Function constructor, which needs
+      'unsafe-eval' in script-src — WebGL itself is not CSP-gated, the eval is.
+      Everything ELSE stays SVG-only (PlotlyGraph, RtHistogram). We accept this to
+      match chardata's gamut display faithfully; the residual exposure is bounded
+      by the same guards as the url= widening above (no innerHTML sink, strict
+      postMessage allowlist, connect-src can already reach https). The WASM is
+      still built DYNAMIC_EXECUTION=0 so embind does not depend on this.
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.google-analytics.com; connect-src 'self' blob: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' blob: https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.google-analytics.com; connect-src 'self' blob: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'" />
 
     <!--
       Anti-clickjacking. `frame-ancestors` is deliberately NOT in the <meta> CSP

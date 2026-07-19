@@ -197,6 +197,20 @@ emscripten::val makeUint8Array(const std::uint8_t* data, std::size_t size) {
   return u8;
 }
 
+// Same copy-off-the-heap pattern for the gamut-mesh geometry: a Float32Array of
+// vertices (L*,a*,b* interleaved) and an Int32Array of triangle indices. Copying
+// (not returning a live view) keeps the arrays valid after the C++ vector frees.
+emscripten::val makeFloat32Array(const float* data, std::size_t size) {
+  emscripten::val f32 = emscripten::val::global("Float32Array").new_(size);
+  if (size) f32.call<void>("set", emscripten::val(emscripten::typed_memory_view(size, data)));
+  return f32;
+}
+emscripten::val makeInt32Array(const std::int32_t* data, std::size_t size) {
+  emscripten::val i32 = emscripten::val::global("Int32Array").new_(size);
+  if (size) i32.call<void>("set", emscripten::val(emscripten::typed_memory_view(size, data)));
+  return i32;
+}
+
 // Non-fatal warnings (tile-count overflow, an out-of-range sqrt, …) raised while
 // a render still succeeded — IccVizModel carries them as DATA; we forward the
 // Warning-severity ones so the UI can show them alongside the plot. (Fatal
@@ -467,6 +481,46 @@ std::string gamutVolume(const std::string& bytes, const std::string& tagSigStr, 
   catch (...) { return json{{"error", "gamutVolume threw an unknown exception"}}.dump(); }
 }
 
+// Gamut boundary MESH for the profile's device→PCS transform at a rendering intent —
+// the drawable surface for the Compare-tab 3-D gamut / 2-D slice (see
+// iccviz::GamutBoundaryMesh). Built from the PROFILE (LUT or matrix/TRC), so it is
+// intent-driven, NOT tag-driven — matrix display profiles (AdobeRGB) render too.
+// Returns an embind object with two typed arrays (vertices Float32, triangles Int32)
+// rather than JSON: the mesh is thousands of numbers, so the typed-array path avoids a
+// large JSON stringify+parse. `steps` ≤0 → auto-pick the grid density.
+emscripten::val gamutMeshImpl(const std::string& bytes, int intent, int steps) {
+  emscripten::val obj = emscripten::val::object();
+  if (bytes.size() > kMaxIccBytes) { obj.set("error", "Profile exceeds size limit"); return obj; }
+  CIccProfile* pIcc = parseCached(bytes);
+  if (!pIcc) { obj.set("error", "Failed to parse ICC profile"); return obj; }
+  if (intent < 0 || intent > 3) intent = 1;   // default: relative colorimetric
+
+  iccviz::GamutMeshResult m =
+      iccviz::GamutBoundaryMesh(pIcc, static_cast<icRenderingIntent>(intent), steps);
+  if (!m.ok) { obj.set("error", m.error); return obj; }
+
+  obj.set("nColorants", m.nColorants);
+  obj.set("samplesPerAxis", m.samplesPerAxis);
+  obj.set("vertices", makeFloat32Array(m.vertices.data(), m.vertices.size()));
+  // std::vector<int> is 32-bit on wasm32, so it aliases the Int32Array element type.
+  obj.set("triangles", makeInt32Array(reinterpret_cast<const std::int32_t*>(m.triangles.data()),
+                                      m.triangles.size()));
+  return obj;
+}
+
+emscripten::val gamutMesh(const std::string& bytes, int intent, int steps) {
+  try { return gamutMeshImpl(bytes, intent, steps); }
+  catch (const std::exception& e) {
+    emscripten::val obj = emscripten::val::object();
+    obj.set("error", std::string("gamutMesh threw: ") + e.what());
+    return obj;
+  } catch (...) {
+    emscripten::val obj = emscripten::val::object();
+    obj.set("error", "gamutMesh threw an unknown exception");
+    return obj;
+  }
+}
+
 // B2A round-trip accuracy (ΔE*ab of Lab → device → Lab) at a rendering intent.
 // intent: 0 perceptual, 1 relative, 2 saturation, 3 absolute (ICC values).
 std::string roundTripDEImpl(const std::string& bytes, int intent) {
@@ -672,6 +726,7 @@ EMSCRIPTEN_BINDINGS(iccplot) {
   emscripten::function("tagEvalInfo", &tagEvalInfo);
   emscripten::function("evaluateTag", &evaluateTag);
   emscripten::function("gamutVolume", &gamutVolume);
+  emscripten::function("gamutMesh", &gamutMesh);
   emscripten::function("roundTripDE", &roundTripDE);
   emscripten::function("roundTripStats", &roundTripStats);
 }

@@ -116,6 +116,35 @@ export async function gamutVolume(bytes, tagSig, intent) {
 }
 
 /**
+ * Gamut boundary MESH for the profile's device→PCS transform at a rendering intent —
+ * the drawable surface behind the Compare-tab 3-D gamut plot and (via sliceHull, JS
+ * side) the 2-D slice. Built from the PROFILE (A2B LUT or matrix/TRC), so it is
+ * intent-driven and works for matrix display profiles (AdobeRGB) too. `intent` is the
+ * ICC value 0 perceptual / 1 relative / 2 saturation / 3 absolute; `steps` ≤0
+ * auto-picks the grid density from the colorant count.
+ *
+ * Returns TYPED ARRAYS (not JSON — the mesh is thousands of numbers):
+ *   { nColorants, samplesPerAxis,
+ *     vertices : Float32Array,   // L*,a*,b* interleaved, 3 per vertex
+ *     triangles: Int32Array }    // index triples into `vertices`, 3 per triangle
+ * The returned arrays are JS-heap copies (independent of the WASM heap), so they
+ * survive later module calls. A triangle may reference a non-finite vertex (a
+ * device point that mapped outside a computable PCS) — the renderer drops those.
+ */
+export async function gamutMesh(bytes, intent, steps = 0) {
+  const mod = await loadModule()
+  let r
+  try { r = mod.gamutMesh(bytes, intent, steps) } catch (e) { throw toError(mod, e) }
+  if (r.error) throw new Error(r.error)
+  return {
+    nColorants: r.nColorants,
+    samplesPerAxis: r.samplesPerAxis,
+    vertices: r.vertices,     // already a JS-side Float32Array (embind .set-copied)
+    triangles: r.triangles,   // already a JS-side Int32Array
+  }
+}
+
+/**
  * Round-trip statistics for ONE rendering intent, covering all four types the
  * Analysis-tab Profile-Statistics table exposes through its type selector. One
  * call returns every type so switching the selector is instant; only changing the

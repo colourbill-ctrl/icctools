@@ -252,6 +252,42 @@ GamutVolumeResult GamutVolume(CIccProfile* pIcc, icTagSignature aToBTag,
                               int samplesPerAxis = 0, double voxelSize = 0.0,
                               int dilate = 0);
 
+// ── Gamut boundary mesh (for the Compare-tab gamut plots) ────────────────────
+// A triangulated gamut-boundary surface in human L*a*b*: the 2-skeleton of the
+// device N-cube (every 2-face grid-sampled at (S+1)² points, each quad split into
+// two triangles), each grid point mapped device→PCS→Lab through the profile's
+// device→PCS transform at `intent`.
+//
+// The transform is built from the PROFILE, not a specific AToB tag: it uses the
+// profile's A2B LUT when present AND falls back to the matrix/TRC model, so
+// matrix/TRC display profiles (AdobeRGB, sRGB, …) get a gamut too — not only
+// LUT profiles. `intent` selects the table / white handling (perceptual, relative,
+// saturation, absolute) exactly as a CMM would.
+//
+// It is the profile-derived boundary (DL-SCOPE1): a UNION of face patches, so it can
+// be non-convex and self-overlapping and is not a closed manifold — good enough to
+// draw a gamut shell / slice, NOT to integrate a signed volume (use GamutVolume for
+// that).
+//
+// `vertices` is flat, 3 floats/vertex (L*, a*, b*); a vertex whose device point mapped
+// to a non-finite Lab is emitted as-is (NaN) so triangle indices stay valid — the
+// caller drops any triangle touching a non-finite vertex. `triangles` is flat, 3
+// int32 indices/triangle into `vertices`. `samplesPerAxis` echoes the S actually used
+// (auto-picked from the colorant count when the caller passes ≤0).
+struct GamutMeshResult {
+  bool               ok = false;
+  std::string        error;
+  int                nColorants     = 0;   // device channels (N)
+  int                samplesPerAxis = 0;   // grid steps per free axis on each 2-face
+  std::vector<float> vertices;             // flat L*,a*,b* (3 per vertex)
+  std::vector<int>   triangles;            // flat index triples (3 per triangle)
+};
+
+// Build the gamut-boundary mesh for the profile's device→PCS transform at `intent`.
+// Pass 0 for samplesPerAxis to auto-pick a render-oriented grid density.
+GamutMeshResult GamutBoundaryMesh(CIccProfile* pIcc, icRenderingIntent intent,
+                                  int samplesPerAxis = 0);
+
 // ── B2A round-trip accuracy ───────────────────────────────────────────────────
 // Round-trip of Lab through the profile: seed in-gamut L*a*b* by sampling the
 // device cube on an interior grid and pushing it through A2B, then run each
