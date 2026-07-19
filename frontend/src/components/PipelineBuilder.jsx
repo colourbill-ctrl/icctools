@@ -768,19 +768,19 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
           <button className="btn-primary" type="button" disabled={!canTransformData} onClick={doTransformData}>
             {busy && dataParsed ? (t('dm_transforming') || 'Transforming…') : (t('dm_transform_data') || 'Transform Data')}
           </button>
-          {/* Invert Transform (iccApplySearch): only meaningful for a 2–3 profile chain,
-              where the last (engine-ordered) stage is inverted via search. The direction
-              selector flips which physical end is inverted; the label states the space
-              the dataset must be in and the device space produced. */}
-          {chain.length >= 2 && chain.length <= 3 && (
-            <div className={styles.invertGroup}>
-              <button className="btn-primary" type="button" disabled={!canInvert} onClick={doInvertData}
-                      title={invPlan.ok
-                        ? (t('dm_invert_hint', { in: invPlan.dataSpace, out: invPlan.outSpace })
-                          || `Data in ${invPlan.dataSpace} → search ${invPlan.outSpace}`)
-                        : ''}>
-                {busy && dataParsed ? (t('dm_inverting') || 'Inverting…') : (t('dm_invert_data') || 'Invert Transform')}
-              </button>
+          {/* Invert Transform (iccApplySearch): the last (engine-ordered) stage is inverted
+              via search. Always shown (like its siblings), disabled off a 2–3 profile chain
+              with a tooltip that says why. The direction selector + note appear once the
+              chain is a valid 2–3 length. */}
+          <div className={styles.invertGroup}>
+            <button className="btn-primary" type="button" disabled={!canInvert} onClick={doInvertData}
+                    title={invPlan.ok
+                      ? (t('dm_invert_hint', { in: invPlan.dataSpace, out: invPlan.outSpace })
+                        || `Data in ${invPlan.dataSpace} → search ${invPlan.outSpace}`)
+                      : (t('dm_invert_need') || 'Invert needs a 2–3 profile chain')}>
+              {busy && dataParsed ? (t('dm_inverting') || 'Inverting…') : (t('dm_invert_data') || 'Invert Transform')}
+            </button>
+            {chain.length >= 2 && chain.length <= 3 && (
               <label className={styles.invertDir}>
                 <span>{t('dm_invert_which') || 'Invert'}</span>
                 <select value={invertReverse ? '1' : '0'} onChange={(e) => setInvertReverse(e.target.value === '1')}
@@ -789,8 +789,8 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
                   <option value="1">{t('dm_invert_first') || 'first stage'}</option>
                 </select>
               </label>
-            </div>
-          )}
+            )}
+          </div>
         </div>
         {chain.length >= 2 && chain.length <= 3 && invPlan.ok && (
           <p className={styles.invertNote}>

@@ -188,6 +188,7 @@ export const I18N = {
     dm_invert_last: 'last stage',
     dm_invert_first: 'first stage',
     dm_invert_hint: 'Data in {in} → search {out}',
+    dm_invert_need: 'Invert needs a 2–3 profile chain',
     dm_invert_note: 'The dataset must be {in}; the inverse search produces {out} plus a per-patch invertibility cost.',
     dm_cost: 'ΔE cost',
     ss_title: 'Assemble spectral TIFF',
