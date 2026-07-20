@@ -334,6 +334,15 @@ export default function App() {
     return results
   }, [])
 
+  // Add a profile EXTRACTED from a dropped image's embedded ICC to the pool (Pipeline
+  // builder, G9). Same addIccEntry tail as any load, so the extracted profile becomes a
+  // normal pool entry the caller can place at the head of the chain. Returns the new id.
+  const addExtractedProfile = useCallback(async (name, bytes) => {
+    if (!bytes || !bytes.length) throw new Error('No embedded profile to extract.')
+    if (bytes.length > MAX_ICC_BYTES) throw new Error(`Embedded profile too large (> ${MAX_ICC_BYTES / (1024 * 1024)} MB).`)
+    return addIccEntry(name, bytes)
+  }, [addIccEntry])
+
   // Spectral assembler (SpecSep tab) — gather N single-channel images → one multi-
   // channel TIFF, downloaded. Also engine-pending.
   const assembleSpectral = useCallback(async (files) => {
@@ -548,6 +557,7 @@ export default function App() {
             onCreateV4={createV4Display}
             onBuildLink={buildDeviceLink}
             onApplyImages={applyImagesThroughChain}
+            onAddProfile={addExtractedProfile}
             onAssembleSpec={assembleSpectral}
             pipeline={pipeline}
             setPipeline={setPipeline}

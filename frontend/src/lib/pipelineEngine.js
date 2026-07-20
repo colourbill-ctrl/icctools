@@ -58,10 +58,16 @@ function toError(mod, e) {
   return e instanceof Error ? e : new Error(String(e))
 }
 
+// CMM interpolation selector (iccApplyProfiles' global `interpolation` arg, G5). The
+// C++ side maps 0→linear, anything-else→tetrahedral (profiletool's historical default).
+export const INTERP = { linear: 0, tetrahedral: 1 }
+const interpNum = (v) => (v === INTERP.linear || v === 'linear') ? 0 : 1
+
 /**
  * Bake an ordered profile chain into a DeviceLink profile.
  * @param {Uint8Array[]} chainBytes ordered profile byte buffers (first → last)
- * @param {{intent?: number, grid?: number}} [opts] intent 0-3 (default 1=relative), grid 0=auto
+ * @param {{intent?: number, grid?: number, interp?: number|string}} [opts] intent 0-3
+ *   (default 1=relative), grid 0=auto, interp linear|tetrahedral (default tetrahedral)
  * @returns {Promise<Uint8Array>} the DeviceLink .icc bytes
  */
 export async function buildLink(chainBytes, opts = {}) {
@@ -72,11 +78,29 @@ export async function buildLink(chainBytes, opts = {}) {
   const intents = opts.intents ?? 1        // array (per-profile) or scalar; default relative
   const firstInput = opts.firstInput ?? true   // head-transform direction (true = device→PCS)
   const grid = Number.isInteger(opts.grid) ? opts.grid : 0         // 0 = auto by channel count
+  const interp = interpNum(opts.interp)
   let out
-  try { out = mod.buildLink(chainBytes, intents, firstInput, grid) }
+  try { out = mod.buildLink(chainBytes, intents, firstInput, grid, interp) }
   catch (e) { throw toError(mod, e) }
   if (!out || !out.length) throw new Error('The DeviceLink engine returned no profile.')
   return out instanceof Uint8Array ? out : new Uint8Array(out)
+}
+
+/**
+ * Per-profile extended-intent availability for the apply intent menus (G6). Reports the
+ * tag/version facts the UI gates on: base intents 0-3 are always offered; 10-13 (no
+ * D2Bx/B2Dx) need `hasD2Bx`; 40-42 (BPC) need `hasLut`.
+ * @param {Uint8Array} bytes one profile
+ * @returns {Promise<{ok:boolean, versionMajor?:number, v5?:boolean, hasD2Bx?:boolean,
+ *   hasLut?:boolean, isLink?:boolean, deviceClass?:string, error?:string}>}
+ */
+export async function profileApplyCaps(bytes) {
+  const mod = await loadConstruct()
+  if (typeof mod.profileApplyCaps !== 'function') return { ok: false, unavailable: true }
+  try {
+    const r = mod.profileApplyCaps(bytes)
+    return r || { ok: false }
+  } catch (e) { return { ok: false, error: toError(mod, e).message } }
 }
 
 // icRenderingIntent enum (ICC) — the value picked per transform (and the global
@@ -121,12 +145,13 @@ export async function transformData(chainBytes, samples, nSrc, opts = {}) {
   if (src.length % nSrc !== 0) throw new Error('Data value count is not a multiple of the channel count.')
   const intents = opts.intents ?? 1
   const firstInput = opts.firstInput ?? true
+  const interp = interpNum(opts.interp)
   const encNum = (e, dflt) =>
     Number.isInteger(e) ? e : e in ENCODING ? ENCODING[e] : dflt
   const srcEnc = encNum(opts.srcEncoding, ENCODING.unitFloat)
   const dstEnc = encNum(opts.dstEncoding, ENCODING.value)
   let res
-  try { res = mod.applyValues(chainBytes, new Uint8Array(src.buffer), nSrc, intents, firstInput, srcEnc, dstEnc) }
+  try { res = mod.applyValues(chainBytes, new Uint8Array(src.buffer), nSrc, intents, firstInput, srcEnc, dstEnc, interp) }
   catch (e) { throw toError(mod, e) }
   if (!res || !res.ok) throw new Error(res?.error || 'Data transform failed.')
   const values = res.values instanceof Float32Array ? res.values : new Float32Array(res.values)
@@ -266,14 +291,14 @@ export async function spectralToXYZ(reflRows, opts) {
  * @returns {Promise<{ok:boolean, error?:string, failedStage?:number, empty?:boolean,
  *   sourceSpace?:string, destSpace?:string, sourceSamples?:number, destSamples?:number}>}
  */
-export async function chainInfo(chainBytes, intents = 1, firstInput = true) {
+export async function chainInfo(chainBytes, intents = 1, firstInput = true, interp = INTERP.tetrahedral) {
   const mod = await loadConstruct()
   if (typeof mod.chainInfo !== 'function') {
     // Older WASM without the export — don't block the UI, just skip validation.
     return { ok: true, unavailable: true }
   }
   try {
-    const r = mod.chainInfo(chainBytes, intents, firstInput)
+    const r = mod.chainInfo(chainBytes, intents, firstInput, interpNum(interp))
     return r || { ok: false, error: 'No result from chain analysis.' }
   } catch (e) {
     return { ok: false, error: toError(mod, e).message }
@@ -281,12 +306,16 @@ export async function chainInfo(chainBytes, intents = 1, firstInput = true) {
 }
 
 /**
- * Run one raster image through the chain. Decode happens in the browser (PNG/JPEG →
- * RGB); the CMM runs in WASM; the result is re-encoded (PNG for RGB/Gray, TIFF for
- * CMYK/multichannel). Images are never stored — the caller downloads the result.
+ * Run one raster image through the chain. Decode happens via the iccimage codecs
+ * (libtiff/libpng/libjpeg); the CMM runs in WASM; the result is re-encoded. The output
+ * options mirror iccApplyProfiles' destination knobs (G1-G5): sample encoding, TIFF
+ * compression, planar layout, ICC embedding, and CMM interpolation. Images are never
+ * stored — the caller downloads the result.
  * @param {Uint8Array[]} chainBytes ordered profile byte buffers
  * @param {File} file the input image
- * @param {{intent?: number}} [opts]
+ * @param {{intents?:number|number[], firstInput?:boolean, interp?:number|string,
+ *   outEncoding?:'same'|'8'|'16'|'float', compression?:'none'|'lzw'|'zip',
+ *   planar?:'contig'|'separate', embedIcc?:boolean}} [opts]
  * @returns {Promise<{bytes: Uint8Array, filename: string}>}
  */
 // Pixels processed per chunk. Bounds WASM memory: a chunk is nSrc/nDst × this × 4
@@ -309,17 +338,33 @@ export async function applyToImage(chainBytes, file, opts = {}) {
   const nPixels = img.width * img.height
   const intents = opts.intents ?? 1
   const firstInput = opts.firstInput ?? true
+  const interp = interpNum(opts.interp)
+
+  // Destination sample encoding (G1). 'same' follows the decoded source depth (8/16-bit
+  // integer — float source decode is a separate follow-up). '8'/'16' are unsigned
+  // integer; 'float' is 32-bit IEEE.
+  const srcBits = img.bitDepth === 16 ? 16 : 8
+  const enc = opts.outEncoding || 'same'
+  let outBits, isFloat
+  if (enc === 'float') { outBits = 32; isFloat = true }
+  else if (enc === '16') { outBits = 16; isFloat = false }
+  else if (enc === '8') { outBits = 8; isFloat = false }
+  else { outBits = srcBits; isFloat = false }                  // 'same'
 
   // Build the CMM once; then stream the raster through it in bounded chunks.
   let begin
-  try { begin = mod.imageApplyBegin(chainBytes, nSrc, intents, firstInput) }
+  try { begin = mod.imageApplyBegin(chainBytes, nSrc, intents, firstInput, interp) }
   catch (e) { throw toError(mod, e) }
   if (!begin || !begin.ok) throw new Error(begin?.error || 'Image processing failed.')
   const nDst = begin.nDst
 
+  // Output raster: one contiguous buffer sized by the chosen encoding, with a typed
+  // view for packing. 8-bit → Uint8, 16-bit → Uint16 (native LE), float → Float32.
+  const outBuf = new Uint8Array(nPixels * nDst * (outBits / 8))
+  const outU16 = outBits === 16 ? new Uint16Array(outBuf.buffer) : null
+  const outF32 = isFloat ? new Float32Array(outBuf.buffer) : null
   const s = img.samples
   const is16 = img.bitDepth === 16
-  const out8 = new Uint8Array(nPixels * nDst)
   try {
     for (let p0 = 0; p0 < nPixels; p0 += IMG_CHUNK_PIXELS) {
       const cnt = Math.min(IMG_CHUNK_PIXELS, nPixels - p0)
@@ -335,26 +380,48 @@ export async function applyToImage(chainBytes, file, opts = {}) {
       let res
       try { res = mod.imageApplyChunk(new Uint8Array(chunk.buffer)) }   // eslint-disable-line no-await-in-loop
       catch (e) { throw toError(mod, e) }
-      const dstF = res.pixels
+      const dstF = res.pixels                                  // [0,1] normalized device floats
       const ob = p0 * nDst
-      for (let k = 0; k < cnt * nDst; k++) {
-        const v = dstF[k]
-        out8[ob + k] = (v <= 0 || Number.isNaN(v)) ? 0 : v >= 1 ? 255 : Math.round(v * 255)
+      const kn = cnt * nDst
+      if (isFloat) {
+        // Float output keeps the CMM's normalized [0,1] device values verbatim (NaN → 0).
+        for (let k = 0; k < kn; k++) { const v = dstF[k]; outF32[ob + k] = Number.isNaN(v) ? 0 : v }
+      } else if (outU16) {
+        for (let k = 0; k < kn; k++) { const v = dstF[k]; outU16[ob + k] = (v <= 0 || Number.isNaN(v)) ? 0 : v >= 1 ? 65535 : Math.round(v * 65535) }
+      } else {
+        for (let k = 0; k < kn; k++) { const v = dstF[k]; outBuf[ob + k] = (v <= 0 || Number.isNaN(v)) ? 0 : v >= 1 ? 255 : Math.round(v * 255) }
       }
     }
   } finally {
     try { mod.imageApplyEnd() } catch { /* ignore */ }
   }
 
-  // Container by destination channel count: 1/3 → PNG (lossless); 4 → separated TIFF
-  // (CMYK); other → minisblack+extra TIFF.
+  // Container choice. Float, separated planes, and explicit LZW/ZIP are TIFF-only knobs,
+  // so any of them forces TIFF; likewise 4+ channels (CMYK / multichannel). Otherwise the
+  // friendly default stays PNG for 1/3-channel 8/16-bit output.
+  const planar = opts.planar === 'separate' ? 'separate' : 'contig'
+  const compChosen = opts.compression && opts.compression !== 'none' ? opts.compression : null
+  const forceTiff = isFloat || planar === 'separate' || !!compChosen ||
+    nDst === 2 || nDst >= 4
   let format, photometric
-  if (nDst === 1) { format = 'png'; photometric = 1 }
-  else if (nDst === 3) { format = 'png'; photometric = 2 }
-  else if (nDst === 4) { format = 'tiff'; photometric = 5 }
-  else { format = 'tiff'; photometric = 1 }
+  if (!forceTiff && (nDst === 1 || nDst === 3)) {
+    format = 'png'; photometric = nDst === 1 ? 1 : 2
+  } else {
+    format = 'tiff'
+    photometric = nDst === 1 ? 1 : nDst === 3 ? 2 : nDst === 4 ? 5 : 1
+  }
+  // Embed the chain's LAST profile (the output-space ICC), matching the CLI's "embed last
+  // ICC" (G4). PNG (iCCP) and TIFF both carry it; JPEG isn't produced by this path.
+  const profile = opts.embedIcc ? chainBytes[chainBytes.length - 1] : undefined
+  // TIFF compression: explicit choice, else the historical LZW default. PNG ignores it.
+  const compression = format === 'tiff'
+    ? (opts.compression || 'lzw')
+    : undefined
   const outBytes = await encodeImage({
-    format, width: img.width, height: img.height, channels: nDst, bitDepth: 8, photometric, samples: out8,
+    format, width: img.width, height: img.height, channels: nDst,
+    bitDepth: outBits, photometric, samples: outBuf, profile,
+    sampleFormat: isFloat ? 'float' : 'uint',
+    compression, planar: format === 'tiff' ? planar : undefined,
   })
   const ext = format === 'tiff' ? 'tif' : format
   const stem = (file.name || 'image').replace(/\.[^.]+$/, '')

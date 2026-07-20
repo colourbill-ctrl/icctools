@@ -65,6 +65,7 @@
 <li><strong>Browse the tag directory</strong> — every tag with its signature, type, byte offset, size, and pad bytes. Click any tag to expand a full type-specific description (the same output as the iccDEV <code>wxProfileDump</code> "Describe" view), and — for tags that carry one — an inline <strong>visualization</strong>: tone-response curves, chromaticity charts, CLUT and gamut images, named-colour scatters, plus a single-point <strong>transform evaluator</strong>.</li>
 <li><strong>Validate</strong> — run the ICC Profile Assessment Working Group checklist (Security / Conformance / Quality), each check with a verdict, filterable by category.</li>
 <li><strong>Round-trip edit</strong> — convert the profile to XML or JSON, edit it in the built-in code editor, convert back to ICC, and re-validate. The save button downloads the edited binary.</li>
+<li><strong>Chain profiles</strong> — in the <strong>Combine</strong> tab, drag pooled profiles into an ordered chain, then bake it into a <strong>DeviceLink</strong>, <strong>transform an image</strong> through it (with full control over output encoding, compression, planar layout and ICC embedding), or <strong>transform a colour dataset</strong>.</li>
 <li><strong>Launch from chardata</strong> — open a profile that's loaded in <a href="https://chardata.colourbill.com/">chardata</a> directly here, with the bytes handed over in-browser via <code>postMessage</code>.</li>
 <li><strong>Launch with a URL</strong> — open a link that points the tool at a profile hosted on the web and, optionally, the tab to land on (e.g. <code>…/profiletool#url=…&tab=VAL</code>).</li>
 </ul>
@@ -85,10 +86,21 @@
           <li><a href="#3-6-json">JSON</a></li>
         </ol>
       </li>
-      <li><a href="#4-round-trip-editing">Round-trip editing</a></li>
-      <li><a href="#5-launching-from-chardata">Launching from chardata</a></li>
-      <li><a href="#6-mobile">Mobile</a></li>
-      <li><a href="#7-limits-and-security">Limits and security</a></li>
+      <li><a href="#4-combine-tab">Combine tab</a>
+        <ol>
+          <li><a href="#4-1-building-a-chain">Building a chain</a></li>
+          <li><a href="#4-2-make-devicelink">Make DeviceLink</a></li>
+          <li><a href="#4-3-transform-image">Transform Image</a></li>
+          <li><a href="#4-4-transform-data">Transform Data</a></li>
+          <li><a href="#4-5-v4-display-maker">V4 Display maker</a></li>
+          <li><a href="#4-6-compare-and-spectral-tabs">Compare and Spectral tabs</a></li>
+        </ol>
+      </li>
+      <li><a href="#5-round-trip-editing">Round-trip editing</a></li>
+      <li><a href="#6-launching-from-chardata">Launching from chardata</a></li>
+      <li><a href="#7-launching-with-a-url">Launching with a URL</a></li>
+      <li><a href="#8-mobile">Mobile</a></li>
+      <li><a href="#9-limits-and-security">Limits and security</a></li>
     </ol>
   </nav>
 
@@ -291,7 +303,90 @@ body.dark .diag {
 <h3 id="3-6-json">3.6 JSON</h3>
 <p>Same idea as the XML tab but using a JSON representation of the profile produced by the validator wrapper (<code>json-wrapper.cpp</code>). Edit, click <strong>Convert to ICC</strong>, save. The JSON form is more compact and easier to script against; the XML form is more familiar if you've used the iccDEV CLI tools.</p>
 <hr>
-<h2 id="4-round-trip-editing">4. Round-trip editing</h2>
+<h2 id="4-combine-tab">4. Combine tab</h2>
+
+<svg xmlns="http://www.w3.org/2000/svg" class="diag" viewBox="0 0 780 452"
+  style="width:100%;max-width:780px;display:block;margin:20px 0;border-radius:8px;overflow:visible;">
+
+<style>
+.diag {
+  --bg:#f0f2f5; --pnl:#fff; --pnl-bd:#ccd6e0; --hd:#e8edf2; --hd-bd:#c0ccd8;
+  --sec:#f5f6f8; --sec-bd:#dde4ec; --btn:#e8edf2; --btn-bd:#bbb;
+  --act:#4a90e2; --act2:#2a6ab5; --red:#e24a4a; --amber:#d49930; --green:#27ae60;
+  --tx:#333; --tx2:#555; --tx3:#888; --txW:#fff; --txA:#1a5a8a;
+  --ln:#dde4ec;
+}
+body.dark .diag {
+    --bg:#1a1c1f; --pnl:#22262e; --pnl-bd:#3a4048; --hd:#252930; --hd-bd:#3a4048;
+    --sec:#1e2128; --sec-bd:#333a44; --btn:#252930; --btn-bd:#444;
+    --act:#2a5a90; --act2:#1f4070; --red:#8a2a2a; --amber:#7a5418; --green:#1f6a3a;
+    --tx:#c8cdd4; --tx2:#9aa0a8; --tx3:#555e6a; --txW:#c8cdd4; --txA:#7ab8e8;
+    --ln:#2e3440;
+}
+@media(prefers-color-scheme:dark){
+  body:not(.light) .diag {
+    --bg:#1a1c1f; --pnl:#22262e; --pnl-bd:#3a4048; --hd:#252930; --hd-bd:#3a4048;
+    --sec:#1e2128; --sec-bd:#333a44; --btn:#252930; --btn-bd:#444;
+    --act:#2a5a90; --act2:#1f4070; --red:#8a2a2a; --amber:#7a5418; --green:#1f6a3a;
+    --tx:#c8cdd4; --tx2:#9aa0a8; --tx3:#555e6a; --txW:#c8cdd4; --txA:#7ab8e8;
+    --ln:#2e3440;
+  }
+}
+.diag rect.bg    { fill:var(--bg); }
+.diag rect.pnl   { fill:var(--pnl);  stroke:var(--pnl-bd); stroke-width:1.5; }
+.diag rect.hd    { fill:var(--hd);   stroke:var(--hd-bd);  stroke-width:1; }
+.diag rect.sec   { fill:var(--sec);  stroke:var(--sec-bd); stroke-width:1; }
+.diag rect.btn   { fill:var(--btn);  stroke:var(--btn-bd); stroke-width:1; }
+.diag rect.act   { fill:var(--act);  stroke:var(--act2);   stroke-width:1; }
+.diag rect.red   { fill:var(--red);  stroke:#a03030;       stroke-width:1; }
+.diag rect.amber { fill:var(--amber);stroke:#a07418;       stroke-width:1; }
+.diag rect.green { fill:var(--green);stroke:#1f7a44;       stroke-width:1; }
+.diag rect.lnbd  { fill:none; stroke:var(--ln); stroke-width:1; }
+.diag line.div   { stroke:var(--ln); stroke-width:1; }
+.diag text       { font-family:Arial,sans-serif; font-size:11px; fill:var(--tx); }
+.diag text.tT    { font-size:13px; font-weight:bold; fill:var(--txA); }
+.diag text.tB    { font-weight:bold; }
+.diag text.t2    { fill:var(--tx2); }
+.diag text.t3    { fill:var(--tx3); font-size:10px; }
+.diag text.tW    { fill:var(--txW); }
+.diag text.tA    { fill:var(--txA); font-weight:bold; }
+.diag text.mono  { font-family:ui-monospace,Menlo,Consolas,monospace; }
+</style>
+<rect x="0" y="0" width="780" height="452" rx="0" class="bg"/><rect x="16" y="12" width="150" height="428" rx="8" class="pnl"/><rect x="16" y="12" width="150" height="26" rx="8" class="hd"/><text x="28" y="29" text-anchor="start" class="tB">Profiles</text><rect x="26" y="48" width="130" height="28" rx="5" class="sec"/><text x="36" y="66" text-anchor="start" class="t2 mono">sRGB.icc</text><rect x="26" y="82" width="130" height="28" rx="5" class="sec"/><text x="36" y="100" text-anchor="start" class="t2 mono">Coated.icc</text><text x="26" y="132" text-anchor="start" class="t3">Drag into the chain →</text><rect x="186" y="12" width="578" height="428" rx="8" class="pnl"/><text x="202" y="32" text-anchor="start" class="tT">Combine — Link Pipeline</text><text x="202" y="48" text-anchor="start" class="t3">Chain profiles, then make a DeviceLink or transform an image / dataset.</text><line x1="202" y1="56" x2="748" y2="56" class="div"/><rect x="202" y="64" width="270" height="32" rx="6" class="sec"/><text x="214" y="84" text-anchor="start" class="t2">🖼  Drop an image (TIFF/PNG/JPEG)</text><rect x="482" y="64" width="266" height="32" rx="6" class="sec"/><text x="494" y="84" text-anchor="start" class="t2">🔢  Drop a dataset (CGATS/CSV/CxF)</text><text x="202" y="116" text-anchor="start" class="t3">Rendering intent (all)</text><rect x="336" y="104" width="150" height="18" rx="4" class="btn"/><text x="342" y="116" text-anchor="start" class="t2">Relative Colorimetric</text><rect x="202" y="130" width="546" height="38" rx="6" class="sec"/><text x="216" y="153" text-anchor="start" class="t3">⠿</text><rect x="230" y="141" width="16" height="16" rx="4" class="act"/><text x="238" y="153" text-anchor="middle" class="tW tB">1</text><text x="256" y="153" text-anchor="start" class="t2 mono">sRGB.icc</text><text x="614" y="153" text-anchor="start" class="t3">RGB → Lab</text><rect x="706" y="140" width="42" height="18" rx="4" class="btn"/><text x="727" y="153" text-anchor="middle" class="t2">Rel</text><line x1="238" y1="168" x2="238" y2="180" stroke="var(--ln)" stroke-width="2"/><rect x="451" y="170" width="48" height="14" rx="7" class="lnbd"/><text x="475" y="181" text-anchor="middle" class="t3">Lab</text><rect x="202" y="184" width="546" height="38" rx="6" class="sec"/><text x="216" y="207" text-anchor="start" class="t3">⠿</text><rect x="230" y="195" width="16" height="16" rx="4" class="act"/><text x="238" y="207" text-anchor="middle" class="tW tB">2</text><text x="256" y="207" text-anchor="start" class="t2 mono">Coated.icc</text><text x="614" y="207" text-anchor="start" class="t3">Lab → CMYK</text><rect x="706" y="194" width="42" height="18" rx="4" class="btn"/><text x="727" y="207" text-anchor="middle" class="t2">Perc</text><text x="202" y="244" text-anchor="start" class="t3">Chain:</text><text x="244" y="244" text-anchor="start" class="tA">RGB → CMYK</text><rect x="202" y="256" width="124" height="24" rx="5" class="act"/><text x="264" y="272" text-anchor="middle" class="tW tB">Make DeviceLink</text><rect x="334" y="256" width="124" height="24" rx="5" class="act"/><text x="396" y="272" text-anchor="middle" class="tW tB">Transform Image</text><rect x="466" y="256" width="124" height="24" rx="5" class="act"/><text x="528" y="272" text-anchor="middle" class="tW tB">Transform Data</text><rect x="202" y="296" width="546" height="96" rx="6" class="sec"/><text x="214" y="314" text-anchor="start" class="tB">Image output options</text><text x="214" y="330" text-anchor="start" class="t3">Encoding</text><rect x="214" y="336" width="96" height="16" rx="4" class="btn"/><text x="262" y="348" text-anchor="middle" class="t2">Same as source</text><text x="326" y="330" text-anchor="start" class="t3">Compression</text><rect x="326" y="336" width="96" height="16" rx="4" class="btn"/><text x="374" y="348" text-anchor="middle" class="t2">None</text><text x="438" y="330" text-anchor="start" class="t3">Planar</text><rect x="438" y="336" width="96" height="16" rx="4" class="btn"/><text x="486" y="348" text-anchor="middle" class="t2">Composite</text><text x="214" y="366" text-anchor="start" class="t3">CMM interp.</text><rect x="214" y="372" width="96" height="16" rx="4" class="btn"/><text x="262" y="384" text-anchor="middle" class="t2">Tetrahedral</text><text x="326" y="366" text-anchor="start" class="t3">Embed ICC</text><rect x="326" y="372" width="96" height="16" rx="4" class="btn"/><text x="374" y="384" text-anchor="middle" class="t2">☑ yes</text><line x1="727" y1="138" x2="644" y2="118" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="644" y="115" text-anchor="end" class="t3">Per-stage intent</text><line x1="624" y1="300" x2="594" y2="286" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="594" y="283" text-anchor="end" class="t3">iccApplyProfiles output knobs</text>
+</svg><p>profiletool keeps every loaded profile in a <strong>Profile Pool</strong> on the left. Across the top are four tabs — <strong>Profile</strong> (the single-profile viewer above), <strong>Compare</strong>, <strong>Combine</strong>, and <strong>Spectral</strong>. The <strong>Combine</strong> tab is where you chain profiles together and put them to work: build a <strong>DeviceLink</strong>, <strong>transform an image</strong>, or <strong>transform a colour dataset</strong> through the chain.</p>
+<h3 id="4-1-building-a-chain">4.1 Building a chain</h3>
+<p>Drag one or more profiles from the pool into the Combine card to add them to the chain, in order. The chain is a <strong>vertical stack</strong>: the source is at the top, the sink at the bottom. Each profile contributes <strong>one transform</strong>, and the tool shows the colour space entering and leaving it (e.g. <code>RGB → Lab</code>), with the <strong>connecting space</strong> labelled on the line between stages. The engine validates the whole chain live and reports the end-to-end flow (e.g. <em>Chain: RGB → CMYK</em>) or explains, per stage, where it fails to connect.</p>
+<ul>
+<li><strong>Reorder</strong> a stage by dragging its grip (<code>⠿</code>) or with the ▲ / ▼ buttons; remove one with ×.</li>
+<li><strong>Flip direction</strong> — the head transform's ⇅ button reverses the chain's direction, rippling through the following stages.</li>
+<li><strong>Rendering intent</strong> — pick one for the whole chain with <em>Rendering intent (all)</em>, or override any single stage with its own listbox. Hover either control for a description of the selected intent. Beyond the four base intents, a profile that carries the necessary tables also offers the <em>no D2Bx/B2Dx</em> and <em>+ BPC</em> (black-point compensation) variants.</li>
+</ul>
+<h3 id="4-2-make-devicelink">4.2 Make DeviceLink</h3>
+<p>Bakes the whole chain into a single <strong>DeviceLink</strong> profile (an in-browser port of iccDEV's <code>iccApplyToLink</code>). Name it and click <strong>Make DeviceLink</strong>; the result lands in the pool and the Combine accumulator like any other profile, ready to inspect on the Profile tab or reuse in another chain.</p>
+<h3 id="4-3-transform-image">4.3 Transform Image</h3>
+<p>Drop one raster image (TIFF, PNG or JPEG) into the image slot and click <strong>Transform Image</strong> to run it through the chain (an in-browser port of <code>iccApplyProfiles</code>). The image is validated by a header-only probe first — its colour space must match the chain's input. The result <strong>downloads</strong>; images are never stored in the pool.</p>
+<p>When a valid image is loaded, an <strong>Image output options</strong> panel appears with the destination knobs that mirror the <code>iccApplyProfiles</code> CLI:</p>
+<ul>
+<li><strong>Encoding</strong> — <em>Same as source</em>, 8-bit, 16-bit, or <strong>Float (32-bit)</strong>.</li>
+<li><strong>Compression</strong> — None, <strong>LZW</strong>, or <strong>ZIP</strong> (Deflate).</li>
+<li><strong>Planar</strong> — <strong>Composite</strong> (chunky) or <strong>Separated</strong> planes.</li>
+<li><strong>CMM interpolation</strong> — <strong>Tetrahedral</strong> or <strong>Linear</strong>.</li>
+<li><strong>Embed ICC</strong> — tag the output with the chain's last (output-space) profile.</li>
+</ul>
+<p>The friendly default keeps RGB/Gray output as a PNG; choosing a TIFF-only knob (float, LZW/ZIP, or separated planes) switches the container to TIFF.</p>
+<div class="note">
+<strong>Embedded profiles:</strong> if the dropped image carries its own embedded ICC profile, a banner offers to <strong>extract</strong> it — the profile is added to the pool and placed at the head of the chain (its source space) in one click.
+</div>
+<h3 id="4-4-transform-data">4.4 Transform Data</h3>
+<p>Drop a colour dataset (CGATS/IT8, CSV, CxF, or JSON) into the data slot and click <strong>Transform Data</strong> to run every patch through the chain (the <code>iccApplyNamedCmm</code> equivalent). The tool reads the dataset's kinds (device / Lab / XYZ / spectral) and feeds whichever the chain's input needs; a <strong>spectral</strong> input is converted to colorimetry with iccDEV's canonical calculator, using the <strong>Observer</strong> and <strong>Illuminant</strong> you choose. Duplicate patches can be filtered (median or mean). The result opens in a table you can <strong>Save</strong> as CSV.</p>
+<h3 id="4-5-v4-display-maker">4.5 V4 Display maker</h3>
+<p>Above the Link Pipeline, the <strong>V4 Display Maker</strong> card builds a v4.3 matrix/TRC display profile from a V5 display profile plus a V5 observer profile — drop one into each role slot and click <strong>Create</strong>. The result joins the pool.</p>
+<h3 id="4-6-compare-and-spectral-tabs">4.6 Compare and Spectral tabs</h3>
+<p>The <strong>Compare</strong> tab overlays the gamut boundaries of two or more pooled profiles — a 3-D shell plus a 2-D lightness slice — to see where they differ. The <strong>Spectral</strong> tab assembles a set of single-channel spectral images (dropped in channel order) into one multi-channel TIFF (<code>iccSpecSepToTiff</code>).</p>
+<hr>
+<h2 id="5-round-trip-editing">5. Round-trip editing</h2>
 <p>Both the XML and JSON tabs can write the profile back to ICC binary. The typical workflow:</p>
 <p>
 1. <strong>Load</strong> an ICC profile.
@@ -312,7 +407,7 @@ body.dark .diag {
 </div>
 <p>The Tags tab highlights any tag whose bytes differ from the original load, so it's easy to see what your edits changed.</p>
 <hr>
-<h2 id="5-launching-from-chardata">5. Launching from chardata</h2>
+<h2 id="6-launching-from-chardata">6. Launching from chardata</h2>
 <p>In <strong>chardata</strong>, after loading an ICC profile, click <strong>Display File</strong> to open the in-page viewer, then click <strong>Launch editor</strong>. A new tab opens here with <code>?source=chardata</code> in the URL.</p>
 <p>The handover works entirely in-browser:</p>
 <p>
@@ -324,7 +419,7 @@ body.dark .diag {
 </p>
 <p>No upload, no server round-trip. The flow is one-way — edits made here are saved by clicking <strong>Save ICC profile</strong>, not handed back to chardata.</p>
 <hr>
-<h2 id="6-launching-with-a-url">6. Launching with a URL</h2>
+<h2 id="7-launching-with-a-url">7. Launching with a URL</h2>
 <p>You can open the tool with a link that names a profile to load — and the tab to land on — using a <strong>URL fragment</strong> (the part after <code>#</code>):</p>
 <p>
 ```
@@ -364,7 +459,7 @@ https://chardata.colourbill.com/profiletool#url=https://example.org/profiles/sRG
 <strong>Requirements for <code>url=</code>:</strong> the profile must be served over <strong>HTTPS</strong>, and the hosting server must allow cross-origin reads (a permissive <code>Access-Control-Allow-Origin</code> / CORS header). If either is missing the browser blocks the download and the tool shows a fetch error. If the profile URL itself contains <code>&</code> or <code>#</code> (its own query string), percent-encode the whole <code>url=</code> value so those characters don't terminate the fragment early.
 </div>
 <hr>
-<h2 id="7-mobile">7. Mobile</h2>
+<h2 id="8-mobile">8. Mobile</h2>
 <p>On screens narrower than 700 px:</p>
 <ul>
 <li>The Settings panel collapses into a slide-in drawer from the right.</li>
@@ -377,7 +472,7 @@ https://chardata.colourbill.com/profiletool#url=https://example.org/profiles/sRG
 </ul>
 <p>All features are available; the layout adapts to the smaller screen.</p>
 <hr>
-<h2 id="8-limits-and-security">8. Limits and security</h2>
+<h2 id="9-limits-and-security">9. Limits and security</h2>
 <p>profiletool makes no network requests after the initial page load. The validator, the XML converter, and the JSON converter are all WebAssembly compiled from iccDEV C++ sources and run entirely client-side.</p>
 <table><thead>
 <tr><th>Limit</th><th>Where</th><th>Notes</th></tr></thead><tbody>

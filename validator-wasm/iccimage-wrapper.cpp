@@ -651,9 +651,18 @@ emscripten::val decodeImageImpl(const Bytes& b) {
 }
 
 // ── encoders (each returns the container bytes, throws on failure) ──────────
+// sampleFmt: 0 = unsigned integer (bits 8/16), 1 = IEEE float (bits 32) — the
+//   iccApplyProfiles "float" destination encoding (G1).
+// compression: 0 = none, 1 = LZW, 2 = ZIP/Adobe-Deflate (G2). zlib is linked
+//   (-sUSE_ZLIB=1 + libtiff zlib ON), so DEFLATE is available; LZW is builtin.
+// planar: 0 = contiguous (chunky), 1 = separate planes (G3).
 Bytes encodeTiffBytes(int width, int height, int spp, int bits,
-                      int photometric, const Bytes& samples, const Bytes& profile) {
-  if (width <= 0 || height <= 0 || spp <= 0 || (bits != 8 && bits != 16))
+                      int photometric, const Bytes& samples, const Bytes& profile,
+                      int sampleFmt, int compression, int planar) {
+  const bool isFloat = (sampleFmt == 1);
+  // Float TIFF is always 32-bit IEEE; integer TIFF stays 8/16-bit.
+  if (width <= 0 || height <= 0 || spp <= 0 ||
+      (isFloat ? bits != 32 : (bits != 8 && bits != 16)))
     throw std::runtime_error("Invalid TIFF parameters.");
   const size_t need = (size_t)width * height * spp * (bits / 8);
   if (samples.size() < need) throw std::runtime_error("Sample buffer too small for the given geometry.");
@@ -663,15 +672,22 @@ Bytes encodeTiffBytes(int width, int height, int spp, int bits,
   TIFF* t = TIFFOpen(path.c_str(), "w");
   if (!t) throw std::runtime_error("Could not open the output TIFF.");
 
+  // Map the compression selector to a libtiff codec (falling back to none for an
+  // unknown value rather than failing the whole encode).
+  std::uint16_t comp = COMPRESSION_NONE;
+  if (compression == 1) comp = COMPRESSION_LZW;
+  else if (compression == 2) comp = COMPRESSION_ADOBE_DEFLATE;   // ZIP
+
   TIFFSetField(t, TIFFTAG_IMAGEWIDTH, (std::uint32_t)width);
   TIFFSetField(t, TIFFTAG_IMAGELENGTH, (std::uint32_t)height);
   TIFFSetField(t, TIFFTAG_SAMPLESPERPIXEL, (std::uint16_t)spp);
   TIFFSetField(t, TIFFTAG_BITSPERSAMPLE, (std::uint16_t)bits);
   TIFFSetField(t, TIFFTAG_PHOTOMETRIC, (std::uint16_t)photometric);
-  TIFFSetField(t, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+  TIFFSetField(t, TIFFTAG_PLANARCONFIG,
+               planar == 1 ? PLANARCONFIG_SEPARATE : PLANARCONFIG_CONTIG);
   TIFFSetField(t, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
-  TIFFSetField(t, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
-  TIFFSetField(t, TIFFTAG_COMPRESSION, COMPRESSION_LZW);
+  TIFFSetField(t, TIFFTAG_SAMPLEFORMAT, isFloat ? SAMPLEFORMAT_IEEEFP : SAMPLEFORMAT_UINT);
+  TIFFSetField(t, TIFFTAG_COMPRESSION, comp);
   TIFFSetField(t, TIFFTAG_ROWSPERSTRIP, TIFFDefaultStripSize(t, 0));
   // Photometric 5 (separated) with >4 inks, or minisblack with >1 sample, needs the
   // spec-required extra-sample count so readers accept the multichannel layout.
@@ -683,10 +699,29 @@ Bytes encodeTiffBytes(int width, int height, int spp, int bits,
   if (!profile.empty())
     TIFFSetField(t, TIFFTAG_ICCPROFILE, (std::uint32_t)profile.size(), profile.data());
 
-  const size_t rowBytes = (size_t)width * spp * (bits / 8);
+  const size_t sampleBytes = (size_t)(bits / 8);
   bool ok = true;
-  for (int row = 0; row < height && ok; ++row)
-    ok = TIFFWriteScanline(t, (void*)(samples.data() + (size_t)row * rowBytes), row, 0) >= 0;
+  if (planar == 1) {
+    // Separate planes: one plane per sample, de-interleaving the contiguous input on
+    // the fly (libtiff wants each plane's scanlines written under its sample index).
+    const size_t pxCount = (size_t)width * height;
+    std::vector<std::uint8_t> planeRow((size_t)width * sampleBytes);
+    for (int s = 0; s < spp && ok; ++s) {
+      for (int row = 0; row < height && ok; ++row) {
+        for (int x = 0; x < width; ++x) {
+          const size_t srcOff = (((size_t)row * width + x) * spp + s) * sampleBytes;
+          std::memcpy(planeRow.data() + (size_t)x * sampleBytes,
+                      samples.data() + srcOff, sampleBytes);
+        }
+        ok = TIFFWriteScanline(t, planeRow.data(), row, (std::uint16_t)s) >= 0;
+      }
+    }
+    (void)pxCount;
+  } else {
+    const size_t rowBytes = (size_t)width * spp * sampleBytes;
+    for (int row = 0; row < height && ok; ++row)
+      ok = TIFFWriteScanline(t, (void*)(samples.data() + (size_t)row * rowBytes), row, 0) >= 0;
+  }
   TIFFClose(t);
   if (!ok) throw std::runtime_error("Failed writing TIFF scanlines.");
 
@@ -790,15 +825,18 @@ emscripten::val decodeImage(emscripten::val bytesVal) {
   }
 }
 // Unified encode: format ∈ {"tiff","png","jpeg"}. photometric applies to TIFF only;
-// quality to JPEG only; both ignored elsewhere. Returns the container bytes.
+// quality to JPEG only. sampleFmt/compression/planar apply to TIFF only (0-defaults
+// reproduce the previous behaviour, save that compression 0 = none where the old code
+// hardwired LZW — callers wanting LZW now pass compression=1). Returns container bytes.
 emscripten::val encodeImage(std::string format, int width, int height, int channels,
                             int bits, int photometric, emscripten::val samplesVal,
-                            emscripten::val profileVal, int quality) {
+                            emscripten::val profileVal, int quality,
+                            int sampleFmt, int compression, int planar) {
   try {
     Bytes samples = toBytes(samplesVal);
     Bytes profile = toBytes(profileVal);
     Bytes out;
-    if (format == "tiff")      out = encodeTiffBytes(width, height, channels, bits, photometric, samples, profile);
+    if (format == "tiff")      out = encodeTiffBytes(width, height, channels, bits, photometric, samples, profile, sampleFmt, compression, planar);
     else if (format == "png")  out = encodePngBytes(width, height, channels, bits, samples, profile);
     else if (format == "jpeg" || format == "jpg") out = encodeJpegBytes(width, height, channels, samples, quality, profile);
     else throw std::runtime_error("Unknown image format: " + format);

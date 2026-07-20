@@ -27,7 +27,7 @@ export default function MainCanvas({
   profileEntry, initialTab, changedTagIds, onXmlChanged, onJsonChanged,
   onIccProduced, onSave,
   // Link-tab makers (DL-LINK1 / DL-PIPELINE1):
-  onCreateV4, onBuildLink, onApplyImages,
+  onCreateV4, onBuildLink, onApplyImages, onAddProfile,
   // Combine-tab maker state lifted to App (survives tab switches):
   pipeline, setPipeline, v4Roles, setV4Roles,
   // SpecSep tab (DL-PIPELINE1):
@@ -165,7 +165,7 @@ export default function MainCanvas({
         )}
         {activeTab === 'Link' && (
           <LinkPanel t={t} getEntry={getEntry} onCreateV4={onCreateV4}
-                     onBuildLink={onBuildLink} onApplyImages={onApplyImages}
+                     onBuildLink={onBuildLink} onApplyImages={onApplyImages} onAddProfile={onAddProfile}
                      onAccumulate={(ids) => onDropOnTab('Link', ids)}
                      pipeline={pipeline} setPipeline={setPipeline}
                      v4Roles={v4Roles} setV4Roles={setV4Roles} />
@@ -213,14 +213,14 @@ function ProfilePanel({ entry, t, initialTab, changedTagIds, onXmlChanged, onJso
 // the pool onto the card) into a new profile / transform. DL-LINK1 = the V4 Display
 // Maker (fixed role slots); DL-PIPELINE1 = the Pipeline builder (an ordered chain →
 // DeviceLink or image processing). Both drop results into the pool the same way.
-function LinkPanel({ t, getEntry, onCreateV4, onBuildLink, onApplyImages, onAccumulate,
+function LinkPanel({ t, getEntry, onCreateV4, onBuildLink, onApplyImages, onAddProfile, onAccumulate,
                     pipeline, setPipeline, v4Roles, setV4Roles }) {
   return (
     <div className={styles.linkCanvas}>
       <V4DisplayMaker getEntry={getEntry} onCreate={onCreateV4}
                       roles={v4Roles} setRoles={setV4Roles} />
       <PipelineBuilder getEntry={getEntry} onBuildLink={onBuildLink}
-                       onApplyImages={onApplyImages} onAccumulate={onAccumulate}
+                       onApplyImages={onApplyImages} onAddProfile={onAddProfile} onAccumulate={onAccumulate}
                        pipeline={pipeline} setPipeline={setPipeline} />
     </div>
   )

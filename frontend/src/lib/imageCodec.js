@@ -163,11 +163,20 @@ export async function decodeImage(bytes) {
   return r
 }
 
+// TIFF-only encode knobs (ignored for PNG/JPEG). `sampleFormat`: 'uint' (8/16-bit
+// integer) or 'float' (32-bit IEEE, bitDepth must be 32). `compression`: 'none' |
+// 'lzw' | 'zip'. `planar`: 'contig' | 'separate'. Defaults preserve the historical
+// behaviour of the spec-sep / convert callers (LZW, contiguous, unsigned integer).
+const SAMPLE_FMT = { uint: 0, float: 1 }
+const COMPRESSION = { none: 0, lzw: 1, zip: 2 }
+const PLANAR = { contig: 0, separate: 1 }
+
 /**
  * Encode raw samples to a TIFF/PNG/JPEG.
  * @param {{format:'tiff'|'png'|'jpeg', width:number, height:number, channels:number,
  *   bitDepth?:number, photometric?:number, samples:Uint8Array, profile?:Uint8Array,
- *   quality?:number}} o
+ *   quality?:number, sampleFormat?:'uint'|'float', compression?:'none'|'lzw'|'zip',
+ *   planar?:'contig'|'separate'}} o
  * @returns {Promise<Uint8Array>}
  */
 export async function encodeImage(o) {
@@ -177,8 +186,12 @@ export async function encodeImage(o) {
   const photometric = o.photometric || 0
   const quality = o.quality || 92
   const profile = o.profile || new Uint8Array(0)
+  const sampleFmt = SAMPLE_FMT[o.sampleFormat] ?? 0
+  // Undefined compression = LZW (historical default); the UI passes an explicit choice.
+  const compression = o.compression == null ? COMPRESSION.lzw : (COMPRESSION[o.compression] ?? 0)
+  const planar = PLANAR[o.planar] ?? 0
   let out
-  try { out = mod.encodeImage(format, width, height, channels, bitDepth, photometric, o.samples, profile, quality) }
+  try { out = mod.encodeImage(format, width, height, channels, bitDepth, photometric, o.samples, profile, quality, sampleFmt, compression, planar) }
   catch (e) { throw toError(mod, e) }
   if (!out || !out.length) throw new Error('The image encoder returned nothing.')
   return out instanceof Uint8Array ? out : new Uint8Array(out)

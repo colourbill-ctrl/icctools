@@ -36,6 +36,7 @@
 #include "IccMpeSpectral.h"
 #include "IccColorimetry.h"   // CIccColorimetricCalculator — canonical spectral→XYZ (data methods)
 #include "IccCmmSearch.h"     // CIccCmmSearch — inverse (search) CMM for Invert Transform
+#include "IccApplyBPC.h"      // CIccApplyBPCHint — black-point compensation (extended intents 40-42)
 #include "IccUtil.h"
 
 #include <emscripten/bind.h>
@@ -430,12 +431,89 @@ static std::vector<icRenderingIntent> parseIntents(emscripten::val v, unsigned n
   return out;
 }
 
+// ── extended rendering-intent decode (iccApplyProfiles parity, G5/G6) ─────────
+// The apply CLI accepts a decimal-coded intent int carrying more than the base 0-3:
+// a "type" tens-digit (10-13 = colour without D2Bx/B2Dx, 30/33 = gamut, 40-42 = BPC),
+// a +1000 luminance-PCS-adjustment flag, and a +10000 V5-sub-profile flag. This mirrors
+// CIccCfgProfile's decode in IccConnect/IccLibConnect/IccCmmConfig.cpp so the same intent
+// numbers behave identically here. profiletool offers the meaningful-for-image-apply
+// subset — base intents, no-D2Bx (10-13), BPC (40-42), and the +1000 luminance modifier;
+// preview/gamut output isn't a device image and V5 sub-profile is deferred, so those are
+// decoded faithfully but not surfaced by the UI.
+struct XformSpec {
+  icRenderingIntent intent = icRelativeColorimetric;  // base 0-3
+  icXformLutType    lutType = icXformLutColor;         // color / gamut (per tens-digit)
+  bool useD2Bx = true;         // false for 10-13 (bypass D2Bx/B2Dx MPE tags)
+  bool useBPC = false;         // true for 40-42 (black-point compensation)
+  bool adjustLuminance = false; // true for +1000 (luminance-based PCS adjustment)
+};
+
+// Decode one extended intent int → XformSpec (field-stripping order matches
+// IccCmmConfig.cpp:1082-1114). Unknown/out-of-range base pins to relative colorimetric.
+static XformSpec decodeIntentSpec(int nIntent) {
+  XformSpec s;
+  nIntent = nIntent % 1000000;   // drop the NamedColor overprint field (irrelevant here)
+  nIntent = nIntent % 100000;    // drop the hue-to-saturation field (not offered)
+  nIntent = nIntent % 10000;     // drop the V5-sub-profile field (deferred; see header)
+  s.adjustLuminance = (nIntent / 1000) != 0;
+  nIntent = nIntent % 1000;
+  int nType = (nIntent < 0 ? -nIntent : nIntent) / 10;
+  nIntent = nIntent % 10;
+  switch (nType) {
+    case 1: s.useD2Bx = false; s.lutType = icXformLutColor; break;  // 10-13
+    case 3: s.lutType = icXformLutGamut; break;                     // 30/33
+    case 4: s.useBPC = true;   s.lutType = icXformLutColor; break;  // 40-42
+    default: break;
+  }
+  if (nIntent < (int)icPerceptual || nIntent > (int)icAbsoluteColorimetric)
+    nIntent = (int)icRelativeColorimetric;
+  s.intent = (icRenderingIntent)nIntent;
+  return s;
+}
+
+// Per-profile extended specs (array of intent ints, one per profile) or a scalar applied
+// to all. Same shape as parseIntents but retaining the extended flavours.
+static std::vector<XformSpec> parseSpecs(emscripten::val v, unsigned n) {
+  std::vector<XformSpec> out(n);
+  if (v.isArray()) {
+    unsigned len = v["length"].as<unsigned>();
+    for (unsigned i = 0; i < n; ++i)
+      out[i] = decodeIntentSpec(i < len ? v[i].as<int>() : (int)icRelativeColorimetric);
+  } else if (!v.isUndefined() && !v.isNull()) {
+    XformSpec one = decodeIntentSpec(v.as<int>());
+    for (auto& e : out) e = one;
+  }
+  return out;
+}
+
+// A JS interpolation selector (0 = linear, 1 = tetrahedral) → icXformInterp. Anything
+// else defaults to tetrahedral (profiletool's historical default). Global for the chain,
+// matching the CLI's single `interpolation` arg.
+static icXformInterp interpFromInt(int v) {
+  return v == 0 ? icInterpLinear : icInterpTetrahedral;
+}
+
+// Add one profile (owned ptr) to `cmm` per its decoded spec: builds a per-profile hint
+// manager for BPC / luminance (mirrors CIccConnectCmm::AddXformFromConfig), passes the
+// no-D2Bx flag + lutType + chosen interpolation. On a nonzero return AddXform has already
+// freed pProfile (its ownership contract), so callers must not delete it.
+static icStatusCMM addSpecXform(CIccCmm& cmm, CIccProfile* pProfile,
+                                const XformSpec& s, icXformInterp interp) {
+  CIccCreateXformHintManager hint;
+  const bool haveHint = s.useBPC || s.adjustLuminance;
+  if (s.useBPC)          hint.AddHint(new (std::nothrow) CIccApplyBPCHint());
+  if (s.adjustLuminance) hint.AddHint(new (std::nothrow) CIccLuminanceMatchingHint());
+  return cmm.AddXform(pProfile, s.intent, interp, /*pPcc=*/NULL, s.lutType,
+                      s.useD2Bx, haveHint ? &hint : NULL);
+}
+
 emscripten::val buildLinkImpl(emscripten::val chainVal, emscripten::val intentsVal,
-                              bool firstInput, int gridArg) {
+                              bool firstInput, int gridArg, int interpArg) {
   const unsigned n = chainVal["length"].as<unsigned>();
   if (n == 0) throw std::runtime_error("Add at least one profile to the chain.");
 
-  const std::vector<icRenderingIntent> intents = parseIntents(intentsVal, n);
+  const std::vector<XformSpec> specs = parseSpecs(intentsVal, n);
+  const icXformInterp interp = interpFromInt(interpArg);
 
   // Let the profiles fix the start/end spaces. bFirstInput = the HEAD transform's
   // direction: true = the first profile is used device→PCS (the chain's source);
@@ -492,9 +570,7 @@ emscripten::val buildLinkImpl(emscripten::val chainVal, emscripten::val intentsV
       t->SetText(modelText.c_str());
     pSeq->m_Descriptions->push_back(psd);
 
-    icStatusCMM stat = theCmm.AddXform(pXform, intents[i], icInterpTetrahedral,
-                                       /*pPcc=*/NULL, icXformLutColor,
-                                       /*bUseD2BxB2DxTags=*/true, /*pHint=*/NULL);
+    icStatusCMM stat = addSpecXform(theCmm, pXform, specs[i], interp);
     if (stat)
       throw std::runtime_error("Cannot link profile " + std::to_string(i + 1) + ": "
                                + CIccCmm::GetStatusText(stat));
@@ -582,9 +658,9 @@ emscripten::val buildLinkImpl(emscripten::val chainVal, emscripten::val intentsV
 }
 
 // Exception-safe boundary (same shape as fromCube / v5DspObsToV4).
-emscripten::val buildLink(emscripten::val chainVal, emscripten::val intents, bool firstInput, int grid) {
+emscripten::val buildLink(emscripten::val chainVal, emscripten::val intents, bool firstInput, int grid, int interp) {
   try {
-    return buildLinkImpl(chainVal, intents, firstInput, grid);
+    return buildLinkImpl(chainVal, intents, firstInput, grid, interp);
   } catch (const std::runtime_error&) {
     throw;
   } catch (const std::exception& e) {
@@ -613,12 +689,13 @@ std::string sigToStr(icColorSpaceSignature sig) {
 // destSamples? }. failedStage is the 1-based stage that broke, or 0 for a Begin()
 // failure. This is the definitive connectivity answer — the header-signature guess
 // in lib/pipeline.js cannot know true CMM space-linking.
-emscripten::val chainInfoImpl(emscripten::val chainVal, emscripten::val intentsVal, bool firstInput) {
+emscripten::val chainInfoImpl(emscripten::val chainVal, emscripten::val intentsVal, bool firstInput, int interpArg) {
   emscripten::val r = emscripten::val::object();
   const unsigned n = chainVal["length"].as<unsigned>();
   if (n == 0) { r.set("ok", false); r.set("empty", true); return r; }
 
-  const std::vector<icRenderingIntent> intents = parseIntents(intentsVal, n);
+  const std::vector<XformSpec> specs = parseSpecs(intentsVal, n);
+  const icXformInterp interp = interpFromInt(interpArg);
 
   CIccCmm theCmm(icSigUnknownData, icSigUnknownData, firstInput);
   for (unsigned i = 0; i < n; ++i) {
@@ -635,8 +712,7 @@ emscripten::val chainInfoImpl(emscripten::val chainVal, emscripten::val intentsV
       r.set("error", std::string("Profile ") + std::to_string(i + 1) + " is not a readable ICC profile.");
       return r;
     }
-    icStatusCMM stat = theCmm.AddXform(p, intents[i], icInterpTetrahedral,
-                                       NULL, icXformLutColor, true, NULL);
+    icStatusCMM stat = addSpecXform(theCmm, p, specs[i], interp);
     if (stat) {
       r.set("ok", false); r.set("failedStage", (int)(i + 1));
       r.set("error", std::string(CIccCmm::GetStatusText(stat)));
@@ -659,13 +735,58 @@ emscripten::val chainInfoImpl(emscripten::val chainVal, emscripten::val intentsV
   return r;
 }
 
-emscripten::val chainInfo(emscripten::val chainVal, emscripten::val intents, bool firstInput) {
+emscripten::val chainInfo(emscripten::val chainVal, emscripten::val intents, bool firstInput, int interp) {
   try {
-    return chainInfoImpl(chainVal, intents, firstInput);
+    return chainInfoImpl(chainVal, intents, firstInput, interp);
   } catch (...) {
     emscripten::val r = emscripten::val::object();
     r.set("ok", false);
     r.set("error", std::string("Could not analyse the chain."));
+    return r;
+  }
+}
+
+// ── profileApplyCaps — per-profile extended-intent availability (G6 gating) ────
+// The apply UI offers base intents 0-3 for every profile but only surfaces the extended
+// flavours a profile can actually use: 10-13 (colour without D2Bx/B2Dx) need a v4.3+
+// profile that carries D2Bx/B2Dx MPE tags; 40-42 (BPC) are a PCS adjustment meaningful
+// on LUT-based profiles. This reports the tag/version facts the JS side gates on. Never
+// throws — an unreadable profile is a normal {ok:false} result.
+emscripten::val profileApplyCapsImpl(std::string profBytes) {
+  emscripten::val r = emscripten::val::object();
+  if (profBytes.empty() || profBytes.size() > kMaxIccBytes) {
+    r.set("ok", false); r.set("error", std::string("Empty or oversized profile.")); return r;
+  }
+  std::unique_ptr<CIccProfile> p(ReadIccProfile(
+    (const icUInt8Number*)profBytes.data(), (icUInt32Number)profBytes.size()));
+  if (!p) { r.set("ok", false); r.set("error", std::string("Not a readable ICC profile.")); return r; }
+
+  const icUInt32Number ver = p->m_Header.version;
+  const bool hasD2B = p->FindTag(icSigDToB0Tag) || p->FindTag(icSigDToB1Tag) ||
+                      p->FindTag(icSigDToB2Tag) || p->FindTag(icSigDToB3Tag);
+  const bool hasB2D = p->FindTag(icSigBToD0Tag) || p->FindTag(icSigBToD1Tag) ||
+                      p->FindTag(icSigBToD2Tag) || p->FindTag(icSigBToD3Tag);
+  const bool hasA2B = p->FindTag(icSigAToB0Tag) || p->FindTag(icSigAToB1Tag) ||
+                      p->FindTag(icSigAToB2Tag);
+  const bool hasB2A = p->FindTag(icSigBToA0Tag) || p->FindTag(icSigBToA1Tag) ||
+                      p->FindTag(icSigBToA2Tag);
+
+  r.set("ok", true);
+  r.set("versionMajor", (int)((ver >> 24) & 0xff));
+  r.set("v5", ver >= icVersionNumberV5);
+  r.set("v4plus", ver >= icVersionNumberV4_2);
+  r.set("hasD2Bx", hasD2B || hasB2D);          // enables 10-13 (bypass D2Bx/B2Dx)
+  r.set("hasLut", hasD2B || hasB2D || hasA2B || hasB2A);  // enables 40-42 (BPC)
+  r.set("isLink", p->m_Header.deviceClass == icSigLinkClass);
+  r.set("deviceClass", sigToStr((icColorSpaceSignature)p->m_Header.deviceClass));
+  return r;
+}
+
+emscripten::val profileApplyCaps(std::string profBytes) {
+  try { return profileApplyCapsImpl(profBytes); }
+  catch (...) {
+    emscripten::val r = emscripten::val::object();
+    r.set("ok", false); r.set("error", std::string("Could not analyse the profile."));
     return r;
   }
 }
@@ -678,7 +799,8 @@ emscripten::val chainInfo(emscripten::val chainVal, emscripten::val intents, boo
 // destination pixels as a Float32Array (nDst per pixel, [0,1]) for the browser to
 // encode. Bytes-in/bytes-out only — the format layer stays in JS (lib/imageIO.js).
 emscripten::val applyImageImpl(emscripten::val chainVal, std::string srcBytes,
-                               int nSrcCh, emscripten::val intentsVal, bool firstInput) {
+                               int nSrcCh, emscripten::val intentsVal, bool firstInput,
+                               int interpArg) {
   const unsigned n = chainVal["length"].as<unsigned>();
   if (n == 0) throw std::runtime_error("Add at least one profile to the chain.");
   if (nSrcCh < 1) throw std::runtime_error("The image has no colour channels.");
@@ -689,7 +811,8 @@ emscripten::val applyImageImpl(emscripten::val chainVal, std::string srcBytes,
   if (nPixels > 64000000ULL)
     throw std::runtime_error("The image is too large to process (over 64 megapixels).");
 
-  const std::vector<icRenderingIntent> intents = parseIntents(intentsVal, n);
+  const std::vector<XformSpec> specs = parseSpecs(intentsVal, n);
+  const icXformInterp interp = interpFromInt(interpArg);
 
   CIccCmm theCmm(icSigUnknownData, icSigUnknownData, firstInput);
   for (unsigned i = 0; i < n; ++i) {
@@ -699,8 +822,7 @@ emscripten::val applyImageImpl(emscripten::val chainVal, std::string srcBytes,
       throw std::runtime_error("A chained profile is empty or too large.");
     CIccProfile* p = ReadIccProfile(buf.data(), (icUInt32Number)buf.size());
     if (!p) throw std::runtime_error("A chained profile could not be read.");
-    icStatusCMM stat = theCmm.AddXform(p, intents[i], icInterpTetrahedral,
-                                       NULL, icXformLutColor, true, NULL);
+    icStatusCMM stat = addSpecXform(theCmm, p, specs[i], interp);
     if (stat)
       throw std::runtime_error("Cannot link profile " + std::to_string(i + 1) + ": "
                                + CIccCmm::GetStatusText(stat));
@@ -732,9 +854,9 @@ emscripten::val applyImageImpl(emscripten::val chainVal, std::string srcBytes,
 }
 
 emscripten::val applyImage(emscripten::val chainVal, std::string srcBytes, int nSrcCh,
-                           emscripten::val intents, bool firstInput) {
+                           emscripten::val intents, bool firstInput, int interp) {
   try {
-    return applyImageImpl(chainVal, srcBytes, nSrcCh, intents, firstInput);
+    return applyImageImpl(chainVal, srcBytes, nSrcCh, intents, firstInput, interp);
   } catch (const std::runtime_error&) {
     throw;
   } catch (const std::exception& e) {
@@ -755,13 +877,15 @@ static std::unique_ptr<CIccCmm> g_imgCmm;
 static int g_imgNSrc = 0, g_imgNDst = 0;
 
 emscripten::val imageApplyBeginImpl(emscripten::val chainVal, int nSrcCh,
-                                    emscripten::val intentsVal, bool firstInput) {
+                                    emscripten::val intentsVal, bool firstInput,
+                                    int interpArg) {
   g_imgCmm.reset(); g_imgNSrc = g_imgNDst = 0;
   const unsigned n = chainVal["length"].as<unsigned>();
   if (n == 0) throw std::runtime_error("Add at least one profile to the chain.");
   if (nSrcCh < 1) throw std::runtime_error("The image has no colour channels.");
 
-  const std::vector<icRenderingIntent> intents = parseIntents(intentsVal, n);
+  const std::vector<XformSpec> specs = parseSpecs(intentsVal, n);
+  const icXformInterp interp = interpFromInt(interpArg);
   std::unique_ptr<CIccCmm> cmm(new CIccCmm(icSigUnknownData, icSigUnknownData, firstInput));
   for (unsigned i = 0; i < n; ++i) {
     std::vector<std::uint8_t> buf =
@@ -770,8 +894,7 @@ emscripten::val imageApplyBeginImpl(emscripten::val chainVal, int nSrcCh,
       throw std::runtime_error("A chained profile is empty or too large.");
     CIccProfile* p = ReadIccProfile(buf.data(), (icUInt32Number)buf.size());
     if (!p) throw std::runtime_error("A chained profile could not be read.");
-    icStatusCMM stat = cmm->AddXform(p, intents[i], icInterpTetrahedral,
-                                     NULL, icXformLutColor, true, NULL);
+    icStatusCMM stat = addSpecXform(*cmm, p, specs[i], interp);
     if (stat)
       throw std::runtime_error("Cannot link profile " + std::to_string(i + 1) + ": "
                                + CIccCmm::GetStatusText(stat));
@@ -795,9 +918,9 @@ emscripten::val imageApplyBeginImpl(emscripten::val chainVal, int nSrcCh,
 }
 
 emscripten::val imageApplyBegin(emscripten::val chainVal, int nSrcCh,
-                                emscripten::val intents, bool firstInput) {
+                                emscripten::val intents, bool firstInput, int interp) {
   try {
-    return imageApplyBeginImpl(chainVal, nSrcCh, intents, firstInput);
+    return imageApplyBeginImpl(chainVal, nSrcCh, intents, firstInput, interp);
   } catch (const std::runtime_error&) {
     throw;
   } catch (const std::exception& e) {
@@ -863,7 +986,7 @@ static icFloatColorEncoding clampEncoding(int e) {
 
 emscripten::val applyValuesImpl(emscripten::val chainVal, std::string srcBytes, int nSrcCh,
                                 emscripten::val intentsVal, bool firstInput,
-                                int srcEncodeArg, int dstEncodeArg) {
+                                int srcEncodeArg, int dstEncodeArg, int interpArg) {
   const unsigned n = chainVal["length"].as<unsigned>();
   if (n == 0) throw std::runtime_error("Add at least one profile to the chain.");
   if (nSrcCh < 1) throw std::runtime_error("The data has no colour channels.");
@@ -874,7 +997,8 @@ emscripten::val applyValuesImpl(emscripten::val chainVal, std::string srcBytes, 
   if (nSamples > 5000000ULL)
     throw std::runtime_error("The dataset is too large to process (over 5 million patches).");
 
-  const std::vector<icRenderingIntent> intents = parseIntents(intentsVal, n);
+  const std::vector<XformSpec> specs = parseSpecs(intentsVal, n);
+  const icXformInterp interp = interpFromInt(interpArg);
   const icFloatColorEncoding srcEncode = clampEncoding(srcEncodeArg);
   const icFloatColorEncoding dstEncode = clampEncoding(dstEncodeArg);
 
@@ -886,8 +1010,7 @@ emscripten::val applyValuesImpl(emscripten::val chainVal, std::string srcBytes, 
       throw std::runtime_error("A chained profile is empty or too large.");
     CIccProfile* p = ReadIccProfile(buf.data(), (icUInt32Number)buf.size());
     if (!p) throw std::runtime_error("A chained profile could not be read.");
-    icStatusCMM stat = theCmm.AddXform(p, intents[i], icInterpTetrahedral,
-                                       NULL, icXformLutColor, true, NULL);
+    icStatusCMM stat = addSpecXform(theCmm, p, specs[i], interp);
     if (stat)
       throw std::runtime_error("Cannot link profile " + std::to_string(i + 1) + ": "
                                + CIccCmm::GetStatusText(stat));
@@ -932,9 +1055,9 @@ emscripten::val applyValuesImpl(emscripten::val chainVal, std::string srcBytes, 
 }
 
 emscripten::val applyValues(emscripten::val chainVal, std::string srcBytes, int nSrcCh,
-                            emscripten::val intents, bool firstInput, int srcEncode, int dstEncode) {
+                            emscripten::val intents, bool firstInput, int srcEncode, int dstEncode, int interp) {
   try {
-    return applyValuesImpl(chainVal, srcBytes, nSrcCh, intents, firstInput, srcEncode, dstEncode);
+    return applyValuesImpl(chainVal, srcBytes, nSrcCh, intents, firstInput, srcEncode, dstEncode, interp);
   } catch (const std::runtime_error&) {
     throw;
   } catch (const std::exception& e) {
@@ -1268,6 +1391,7 @@ EMSCRIPTEN_BINDINGS(iccconstruct) {
   emscripten::function("v5DspObsToV4", &v5DspObsToV4);
   emscripten::function("buildLink", &buildLink);
   emscripten::function("chainInfo", &chainInfo);
+  emscripten::function("profileApplyCaps", &profileApplyCaps);
   emscripten::function("applyImage", &applyImage);
   emscripten::function("imageApplyBegin", &imageApplyBegin);
   emscripten::function("imageApplyChunk", &imageApplyChunk);

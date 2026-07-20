@@ -239,6 +239,90 @@ function diag_settings() {
   return svg(W, H, chrome + content);
 }
 
+// ── Diagram 3: Combine tab (Link Pipeline) ───────────────────────────────────
+function diag_combine() {
+  const W = 780, H = 452;
+  let b = R(0,0,W,H,'bg',0);
+
+  // Pool pane (left)
+  const PX = 16, PW = 150;
+  b += R(PX,12,PW,H-24,'pnl',8);
+  b += R(PX,12,PW,26,'hd',8);
+  b += T(PX+12,29,'Profiles','tB','start');
+  const chips = ['sRGB.icc','Coated.icc'];
+  for (let i=0;i<chips.length;i++){
+    const cy = 48 + i*34;
+    b += R(PX+10, cy, PW-20, 28, 'sec', 5);
+    b += T(PX+20, cy+18, chips[i], 't2 mono', 'start');
+  }
+  b += T(PX+10, 132, 'Drag into the chain →', 't3', 'start');
+
+  // Combine card (centre/right)
+  const CX = 186, CW = W-CX-16;
+  b += R(CX,12,CW,H-24,'pnl',8);
+  b += T(CX+16,32,'Combine — Link Pipeline','tT','start');
+  b += T(CX+16,48,'Chain profiles, then make a DeviceLink or transform an image / dataset.','t3','start');
+  b += L(CX+16,56,CX+CW-16,56);
+
+  // Drop slots
+  b += R(CX+16,64,270,32,'sec',6);
+  b += T(CX+28,84,'🖼  Drop an image (TIFF/PNG/JPEG)','t2','start');
+  b += R(CX+296,64,CW-312,32,'sec',6);
+  b += T(CX+308,84,'🔢  Drop a dataset (CGATS/CSV/CxF)','t2','start');
+
+  // Global rendering intent
+  b += T(CX+16,116,'Rendering intent (all)','t3','start');
+  b += R(CX+150,104,150,18,'btn',4);
+  b += T(CX+156,116,'Relative Colorimetric','t2','start');
+
+  // Vertical chain — two stages with a connecting space between
+  const stage = (y, num, name, from, to, ri) => {
+    let s = R(CX+16, y, CW-32, 38, 'sec', 6);
+    s += T(CX+30, y+23, '⠿', 't3', 'start');
+    s += R(CX+44, y+11, 16, 16, 'act', 4);
+    s += T(CX+52, y+23, num, 'tW tB');
+    s += T(CX+70, y+23, name, 't2 mono', 'start');
+    s += T(CX+CW-150, y+23, from+' → '+to, 't3', 'start');
+    s += R(CX+CW-58, y+10, 42, 18, 'btn', 4);
+    s += T(CX+CW-37, y+23, ri, 't2');
+    return s;
+  };
+  b += stage(130,'1','sRGB.icc','RGB','Lab','Rel');
+  // connector + connecting-space chip
+  b += `<line x1="${CX+52}" y1="168" x2="${CX+52}" y2="180" stroke="var(--ln)" stroke-width="2"/>`;
+  b += R(CX+CW/2-24,170,48,14,'lnbd',7);
+  b += T(CX+CW/2,181,'Lab','t3');
+  b += stage(184,'2','Coated.icc','Lab','CMYK','Perc');
+
+  // Chain summary
+  b += T(CX+16,244,'Chain:','t3','start');
+  b += T(CX+58,244,'RGB → CMYK','tA','start');
+
+  // Action buttons
+  const btn = (x,label) => R(x,256,124,24,'act',5) + T(x+62,272,label,'tW tB');
+  b += btn(CX+16,'Make DeviceLink');
+  b += btn(CX+148,'Transform Image');
+  b += btn(CX+280,'Transform Data');
+
+  // Image output-options panel
+  const OY = 296;
+  b += R(CX+16, OY, CW-32, 96, 'sec', 6);
+  b += T(CX+28, OY+18, 'Image output options', 'tB', 'start');
+  const opt = (x,y,lab,val) => T(x,y,lab,'t3','start') + R(x, y+6, 96, 16, 'btn', 4) + T(x+48, y+18, val, 't2');
+  b += opt(CX+28,  OY+34, 'Encoding',        'Same as source');
+  b += opt(CX+140, OY+34, 'Compression',     'None');
+  b += opt(CX+252, OY+34, 'Planar',          'Composite');
+  b += opt(CX+28,  OY+70, 'CMM interp.',     'Tetrahedral');
+  b += opt(CX+140, OY+70, 'Embed ICC',       '☑ yes');
+
+  // Callouts point LEFT (tx < lx) so callout()'s 'end' anchoring keeps the label inside
+  // the canvas — a right-pointing label here would run past the 780px viewBox.
+  b += callout(CX+CW-37, 138, CX+CW-120, 118, 'Per-stage intent', 't3');
+  b += callout(CX+CW-140, OY+4, CX+CW-170, OY-10, 'iccApplyProfiles output knobs', 't3');
+
+  return svg(W, H, b);
+}
+
 // ── Markdown → HTML (subset) ─────────────────────────────────────────────────
 // Lifted from chardata/scripts/generate-help.js so output formatting matches.
 function mdToHtml(md) {
@@ -334,6 +418,7 @@ const intro = mdToHtml(introMd);
 let body = mdToHtml(bodyMd);
 body = insertAfter(body, 'id="1-loading-a-profile"', '\n' + diag_layout());
 body = insertAfter(body, 'id="2-settings-panel"',    '\n' + diag_settings());
+body = insertAfter(body, 'id="4-combine-tab"',       '\n' + diag_combine());
 
 const html = `<!DOCTYPE html>
 <html lang="en">
@@ -410,10 +495,21 @@ ${intro}
           <li><a href="#3-6-json">JSON</a></li>
         </ol>
       </li>
-      <li><a href="#4-round-trip-editing">Round-trip editing</a></li>
-      <li><a href="#5-launching-from-chardata">Launching from chardata</a></li>
-      <li><a href="#6-mobile">Mobile</a></li>
-      <li><a href="#7-limits-and-security">Limits and security</a></li>
+      <li><a href="#4-combine-tab">Combine tab</a>
+        <ol>
+          <li><a href="#4-1-building-a-chain">Building a chain</a></li>
+          <li><a href="#4-2-make-devicelink">Make DeviceLink</a></li>
+          <li><a href="#4-3-transform-image">Transform Image</a></li>
+          <li><a href="#4-4-transform-data">Transform Data</a></li>
+          <li><a href="#4-5-v4-display-maker">V4 Display maker</a></li>
+          <li><a href="#4-6-compare-and-spectral-tabs">Compare and Spectral tabs</a></li>
+        </ol>
+      </li>
+      <li><a href="#5-round-trip-editing">Round-trip editing</a></li>
+      <li><a href="#6-launching-from-chardata">Launching from chardata</a></li>
+      <li><a href="#7-launching-with-a-url">Launching with a URL</a></li>
+      <li><a href="#8-mobile">Mobile</a></li>
+      <li><a href="#9-limits-and-security">Limits and security</a></li>
     </ol>
   </nav>
 

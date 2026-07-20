@@ -40,6 +40,42 @@ Transform**, since all three build the CMM the same way (`AddXform` with `clampI
 0-3 + fixed tetrahedral). Fixing G5/G6 in the shared chain-assembly path lifts all three
 at once.
 
+### G1-G6 + G9 — BUILT (2026-07-19)
+
+Image output options + interpolation + extended intents + embedded-ICC extract:
+
+- **G1 (encoding).** iccimage `encodeTiffBytes`/`encodeImage` gained a `sampleFmt` arg
+  (unsigned / IEEE float). `applyToImage` packs 8-/16-bit integer or 32-bit float output;
+  "Same as source" follows the decoded source depth. *Float SOURCE decode is still
+  deferred* — the decoder reads 8/16-bit integer only, so "same" caps at those. Verified:
+  8/16-bit + 32-bit-IEEE TIFFs validate via tiffinfo; 8-bit round-trips through libtiff.
+- **G2 (compression).** `encodeImage` `compression` arg → none / LZW / ZIP
+  (`COMPRESSION_ADOBE_DEFLATE`; zlib is linked). Verified AdobeDeflate + LZW round-trip.
+- **G3 (planar).** `planar` arg → contiguous / separate (de-interleaves per plane).
+  Verified separated-planes TIFF round-trips pixel-identical.
+- **G4 (embed ICC).** `applyToImage` embeds the chain's LAST profile (output-space ICC)
+  into the result (PNG iCCP or TIFF ICCPROFILE). Default on. Verified: the 2.1 MB CMYK
+  ICC survives encode→decode.
+- **G5 (interpolation).** Global `interp` arg (linear / tetrahedral — both are real
+  `icXformInterp` values) threaded through `chainInfo` / `buildLink` / `applyValues` /
+  `imageApplyBegin`. Verified linear ≠ tetrahedral output on a CMYK LUT.
+- **G6 (extended intents).** Shared `decodeIntentSpec` in construct-wrapper mirrors
+  `CIccCfgProfile`'s decode: base 0-3 **plus** 10-13 (no D2Bx/B2Dx via
+  `bUseD2BxB2DxTags=false`), 40-42 (BPC via `CIccApplyBPCHint`), and the +1000 luminance
+  modifier (`CIccLuminanceMatchingHint`). New `profileApplyCaps(bytes)` reports
+  `hasD2Bx` / `hasLut` so the per-profile + global RI listboxes only surface the flavours
+  a profile supports. Verified: BPC (41) genuinely differs from base relative (1).
+  **Deferred:** preview (20-23) / gamut (30/33) — non-device output, useless for image
+  apply; V5 sub-profile (+10000) — needs the mem-based AddXform + sub-profile detection,
+  and risks the v5 WASM trap (`iccdev-cmmsearch-v5-wasm-trap`); overprint / hue-to-sat.
+- **G9 (embedded-source-as-head).** On image drop, a metadata-only sniff
+  (`findEmbeddedProfileFromFile`) offers to extract the embedded ICC into a new pool
+  profile, placed at the head of the chain + accumulated on the Link tab.
+
+Still open: **G7** (-PCC per profile), **G8** (-ENV calc vars). The output knobs are
+surfaced only in the **image** section (per the request); Transform Data / DeviceLink
+inherit `interp` + the extended intents through the shared per-profile RI listboxes.
+
 ---
 
 ## B. iccApplySearch → Invert Transform (NEW) — model + scope

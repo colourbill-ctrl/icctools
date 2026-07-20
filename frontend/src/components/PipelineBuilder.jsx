@@ -20,13 +20,13 @@ import { POOL_DND_MIME } from './PoolPane.jsx'
 import { spaceLabel, computeChainFlow, computeInvertPlan } from '../lib/pipeline.js'
 import {
   chainInfo, transformData as engineTransformData, invertData as engineInvertData, spectralToXYZ,
-  OBSERVERS, ILLUMINANTS, RENDERING_INTENTS,
+  profileApplyCaps, OBSERVERS, ILLUMINANTS, RENDERING_INTENTS,
 } from '../lib/pipelineEngine.js'
 import {
   parseDataText, summarizeDataset, classifyColumns, spaceKind,
   buildTransformInput, deduplicateRows, destHeaders,
 } from '../lib/dataParse.js'
-import { probeImageFromFile } from '../lib/imageCodec.js'
+import { probeImageFromFile, findEmbeddedProfileFromFile } from '../lib/imageCodec.js'
 import DataResultModal from './DataResultModal.jsx'
 import { useT } from '../i18n.jsx'
 import styles from './PipelineBuilder.module.css'
@@ -61,7 +61,61 @@ function usePersisted(key, initial) {
 
 const PREFER_LABELS = { lab: 'Lab', xyz: 'XYZ', spectral: 'Spectral' }
 
-export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, onAccumulate, pipeline, setPipeline }) {
+// Invert Transform (iccApplySearch) is hidden for now — the search engine still traps
+// under WASM on some v5 iccMAX profiles (see memory iccdev-cmmsearch-v5-wasm-trap) and
+// awaits worker isolation (task #81). The button, direction selector and note are gated
+// on this flag; the engine/state stay wired so re-enabling is a one-line change.
+const SHOW_INVERT = false
+
+// Extended rendering-intent flavours (iccApplyProfiles parity, G6). Base 0-3 are always
+// offered; no-D2Bx (10-13) needs a profile carrying D2Bx/B2Dx MPE tags and BPC (40-42)
+// needs a LUT-based profile — both gated per profile via profileApplyCaps. Labels are
+// technical terms kept in English (like RENDERING_INTENTS); extended-intent i18n rides
+// the deferred backfill (task #68).
+const INTENT_NO_D2BX = [
+  { id: 10, label: 'Perceptual (no D2Bx)', short: 'Perc·n' },
+  { id: 11, label: 'Relative (no D2Bx)', short: 'Rel·n' },
+  { id: 12, label: 'Saturation (no D2Bx)', short: 'Sat·n' },
+  { id: 13, label: 'Absolute (no D2Bx)', short: 'Abs·n' },
+]
+const INTENT_BPC = [
+  { id: 40, label: 'Perceptual + BPC', short: 'Perc·B' },
+  { id: 41, label: 'Relative + BPC', short: 'Rel·B' },
+  { id: 42, label: 'Saturation + BPC', short: 'Sat·B' },
+]
+// Option list a single profile's RI listbox offers, given its caps.
+function intentOptionsFor(caps) {
+  const out = RENDERING_INTENTS.slice()
+  if (caps?.hasD2Bx) out.push(...INTENT_NO_D2BX)
+  if (caps?.hasLut) out.push(...INTENT_BPC)
+  return out
+}
+// Keep the current selection representable even if a profile swap drops its flavour from
+// the caps-gated list (otherwise the <select> would blank out).
+function withCurrent(options, cur) {
+  if (options.some((o) => o.id === cur)) return options
+  return [...options, { id: cur, label: `Intent ${cur}`, short: String(cur) }]
+}
+
+// Plain-language description of each base rendering intent, plus the two modifier
+// families (BPC / no-D2Bx), so the compact RI listboxes carry a tooltip explaining the
+// current choice (e.g. the cramped "Perc·B" resolves to Perceptual + black-point
+// compensation). Kept English like the intent labels (extended-intent i18n is deferred).
+const INTENT_DESC = {
+  0: 'Perceptual — compresses the source gamut so the whole image keeps a natural look; best for photographs.',
+  1: 'Relative Colorimetric — reproduces in-gamut colours exactly and remaps the white point; out-of-gamut colours clip to the boundary.',
+  2: 'Saturation — favours vivid, saturated colour over accuracy; suited to charts and business graphics.',
+  3: 'Absolute Colorimetric — reproduces exact colour values including the media white; used to proof one medium on another.',
+}
+function intentDescription(id) {
+  const base = ((id % 10) + 10) % 10
+  const baseDesc = INTENT_DESC[base] || `Rendering intent ${id}`
+  if (id >= 40 && id <= 42) return `${baseDesc}\n+ Black-point compensation: maps source black to destination black to preserve shadow detail.`
+  if (id >= 10 && id <= 13) return `${baseDesc}\n(no D2Bx/B2Dx): bypasses the v4.3+ multi-processing tables, using the classic A2B/B2A path.`
+  return baseDesc
+}
+
+export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, onAddProfile, onAccumulate, pipeline, setPipeline }) {
   const t = useT()
   // The whole pipeline config (chain + per-transform intents + head direction +
   // global intent) is lifted to App so it survives Combine↔other-tab switches within
@@ -80,6 +134,11 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
   // them in the accumulator. Every other mutation keeps chain/intents in lock-step.
   const appendStages = (ids) => setPipeline((p) => ({
     ...p, chain: [...p.chain, ...ids], intents: [...p.intents, ...ids.map(() => p.globalIntent)],
+  }))
+  // Put a profile at the HEAD of the chain (G9: an extracted embedded profile is the
+  // image's source space, so it belongs first).
+  const prependStage = (id) => setPipeline((p) => ({
+    ...p, chain: [id, ...p.chain], intents: [p.globalIntent, ...p.intents],
   }))
   const swapStages = (i, j) => setPipeline((p) => {
     if (j < 0 || j >= p.chain.length) return p
@@ -125,6 +184,9 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
   const [imageErr, setImageErr] = useState(null)
   const [imgChecking, setImgChecking] = useState(false)
   const [imgOver, setImgOver] = useState(false)
+  // G9: an ICC embedded in the dropped image, offered for extraction into the chain.
+  const [embedded, setEmbedded] = useState(null)     // Uint8Array | null
+  const [extracting, setExtracting] = useState(false)
 
   // Held dataset (parsed + summarised on drop; the transform runs on demand).
   const [dataParsed, setDataParsed] = useState(null)   // { name, format, headers, rows, … }
@@ -146,8 +208,39 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
   const [filterDup, setFilterDup] = usePersisted('profiletool.dm.filterdup', false)
   const [dupMethod, setDupMethod] = usePersisted('profiletool.dm.dupmethod', 'median')
 
+  // Persisted image output options (iccApplyProfiles destination knobs, G1-G5). Encoding
+  // + compression + planar shape the saved TIFF; embed-ICC tags the output with the
+  // chain's last profile; CMM interpolation is the global apply interpolation (also fed
+  // to DeviceLink / Transform Data so the whole tab is consistent).
+  const [outEncoding, setOutEncoding] = usePersisted('profiletool.img.enc', 'same')     // same|8|16|float
+  // Default 'none' so the friendly PNG default holds for RGB/Gray; picking LZW/ZIP is an
+  // opt-in to TIFF output (they're TIFF-only knobs, so they force the container).
+  const [compression, setCompression] = usePersisted('profiletool.img.comp', 'none')    // none|lzw|zip
+  const [planar, setPlanar] = usePersisted('profiletool.img.planar', 'contig')          // contig|separate
+  const [embedIcc, setEmbedIcc] = usePersisted('profiletool.img.embed', true)
+  const [interp, setInterp] = usePersisted('profiletool.img.interp', 'tetrahedral')     // tetrahedral|linear
+
   const stageEntries = useMemo(() => chain.map((id) => getEntry(id)), [chain, getEntry])
   const broken = stageEntries.some((e) => !e)
+
+  // Per-stage extended-intent availability (G6). profileApplyCaps reports the tag/version
+  // facts that gate the no-D2Bx / BPC flavours; base 0-3 are always offered. Recomputed
+  // when the chain's profiles change (a swap/edit gives a fresh entry object).
+  const [stageCaps, setStageCaps] = useState([])
+  useEffect(() => {
+    if (broken || chain.length === 0) { setStageCaps([]); return }
+    let cancelled = false
+    Promise.all(stageEntries.map((e) => e ? profileApplyCaps(e.currentBytes).catch(() => null) : null))
+      .then((caps) => { if (!cancelled) setStageCaps(caps) })
+    return () => { cancelled = true }
+  }, [stageEntries, broken, chain.length])
+  // Global RI listbox = base plus any flavour ANY chained profile supports.
+  const globalIntentOptions = useMemo(() => {
+    const out = RENDERING_INTENTS.slice()
+    if (stageCaps.some((c) => c?.hasD2Bx)) out.push(...INTENT_NO_D2BX)
+    if (stageCaps.some((c) => c?.hasLut)) out.push(...INTENT_BPC)
+    return out
+  }, [stageCaps])
 
   // AUTHORITATIVE chain validation (WASM CMM assembly). Gates outcomes; drives warnings.
   const [info, setInfo] = useState(null)
@@ -158,12 +251,13 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
     let cancelled = false
     setChecking(true)
     const bytes = stageEntries.map((e) => e.currentBytes)
-    // Authoritative validation with the CHOSEN per-transform intents + head direction.
-    chainInfo(bytes, intents, headForward)
+    // Authoritative validation with the CHOSEN per-transform intents + head direction +
+    // interpolation (so a linear-interp chain is gated/analysed as it will be applied).
+    chainInfo(bytes, intents, headForward, interp)
       .then((r) => { if (!cancelled) { setInfo(r); setChecking(false) } })
       .catch(() => { if (!cancelled) { setInfo({ ok: false, error: 'Could not analyse the chain.' }); setChecking(false) } })
     return () => { cancelled = true }
-  }, [stageEntries, broken, chain.length, intentsKey, headForward])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stageEntries, broken, chain.length, intentsKey, headForward, interp])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fast per-transform flow (labels + per-stage problems) from the header signatures.
   // The WASM `info` is the authoritative gate; `flow` drives the directional labels,
@@ -236,7 +330,7 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
   // Accept an image: streaming probe (type + size + colour space), pixels NOT loaded.
   const acceptImage = useCallback(async (file) => {
     if (!file) return
-    setImage(null); setImageInfo(null); setImageErr(null); setImgChecking(true)
+    setImage(null); setImageInfo(null); setImageErr(null); setImgChecking(true); setEmbedded(null)
     setError(null); setNotice(null)
     let probe
     try { probe = await probeImageFromFile(file) }
@@ -254,14 +348,37 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
       return
     }
     setImage(file); setImageInfo(probe); setImgChecking(false)
-  }, [t])
+    // G9: metadata-only sniff for an embedded ICC (pixels still not loaded). If present,
+    // offer to extract it into the chain — never auto-adds.
+    if (onAddProfile) {
+      try {
+        const prof = await findEmbeddedProfileFromFile(file)
+        if (prof && prof.length) setEmbedded(prof instanceof Uint8Array ? prof : new Uint8Array(prof))
+      } catch { /* extraction is optional — ignore a probe failure */ }
+    }
+  }, [t, onAddProfile])
 
   const onImageDrop = useCallback((e) => {
     e.preventDefault(); e.stopPropagation(); setImgOver(false)
     const f = Array.from(e.dataTransfer.files || [])[0]
     if (f) acceptImage(f)
   }, [acceptImage])
-  const clearImage = () => { setImage(null); setImageInfo(null); setImageErr(null); setImgChecking(false) }
+  const clearImage = () => { setImage(null); setImageInfo(null); setImageErr(null); setImgChecking(false); setEmbedded(null) }
+
+  // G9: extract the image's embedded ICC → new pool profile, placed at the head of the
+  // chain (its source space) + accumulated on the Link tab.
+  async function extractEmbedded() {
+    if (!embedded || extracting || !onAddProfile) return
+    setExtracting(true); setError(null); setNotice(null)
+    try {
+      const stem = (image?.name || 'image').replace(/\.[^.]+$/, '')
+      const id = await onAddProfile(`${stem}-embedded.icc`, embedded)
+      prependStage(id)
+      onAccumulate?.([id])
+      setEmbedded(null)
+      setNotice(t('pl_extract_done') || 'Extracted the embedded profile — added to the pool and placed first in the chain.')
+    } catch (e) { setError(e?.message || String(e)) } finally { setExtracting(false) }
+  }
 
   // Accept a dataset: read text → parse → summarise. Held; transformed on demand.
   const acceptData = useCallback(async (file) => {
@@ -344,7 +461,7 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
     if (!clean || !canLink || busy) return
     setBusy(true); setError(null); setNotice(null)
     try {
-      await onBuildLink(chain.slice(), clean, { intents: intents.slice(), firstInput: headForward })
+      await onBuildLink(chain.slice(), clean, { intents: intents.slice(), firstInput: headForward, interp })
       setNaming(false)
       setNotice(t('pl_link_made', { name: clean }) || `Created “${clean}” — added to the pool and this tab.`)
     } catch (e) { setError(e?.message || String(e)) } finally { setBusy(false) }
@@ -353,13 +470,16 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
   // ── outcome: Transform Image ────────────────────────────────────────────────
   async function transformImage() {
     if (!canTransform || busy || !image) return
-    // Output container is decided by the chain's dest channel count (1/3 → PNG, else
-    // TIFF) — mirrors lib/pipelineEngine.js encodeImage, so we can name the file up
-    // front. The transform can take seconds and consume the user activation, so on
-    // Chromium we open the Save dialog NOW (fresh gesture) and write to the handle
-    // after; other browsers fall back to prompt-for-name + download post-transform.
+    // Output container mirrors lib/pipelineEngine.js applyToImage so we can name the file
+    // up front: the friendly default is PNG for 1/3-channel 8/16-bit output, but the
+    // TIFF-only knobs (float, LZW/ZIP, separated planes) — and 4+ channels — force TIFF.
+    // The transform can take seconds and consume the user activation, so on Chromium we
+    // open the Save dialog NOW (fresh gesture) and write to the handle after; other
+    // browsers fall back to prompt-for-name + download post-transform.
     const nDst = info?.destSamples || 0
-    const isPng = nDst === 1 || nDst === 3
+    const forceTiff = outEncoding === 'float' || planar === 'separate' ||
+      (compression && compression !== 'none') || nDst === 2 || nDst >= 4
+    const isPng = !forceTiff && (nDst === 1 || nDst === 3)
     const ext = isPng ? 'png' : 'tif'
     const mime = isPng ? 'image/png' : 'image/tiff'
     const stem = (image.name || 'image').replace(/\.[^.]+$/, '')
@@ -380,7 +500,10 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
 
     setBusy(true); setError(null); setNotice(null)
     try {
-      const results = await onApplyImages(chain.slice(), [image], { intents: intents.slice(), firstInput: headForward })
+      const results = await onApplyImages(chain.slice(), [image], {
+        intents: intents.slice(), firstInput: headForward, interp,
+        outEncoding, compression, planar, embedIcc,
+      })
       const out = results && results[0]
       if (!out) throw new Error('No image was produced.')
       if (handle) {
@@ -430,7 +553,7 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
       const dstEncoding = dstKind === 'device' ? 'percent' : 'value'
 
       const res = await engineTransformData(chainBytes, input.samples, input.nSrc, {
-        intents: intents.slice(), firstInput: headForward, srcEncoding: input.srcEncoding, dstEncoding,
+        intents: intents.slice(), firstInput: headForward, srcEncoding: input.srcEncoding, dstEncoding, interp,
       })
 
       // Assemble the result table: source cols (fed) + dest cols (produced).
@@ -594,6 +717,21 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
         </div>
       )}
 
+      {/* G9: the dropped image carries an embedded ICC — offer to extract it into the
+          chain (its source space). Never auto-adds; the user decides. */}
+      {embedded && image && (
+        <div className={styles.extractBar}>
+          <span className={styles.extractText}>
+            {t('pl_extract_prompt') || 'This image has an embedded ICC profile.'}
+          </span>
+          <button className={styles.extractBtn} type="button" disabled={extracting} onClick={extractEmbedded}>
+            {extracting ? (t('pl_extracting') || 'Extracting…') : (t('pl_extract_btn') || 'Extract & add to chain')}
+          </button>
+          <button className={styles.extractSkip} type="button" onClick={() => setEmbedded(null)}
+                  aria-label={t('pl_extract_skip') || 'Dismiss'}>×</button>
+        </div>
+      )}
+
       {/* ── ACTIVE AREA: the profile-drop target (card minus the two sub-boxes). Only
              this region highlights when a profile is dragged in — never the whole
              Combine canvas. Holds the dataset controls, the vertical chain, the
@@ -663,8 +801,10 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
               <label className={`${styles.ctl} ${intentsMixed ? styles.ctlMixed : ''}`}
                      title={intentsMixed ? (t('pl_ri_mixed') || 'Transforms use different intents') : ''}>
                 {t('pl_global_ri') || 'Rendering intent (all)'}
-                <select value={globalIntent} onChange={(e) => setGlobalIntent(Number(e.target.value))}>
-                  {RENDERING_INTENTS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                <select value={globalIntent} onChange={(e) => setGlobalIntent(Number(e.target.value))}
+                        title={intentDescription(globalIntent)}>
+                  {withCurrent(globalIntentOptions, globalIntent).map((o) =>
+                    <option key={o.id} value={o.id} title={intentDescription(o.id)}>{o.label}</option>)}
                 </select>
               </label>
             </div>
@@ -701,9 +841,10 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
                           </span>
                           {fs.canIntent && (
                             <select className={styles.stageRi} value={intents[i] ?? globalIntent}
-                                    title={t('pl_stage_ri') || 'Rendering intent for this transform'}
+                                    title={`${t('pl_stage_ri') || 'Rendering intent for this transform'}\n\n${intentDescription(intents[i] ?? globalIntent)}`}
                                     onChange={(e) => setIntentAt(i, Number(e.target.value))}>
-                              {RENDERING_INTENTS.map((o) => <option key={o.id} value={o.id}>{o.short}</option>)}
+                              {withCurrent(intentOptionsFor(stageCaps[i]), intents[i] ?? globalIntent)
+                                .map((o) => <option key={o.id} value={o.id} title={`${o.label}\n\n${intentDescription(o.id)}`}>{o.short}</option>)}
                             </select>
                           )}
                         </span>
@@ -769,30 +910,78 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
             {busy && dataParsed ? (t('dm_transforming') || 'Transforming…') : (t('dm_transform_data') || 'Transform Data')}
           </button>
           {/* Invert Transform (iccApplySearch): the last (engine-ordered) stage is inverted
-              via search. Always shown (like its siblings), disabled off a 2–3 profile chain
-              with a tooltip that says why. The direction selector + note appear once the
-              chain is a valid 2–3 length. */}
-          <div className={styles.invertGroup}>
-            <button className="btn-primary" type="button" disabled={!canInvert} onClick={doInvertData}
-                    title={invPlan.ok
-                      ? (t('dm_invert_hint', { in: invPlan.dataSpace, out: invPlan.outSpace })
-                        || `Data in ${invPlan.dataSpace} → search ${invPlan.outSpace}`)
-                      : (t('dm_invert_need') || 'Invert needs a 2–3 profile chain')}>
-              {busy && dataParsed ? (t('dm_inverting') || 'Inverting…') : (t('dm_invert_data') || 'Invert Transform')}
-            </button>
-            {chain.length >= 2 && chain.length <= 3 && (
-              <label className={styles.invertDir}>
-                <span>{t('dm_invert_which') || 'Invert'}</span>
-                <select value={invertReverse ? '1' : '0'} onChange={(e) => setInvertReverse(e.target.value === '1')}
-                        aria-label={t('dm_invert_which') || 'Which stage to invert'}>
-                  <option value="0">{t('dm_invert_last') || 'last stage'}{invPlan.ok ? ` → ${invPlan.outSpace}` : ''}</option>
-                  <option value="1">{t('dm_invert_first') || 'first stage'}</option>
+              via search. Hidden for now behind SHOW_INVERT (see the flag near the top) —
+              the search path awaits worker isolation. */}
+          {SHOW_INVERT && (
+            <div className={styles.invertGroup}>
+              <button className="btn-primary" type="button" disabled={!canInvert} onClick={doInvertData}
+                      title={invPlan.ok
+                        ? (t('dm_invert_hint', { in: invPlan.dataSpace, out: invPlan.outSpace })
+                          || `Data in ${invPlan.dataSpace} → search ${invPlan.outSpace}`)
+                        : (t('dm_invert_need') || 'Invert needs a 2–3 profile chain')}>
+                {busy && dataParsed ? (t('dm_inverting') || 'Inverting…') : (t('dm_invert_data') || 'Invert Transform')}
+              </button>
+              {chain.length >= 2 && chain.length <= 3 && (
+                <label className={styles.invertDir}>
+                  <span>{t('dm_invert_which') || 'Invert'}</span>
+                  <select value={invertReverse ? '1' : '0'} onChange={(e) => setInvertReverse(e.target.value === '1')}
+                          aria-label={t('dm_invert_which') || 'Which stage to invert'}>
+                    <option value="0">{t('dm_invert_last') || 'last stage'}{invPlan.ok ? ` → ${invPlan.outSpace}` : ''}</option>
+                    <option value="1">{t('dm_invert_first') || 'first stage'}</option>
+                  </select>
+                </label>
+              )}
+            </div>
+          )}
+        </div>
+        {/* Image output options (iccApplyProfiles destination knobs, G1-G5). Shown only
+            with a valid image loaded, sitting directly under the Transform Image button. */}
+        {image && imageInfo?.ok && (
+          <div className={styles.imgOptions}>
+            <span className={styles.imgOptTitle}>{t('img_out_title') || 'Image output options'}</span>
+            <div className={styles.imgOptRow}>
+              <label className={styles.ctl}>
+                {t('img_out_enc') || 'Encoding'}
+                <select value={outEncoding} onChange={(e) => setOutEncoding(e.target.value)}>
+                  <option value="same">{t('img_enc_same') || 'Same as source'}</option>
+                  <option value="8">{t('img_enc_8') || '8-bit'}</option>
+                  <option value="16">{t('img_enc_16') || '16-bit'}</option>
+                  <option value="float">{t('img_enc_float') || 'Float (32-bit)'}</option>
                 </select>
               </label>
-            )}
+              <label className={styles.ctl}>
+                {t('img_out_comp') || 'Compression'}
+                <select value={compression} onChange={(e) => setCompression(e.target.value)}>
+                  <option value="none">{t('img_comp_none') || 'None'}</option>
+                  <option value="lzw">LZW</option>
+                  <option value="zip">ZIP</option>
+                </select>
+              </label>
+              <label className={styles.ctl}>
+                {t('img_out_planar') || 'Planar'}
+                <select value={planar} onChange={(e) => setPlanar(e.target.value)}>
+                  <option value="contig">{t('img_planar_contig') || 'Composite'}</option>
+                  <option value="separate">{t('img_planar_sep') || 'Separated'}</option>
+                </select>
+              </label>
+              <label className={styles.ctl}>
+                {t('img_out_interp') || 'CMM interpolation'}
+                <select value={interp} onChange={(e) => setInterp(e.target.value)}>
+                  <option value="tetrahedral">{t('img_interp_tetra') || 'Tetrahedral'}</option>
+                  <option value="linear">{t('img_interp_linear') || 'Linear'}</option>
+                </select>
+              </label>
+              <label className={styles.ctlCheck}>
+                <input type="checkbox" checked={embedIcc} onChange={(e) => setEmbedIcc(e.target.checked)} />
+                {t('img_out_embed') || 'Embed ICC'}
+              </label>
+            </div>
+            <p className={styles.imgOptHint}>
+              {t('img_out_hint') || 'Encoding, compression and planar shape the saved TIFF. RGB/Gray output stays PNG unless a TIFF-only option (float, LZW/ZIP, separated) is set.'}
+            </p>
           </div>
-        </div>
-        {chain.length >= 2 && chain.length <= 3 && invPlan.ok && (
+        )}
+        {SHOW_INVERT && chain.length >= 2 && chain.length <= 3 && invPlan.ok && (
           <p className={styles.invertNote}>
             {t('dm_invert_note', { in: invPlan.dataSpace, out: invPlan.outSpace })
               || `Inverting “${invPlan.invertedName}” — the dataset must be ${invPlan.dataSpace}; produces ${invPlan.outSpace} with a per-patch invertibility cost.`}

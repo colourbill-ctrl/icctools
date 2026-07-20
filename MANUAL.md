@@ -10,6 +10,7 @@
 - **Browse the tag directory** — every tag with its signature, type, byte offset, size, and pad bytes. Click any tag to expand a full type-specific description (the same output as the iccDEV `wxProfileDump` "Describe" view), and — for tags that carry one — an inline **visualization**: tone-response curves, chromaticity charts, CLUT and gamut images, named-colour scatters, plus a single-point **transform evaluator**.
 - **Validate** — run the ICC Profile Assessment Working Group checklist (Security / Conformance / Quality), each check with a verdict, filterable by category.
 - **Round-trip edit** — convert the profile to XML or JSON, edit it in the built-in code editor, convert back to ICC, and re-validate. The save button downloads the edited binary.
+- **Chain profiles** — in the **Combine** tab, drag pooled profiles into an ordered chain, then bake it into a **DeviceLink**, **transform an image** through it (with full control over output encoding, compression, planar layout and ICC embedding), or **transform a colour dataset**.
 - **Launch from chardata** — open a profile that's loaded in [chardata](https://chardata.colourbill.com/) directly here, with the bytes handed over in-browser via `postMessage`.
 - **Launch with a URL** — open a link that points the tool at a profile hosted on the web and, optionally, the tab to land on (e.g. `…/profiletool#url=…&tab=VAL`).
 
@@ -28,11 +29,18 @@ Everything runs client-side. Profile bytes never leave the browser tab.
    - [Analysis](#3-4-analysis)
    - [XML](#3-5-xml)
    - [JSON](#3-6-json)
-4. [Round-trip editing](#4-round-trip-editing)
-5. [Launching from chardata](#5-launching-from-chardata)
-6. [Launching with a URL](#6-launching-with-a-url)
-7. [Mobile](#7-mobile)
-8. [Limits and security](#8-limits-and-security)
+4. [Combine tab](#4-combine-tab)
+   - [Building a chain](#4-1-building-a-chain)
+   - [Make DeviceLink](#4-2-make-devicelink)
+   - [Transform Image](#4-3-transform-image)
+   - [Transform Data](#4-4-transform-data)
+   - [V4 Display maker](#4-5-v4-display-maker)
+   - [Compare and Spectral tabs](#4-6-compare-and-spectral-tabs)
+5. [Round-trip editing](#5-round-trip-editing)
+6. [Launching from chardata](#6-launching-from-chardata)
+7. [Launching with a URL](#7-launching-with-a-url)
+8. [Mobile](#8-mobile)
+9. [Limits and security](#9-limits-and-security)
 
 ---
 
@@ -175,7 +183,55 @@ Same idea as the XML tab but using a JSON representation of the profile produced
 
 ---
 
-## 4. Round-trip editing
+## 4. Combine tab
+
+profiletool keeps every loaded profile in a **Profile Pool** on the left. Across the top are four tabs — **Profile** (the single-profile viewer above), **Compare**, **Combine**, and **Spectral**. The **Combine** tab is where you chain profiles together and put them to work: build a **DeviceLink**, **transform an image**, or **transform a colour dataset** through the chain.
+
+### 4.1 Building a chain
+
+Drag one or more profiles from the pool into the Combine card to add them to the chain, in order. The chain is a **vertical stack**: the source is at the top, the sink at the bottom. Each profile contributes **one transform**, and the tool shows the colour space entering and leaving it (e.g. `RGB → Lab`), with the **connecting space** labelled on the line between stages. The engine validates the whole chain live and reports the end-to-end flow (e.g. *Chain: RGB → CMYK*) or explains, per stage, where it fails to connect.
+
+- **Reorder** a stage by dragging its grip (`⠿`) or with the ▲ / ▼ buttons; remove one with ×.
+- **Flip direction** — the head transform's ⇅ button reverses the chain's direction, rippling through the following stages.
+- **Rendering intent** — pick one for the whole chain with *Rendering intent (all)*, or override any single stage with its own listbox. Hover either control for a description of the selected intent. Beyond the four base intents, a profile that carries the necessary tables also offers the *no D2Bx/B2Dx* and *+ BPC* (black-point compensation) variants.
+
+### 4.2 Make DeviceLink
+
+Bakes the whole chain into a single **DeviceLink** profile (an in-browser port of iccDEV's `iccApplyToLink`). Name it and click **Make DeviceLink**; the result lands in the pool and the Combine accumulator like any other profile, ready to inspect on the Profile tab or reuse in another chain.
+
+### 4.3 Transform Image
+
+Drop one raster image (TIFF, PNG or JPEG) into the image slot and click **Transform Image** to run it through the chain (an in-browser port of `iccApplyProfiles`). The image is validated by a header-only probe first — its colour space must match the chain's input. The result **downloads**; images are never stored in the pool.
+
+When a valid image is loaded, an **Image output options** panel appears with the destination knobs that mirror the `iccApplyProfiles` CLI:
+
+- **Encoding** — *Same as source*, 8-bit, 16-bit, or **Float (32-bit)**.
+- **Compression** — None, **LZW**, or **ZIP** (Deflate).
+- **Planar** — **Composite** (chunky) or **Separated** planes.
+- **CMM interpolation** — **Tetrahedral** or **Linear**.
+- **Embed ICC** — tag the output with the chain's last (output-space) profile.
+
+The friendly default keeps RGB/Gray output as a PNG; choosing a TIFF-only knob (float, LZW/ZIP, or separated planes) switches the container to TIFF.
+
+<div class="note">
+<strong>Embedded profiles:</strong> if the dropped image carries its own embedded ICC profile, a banner offers to <strong>extract</strong> it — the profile is added to the pool and placed at the head of the chain (its source space) in one click.
+</div>
+
+### 4.4 Transform Data
+
+Drop a colour dataset (CGATS/IT8, CSV, CxF, or JSON) into the data slot and click **Transform Data** to run every patch through the chain (the `iccApplyNamedCmm` equivalent). The tool reads the dataset's kinds (device / Lab / XYZ / spectral) and feeds whichever the chain's input needs; a **spectral** input is converted to colorimetry with iccDEV's canonical calculator, using the **Observer** and **Illuminant** you choose. Duplicate patches can be filtered (median or mean). The result opens in a table you can **Save** as CSV.
+
+### 4.5 V4 Display maker
+
+Above the Link Pipeline, the **V4 Display Maker** card builds a v4.3 matrix/TRC display profile from a V5 display profile plus a V5 observer profile — drop one into each role slot and click **Create**. The result joins the pool.
+
+### 4.6 Compare and Spectral tabs
+
+The **Compare** tab overlays the gamut boundaries of two or more pooled profiles — a 3-D shell plus a 2-D lightness slice — to see where they differ. The **Spectral** tab assembles a set of single-channel spectral images (dropped in channel order) into one multi-channel TIFF (`iccSpecSepToTiff`).
+
+---
+
+## 5. Round-trip editing
 
 Both the XML and JSON tabs can write the profile back to ICC binary. The typical workflow:
 
@@ -196,7 +252,7 @@ The Tags tab highlights any tag whose bytes differ from the original load, so it
 
 ---
 
-## 5. Launching from chardata
+## 6. Launching from chardata
 
 In **chardata**, after loading an ICC profile, click **Display File** to open the in-page viewer, then click **Launch editor**. A new tab opens here with `?source=chardata` in the URL.
 
@@ -210,7 +266,7 @@ No upload, no server round-trip. The flow is one-way — edits made here are sav
 
 ---
 
-## 6. Launching with a URL
+## 7. Launching with a URL
 
 You can open the tool with a link that names a profile to load — and the tab to land on — using a **URL fragment** (the part after `#`):
 
@@ -253,7 +309,7 @@ The long names are the on-screen tab labels with the spaces removed. Both scheme
 
 ---
 
-## 7. Mobile
+## 8. Mobile
 
 On screens narrower than 700 px:
 
@@ -269,7 +325,7 @@ All features are available; the layout adapts to the smaller screen.
 
 ---
 
-## 8. Limits and security
+## 9. Limits and security
 
 profiletool makes no network requests after the initial page load. The validator, the XML converter, and the JSON converter are all WebAssembly compiled from iccDEV C++ sources and run entirely client-side.
 
