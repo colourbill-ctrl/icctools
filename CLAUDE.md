@@ -180,10 +180,17 @@ Patch release that rebuilds the WASM against the latest iccDEV (the common case)
 ```bash
 # 1. Build all WASM modules against a CLEAN iccDEV master (not a feature/test branch).
 #    Wipe the build dir so it reconfigures against the clean root.
+git -C ~/code/iccdev fetch origin                    # else origin/master may be stale
 git -C ~/code/iccdev worktree add --detach /tmp/iccdev-clean origin/master
+# third_party/ (libtiff, libpng, libjpeg, libxml2, zlib, nlohmann-json) is UNTRACKED
+# vendored source, so a fresh worktree does not get it and CMake aborts with
+# "libtiff source not found". Link it in — these are third-party deps, not iccDEV
+# source, so this does not weaken the "IccProfLib from clean master" property.
+ln -s ~/code/iccdev/third_party /tmp/iccdev-clean/third_party
 source ~/emsdk-install/emsdk/emsdk_env.sh
 rm -rf validator-wasm/build
 ICCDEV_ROOT=/tmp/iccdev-clean scripts/build-wasm.sh     # copies into frontend/public/wasm/ + refreshes SHA256SUMS
+rm -f /tmp/iccdev-clean/third_party        # drop the symlink before removing the worktree
 git -C ~/code/iccdev worktree remove /tmp/iccdev-clean --force
 
 # 2. Bump "version" in frontend/package.json AND frontend/package-lock.json (root + packages."" only).
