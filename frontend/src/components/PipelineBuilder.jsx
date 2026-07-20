@@ -184,6 +184,7 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
   const [imageErr, setImageErr] = useState(null)
   const [imgChecking, setImgChecking] = useState(false)
   const [imgOver, setImgOver] = useState(false)
+  const [progress, setProgress] = useState(0)   // 0..1 during Transform Image
   // G9: an ICC embedded in the dropped image, offered for extraction into the chain.
   const [embedded, setEmbedded] = useState(null)     // Uint8Array | null
   const [extracting, setExtracting] = useState(false)
@@ -312,7 +313,9 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
   const [invChecking, setInvChecking] = useState(false)
   const engineIntentsKey = engineIntents.join(',')
   useEffect(() => {
-    if (broken || chain.length < 2 || chain.length > 3) { setInvInfo(null); setInvChecking(false); return }
+    // SHOW_INVERT gates the WORK as well as the UI — no point loading the construct module
+    // and validating an inversion for a feature that renders nowhere.
+    if (!SHOW_INVERT || broken || chain.length < 2 || chain.length > 3) { setInvInfo(null); setInvChecking(false); return }
     let cancelled = false
     setInvChecking(true)
     const bytes = engineChain.map((id) => getEntry(id)?.currentBytes).filter(Boolean)
@@ -385,6 +388,10 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
     if (!file) return
     setDataParsed(null); setDataSummary(null); setDataErr(null)
     setError(null); setNotice(null)
+    // Cap by file.size BEFORE reading — decoding a huge file into a JS string first and
+    // checking afterwards is exactly the OOM the guard exists to prevent (App.jsx's ICC
+    // ingest already caps up front; this path had drifted from that pattern).
+    if (file.size > MAX_DATA_CHARS) { setDataErr(t('pl_data_toolarge') || 'Data file too large.'); return }
     let text
     try { text = await file.text() }
     catch { setDataErr(t('pl_data_read') || 'Could not read that file.'); return }
@@ -498,11 +505,12 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
       }
     }
 
-    setBusy(true); setError(null); setNotice(null)
+    setBusy(true); setError(null); setNotice(null); setProgress(0)
     try {
       const results = await onApplyImages(chain.slice(), [image], {
         intents: intents.slice(), firstInput: headForward, interp,
         outEncoding, compression, planar, embedIcc,
+        onProgress: setProgress,
       })
       const out = results && results[0]
       if (!out) throw new Error('No image was produced.')
@@ -515,8 +523,18 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
         const saved = await saveBinaryFile(out.bytes, out.filename || suggested, mime)
         if (!saved) { setBusy(false); return }   // cancelled at the name prompt
       }
-      setNotice(t('pl_img_done') || 'Saved the transformed image.')
-    } catch (err) { setError(err?.message || String(err)) } finally { setBusy(false) }
+      // Say so when the transform clamped or produced non-finite values — otherwise a
+      // degenerate profile or a heavily out-of-gamut absolute-colorimetric run just looks
+      // like a clean conversion.
+      let msg = t('pl_img_done') || 'Saved the transformed image.'
+      const bad = (out.clipped || 0) + (out.nonFinite || 0)
+      if (bad > 0 && out.totalSamples) {
+        const pct = (bad * 100) / out.totalSamples
+        msg += ' ' + (t('pl_img_clipped', { pct: pct.toFixed(pct < 1 ? 2 : 1) })
+          || `${pct.toFixed(pct < 1 ? 2 : 1)}% of samples were out of range and were clamped.`)
+      }
+      setNotice(msg)
+    } catch (err) { setError(err?.message || String(err)) } finally { setBusy(false); setProgress(0) }
   }
 
   // ── outcome: Transform Data (iccApplyNamedCmm equivalent) ───────────────────
@@ -904,7 +922,9 @@ export default function PipelineBuilder({ getEntry, onBuildLink, onApplyImages, 
             {t('pl_make_link') || 'Make DeviceLink'}
           </button>
           <button className="btn-primary" type="button" disabled={!canTransform} onClick={transformImage}>
-            {busy && image ? (t('pl_transforming') || 'Transforming…') : (t('pl_transform') || 'Transform Image')}
+            {busy && image
+              ? `${t('pl_transforming') || 'Transforming…'}${progress > 0 ? ` ${Math.round(progress * 100)}%` : ''}`
+              : (t('pl_transform') || 'Transform Image')}
           </button>
           <button className="btn-primary" type="button" disabled={!canTransformData} onClick={doTransformData}>
             {busy && dataParsed ? (t('dm_transforming') || 'Transforming…') : (t('dm_transform_data') || 'Transform Data')}

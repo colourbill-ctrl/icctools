@@ -143,11 +143,16 @@ if(BUILD_ICCXML)
 
   set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
+  # Pinned to the COMMIT that v2.12.6 pointed at, not the tag. A git tag is mutable —
+  # anyone with push rights upstream can retarget it — and this is the parser that
+  # handles attacker-controlled XML in the ICC round-trip, so a moved tag would silently
+  # change native code that ships to every user. GIT_SHALLOW is incompatible with a raw
+  # SHA (it can only shallow-clone a ref), so it is deliberately off here.
+  # To bump: check out the new tag, record `git rev-parse HEAD`, and update both lines.
   FetchContent_Declare(
     libxml2
     GIT_REPOSITORY https://gitlab.gnome.org/GNOME/libxml2.git
-    GIT_TAG        v2.12.6
-    GIT_SHALLOW    TRUE
+    GIT_TAG        505e2e872e767405be565aa9d47ae9d6d5677f79  # v2.12.6
   )
   FetchContent_MakeAvailable(libxml2)
 

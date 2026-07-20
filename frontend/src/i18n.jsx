@@ -8,6 +8,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 // consistent across the two apps.
 export const I18N = {
   en: {
+    pl_img_clipped: "{pct}% of samples were out of range and were clamped.",
     analysis_rt_heading: 'Round-Trip (PRMG)',
     analysis_rt_intro: 'Device-cube round trip through the profile, matching the iccRoundTrip reference tool. Round Trip 1 is the device→PCS→device error (ΔE*ab); Round Trip 2 is the PCS round-trip stability. The PRMG histogram reports interoperability against the Perceptual Reference Medium Gamut.',
     analysis_rt_usempe: 'Use MPE (color) tags',
@@ -342,6 +343,7 @@ export const I18N = {
     revalidation_failed: 'Profile written from edits, but re-validation failed:',
   },
   fr: {
+    pl_img_clipped: "{pct} % des \u00e9chantillons \u00e9taient hors plage et ont \u00e9t\u00e9 \u00e9cr\u00eat\u00e9s.",
     tab_specsep: "Spectral",
     gamut_axis_numbers: "Numéros des axes",
     pl_title: "Pipeline de liaison",
@@ -694,6 +696,7 @@ export const I18N = {
     reject_ok: 'OK',
   },
   de: {
+    pl_img_clipped: "{pct} % der Abtastwerte lagen au\u00dferhalb des Bereichs und wurden begrenzt.",
     tab_specsep: "Spektral",
     gamut_axis_numbers: "Achsenwerte",
     pl_title: "Link-Pipeline",
@@ -1046,6 +1049,7 @@ export const I18N = {
     reject_ok: 'OK',
   },
   it: {
+    pl_img_clipped: "Il {pct}% dei campioni era fuori intervallo ed \u00e8 stato limitato.",
     tab_specsep: "Spettrale",
     gamut_axis_numbers: "Numeri degli assi",
     pl_title: "Pipeline di collegamento",
@@ -1398,6 +1402,7 @@ export const I18N = {
     reject_ok: 'OK',
   },
   es: {
+    pl_img_clipped: "El {pct} % de las muestras estaba fuera de rango y se recort\u00f3.",
     tab_specsep: "Espectral",
     gamut_axis_numbers: "Números de eje",
     pl_title: "Flujo de enlace",
@@ -1750,6 +1755,7 @@ export const I18N = {
     reject_ok: 'Aceptar',
   },
   'pt-PT': {
+    pl_img_clipped: "{pct}% das amostras estavam fora do intervalo e foram limitadas.",
     tab_specsep: "Espectral",
     gamut_axis_numbers: "Números dos eixos",
     pl_title: "Fluxo de ligação",
@@ -2102,6 +2108,7 @@ export const I18N = {
     reject_ok: 'OK',
   },
   'pt-BR': {
+    pl_img_clipped: "{pct}% das amostras estavam fora da faixa e foram limitadas.",
     tab_specsep: "Espectral",
     gamut_axis_numbers: "Números dos eixos",
     pl_title: "Fluxo de vinculação",
@@ -2454,6 +2461,7 @@ export const I18N = {
     reject_ok: 'OK',
   },
   sv: {
+    pl_img_clipped: "{pct} % av sampelv\u00e4rdena l\u00e5g utanf\u00f6r intervallet och klipptes.",
     tab_specsep: "Spektral",
     gamut_axis_numbers: "Axelnummer",
     pl_title: "Länkpipeline",
@@ -2806,6 +2814,7 @@ export const I18N = {
     reject_ok: 'OK',
   },
   'zh-CN': {
+    pl_img_clipped: "{pct}% \u7684\u91c7\u6837\u503c\u8d85\u51fa\u8303\u56f4\uff0c\u5df2\u88ab\u88c1\u526a\u3002",
     tab_specsep: "光谱",
     gamut_axis_numbers: "轴编号",
     pl_title: "链接流水线",
@@ -3158,6 +3167,7 @@ export const I18N = {
     reject_ok: '确定',
   },
   'zh-TW': {
+    pl_img_clipped: "{pct}% \u7684\u53d6\u6a23\u503c\u8d85\u51fa\u7bc4\u570d\uff0c\u5df2\u88ab\u88c1\u526a\u3002",
     tab_specsep: "光譜",
     gamut_axis_numbers: "軸編號",
     pl_title: "連結管線",
@@ -3510,6 +3520,7 @@ export const I18N = {
     reject_ok: '確定',
   },
   ja: {
+    pl_img_clipped: "\u30b5\u30f3\u30d7\u30eb\u306e {pct}% \u304c\u7bc4\u56f2\u5916\u306e\u305f\u3081\u30af\u30e9\u30f3\u30d7\u3055\u308c\u307e\u3057\u305f\u3002",
     tab_specsep: "スペクトル",
     gamut_axis_numbers: "軸の数値",
     pl_title: "リンクパイプライン",
@@ -3862,6 +3873,7 @@ export const I18N = {
     reject_ok: 'OK',
   },
   ko: {
+    pl_img_clipped: "\uc0d8\ud50c\uc758 {pct}%\uac00 \ubc94\uc704\ub97c \ubc97\uc5b4\ub098 \ud074\ub7a8\ud504\ub418\uc5c8\uc2b5\ub2c8\ub2e4.",
     tab_specsep: "스펙트럴",
     gamut_axis_numbers: "축 번호",
     pl_title: "링크 파이프라인",

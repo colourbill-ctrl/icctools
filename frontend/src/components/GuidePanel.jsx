@@ -42,14 +42,48 @@ function reactAttrName(name) {
   return name.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
 }
 
+// This converter is equivalent to an HTML-injection sink: it turns parsed markup into
+// live DOM. The pre-commit F4 check only greps for the handful of literal DOM-writing
+// API names, so it cannot see a sink assembled from DOMParser + createElement like this
+// one — the filtering below is what actually enforces the no-injection invariant, not
+// that check. Today the only input is repo-generated help.html; keep it safe regardless.
+//
+// Allowlisted tags: the markdown subset generate-help.js can emit, plus the SVG element
+// set used by the diagrams. Anything else (script, iframe, object, embed, form, link,
+// meta, base, …) is dropped along with its subtree.
+const ALLOWED_TAGS = new Set([
+  'div', 'p', 'span', 'a', 'em', 'strong', 'code', 'pre', 'br', 'hr',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'nav',
+  'table', 'thead', 'tbody', 'tr', 'th', 'td', 'blockquote', 'mark',
+  'svg', 'g', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon',
+  'path', 'text', 'tspan', 'defs', 'style', 'title',
+])
+// Only these URL schemes may appear in an href. Blocks javascript:, data:, vbscript:.
+function safeHref(v) {
+  const s = String(v).trim()
+  if (s.startsWith('#') || s.startsWith('/')) return s          // in-page / site-relative
+  return /^https?:\/\//i.test(s) ? s : null
+}
+
 function domToReact(node, key) {
   if (node.nodeType === 3) return node.nodeValue   // text node → escaped string child
   if (node.nodeType !== 1) return null             // skip comments / others
   const tag = node.tagName.toLowerCase()
+  if (!ALLOWED_TAGS.has(tag)) return null          // drop unknown element AND its subtree
   const props = { key }
   for (const attr of node.attributes) {
-    if (attr.name === 'style') { props.style = parseStyle(attr.value); continue }
-    props[reactAttrName(attr.name)] = attr.value
+    const name = attr.name
+    // Never forward event handlers. React would happily bind onClick/onError/onLoad from
+    // a string here, which is the exact primitive an injected document would want.
+    if (/^on/i.test(name)) continue
+    if (name === 'style') { props.style = parseStyle(attr.value); continue }
+    if (name === 'href' || name === 'xlink:href' || name === 'src') {
+      const safe = safeHref(attr.value)
+      if (safe === null) continue
+      props[reactAttrName(name)] = safe
+      continue
+    }
+    props[reactAttrName(name)] = attr.value
   }
   // Off-site links open in a new tab; in-page anchors are handled at click time
   // (onBodyClick) so they scroll within the pane instead of rewriting the

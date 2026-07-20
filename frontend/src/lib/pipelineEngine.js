@@ -322,6 +322,10 @@ export async function chainInfo(chainBytes, intents = 1, firstInput = true, inte
 // bytes each way (~16 MB at 4 channels), so an arbitrarily large image never needs
 // its whole float raster resident (which std::bad_alloc'd on big CMYK TIFFs).
 const IMG_CHUNK_PIXELS = 1_000_000
+// Ceiling on the PRODUCED raster, mirroring kMaxImageBytes in iccimage-wrapper.cpp. The
+// input pixel count is capped in the UI, but the output size also scales with the chain's
+// destination channel count and the chosen encoding, so it needs its own bound.
+const MAX_OUT_BYTES = 512 * 1024 * 1024
 
 export async function applyToImage(chainBytes, file, opts = {}) {
   const mod = await loadConstruct()
@@ -358,13 +362,32 @@ export async function applyToImage(chainBytes, file, opts = {}) {
   if (!begin || !begin.ok) throw new Error(begin?.error || 'Image processing failed.')
   const nDst = begin.nDst
 
+  // Bound the OUTPUT, not just the input. nDst comes from the chain's last profile, so a
+  // legitimate multichannel/DeviceLink output (ICC allows up to 15 channels) combined with
+  // float encoding multiplies the source pixel count by up to 60 bytes/pixel: a 64 MP image
+  // → 3.8 GB here, and again when encodeImage copies it into the WASM heap. Refuse up front
+  // with an actionable message rather than dying in an allocator.
+  const outBytes = nPixels * nDst * (outBits / 8)
+  if (outBytes > MAX_OUT_BYTES) {
+    const mb = (n) => Math.round(n / (1024 * 1024))
+    throw new Error(
+      `The output would be ${mb(outBytes)} MB (${img.width}×${img.height}, ${nDst} channels, ` +
+      `${isFloat ? '32-bit float' : outBits + '-bit'}), over the ${mb(MAX_OUT_BYTES)} MB limit. ` +
+      `Choose a smaller output encoding or a smaller image.`)
+  }
+
   // Output raster: one contiguous buffer sized by the chosen encoding, with a typed
   // view for packing. 8-bit → Uint8, 16-bit → Uint16 (native LE), float → Float32.
-  const outBuf = new Uint8Array(nPixels * nDst * (outBits / 8))
+  const outBuf = new Uint8Array(outBytes)
   const outU16 = outBits === 16 ? new Uint16Array(outBuf.buffer) : null
   const outF32 = isFloat ? new Float32Array(outBuf.buffer) : null
   const s = img.samples
   const is16 = img.bitDepth === 16
+  // Count samples the CMM pushed outside the representable range, so the caller can tell
+  // the user rather than silently shipping clipped/black pixels (a v5 profile producing
+  // degenerate output, or absolute-colorimetric on out-of-gamut content, otherwise looks
+  // like a successful conversion).
+  let clipped = 0, nonFinite = 0
   try {
     for (let p0 = 0; p0 < nPixels; p0 += IMG_CHUNK_PIXELS) {
       const cnt = Math.min(IMG_CHUNK_PIXELS, nPixels - p0)
@@ -385,12 +408,34 @@ export async function applyToImage(chainBytes, file, opts = {}) {
       const kn = cnt * nDst
       if (isFloat) {
         // Float output keeps the CMM's normalized [0,1] device values verbatim (NaN → 0).
-        for (let k = 0; k < kn; k++) { const v = dstF[k]; outF32[ob + k] = Number.isNaN(v) ? 0 : v }
+        for (let k = 0; k < kn; k++) {
+          const v = dstF[k]
+          if (Number.isFinite(v)) { outF32[ob + k] = v } else { outF32[ob + k] = 0; nonFinite++ }
+        }
       } else if (outU16) {
-        for (let k = 0; k < kn; k++) { const v = dstF[k]; outU16[ob + k] = (v <= 0 || Number.isNaN(v)) ? 0 : v >= 1 ? 65535 : Math.round(v * 65535) }
+        for (let k = 0; k < kn; k++) {
+          const v = dstF[k]
+          if (!Number.isFinite(v)) { outU16[ob + k] = 0; nonFinite++ }
+          else if (v <= 0) { outU16[ob + k] = 0; if (v < 0) clipped++ }
+          else if (v >= 1) { outU16[ob + k] = 65535; if (v > 1) clipped++ }
+          else outU16[ob + k] = Math.round(v * 65535)
+        }
       } else {
-        for (let k = 0; k < kn; k++) { const v = dstF[k]; outBuf[ob + k] = (v <= 0 || Number.isNaN(v)) ? 0 : v >= 1 ? 255 : Math.round(v * 255) }
+        for (let k = 0; k < kn; k++) {
+          const v = dstF[k]
+          if (!Number.isFinite(v)) { outBuf[ob + k] = 0; nonFinite++ }
+          else if (v <= 0) { outBuf[ob + k] = 0; if (v < 0) clipped++ }
+          else if (v >= 1) { outBuf[ob + k] = 255; if (v > 1) clipped++ }
+          else outBuf[ob + k] = Math.round(v * 255)
+        }
       }
+      // Hand the main thread back between chunks. imageApplyChunk is SYNCHRONOUS, so
+      // without this the whole transform runs as one uninterruptible task: the tab
+      // freezes and the "Transforming…" state never even paints. A macrotask yield lets
+      // the browser render and keeps the page responsive.
+      const done = p0 + cnt
+      opts.onProgress?.(done / nPixels)
+      if (done < nPixels) await new Promise((r) => setTimeout(r, 0))   // eslint-disable-line no-await-in-loop
     }
   } finally {
     try { mod.imageApplyEnd() } catch { /* ignore */ }
@@ -417,7 +462,7 @@ export async function applyToImage(chainBytes, file, opts = {}) {
   const compression = format === 'tiff'
     ? (opts.compression || 'lzw')
     : undefined
-  const outBytes = await encodeImage({
+  const encoded = await encodeImage({
     format, width: img.width, height: img.height, channels: nDst,
     bitDepth: outBits, photometric, samples: outBuf, profile,
     sampleFormat: isFloat ? 'float' : 'uint',
@@ -425,7 +470,12 @@ export async function applyToImage(chainBytes, file, opts = {}) {
   })
   const ext = format === 'tiff' ? 'tif' : format
   const stem = (file.name || 'image').replace(/\.[^.]+$/, '')
-  return { bytes: outBytes, filename: `${stem}-converted.${ext}` }
+  // clipped / nonFinite let the caller warn that the conversion altered pixels beyond the
+  // colour transform itself; totalSamples gives them a denominator.
+  return {
+    bytes: encoded, filename: `${stem}-converted.${ext}`,
+    clipped, nonFinite, totalSamples: nPixels * nDst,
+  }
 }
 
 /**
@@ -439,6 +489,7 @@ export async function assembleSpecSep(files) {
   if (!files || files.length < 2) throw new Error('Add at least two channel images to assemble.')
   const { decodeImage, encodeImage } = await import('./imageCodec.js')
   let W = 0, H = 0
+  let all16 = true          // stays true only if EVERY plane is 16-bit
   const planes = []
   for (const f of files) {
     const bytes = new Uint8Array(await f.arrayBuffer())    // eslint-disable-line no-await-in-loop
@@ -449,19 +500,47 @@ export async function assembleSpecSep(files) {
     else if (img.width !== W || img.height !== H) {
       throw new Error('All spectral channels must have the same width and height.')
     }
-    // One channel per image = channel 0 (grayscale sources have equal channels). 16-bit
-    // sources contribute their high byte.
+    // Keep every plane at its NATIVE precision (0-255 or 0-65535) in a Uint16 buffer, and
+    // remember whether the whole set is 16-bit. Previously a 16-bit plane contributed only
+    // its high byte, silently throwing away half the measured precision of a spectral
+    // scan — the one thing this tool exists to preserve.
     const n = W * H, ch = img.channels, s = img.samples
-    const plane = new Uint8Array(n)
-    if (img.bitDepth === 16) for (let i = 0; i < n; i++) plane[i] = s[(i * ch) * 2 + 1]
-    else for (let i = 0; i < n; i++) plane[i] = s[i * ch]
+    const plane = new Uint16Array(n)
+    if (img.bitDepth === 16) for (let i = 0; i < n; i++) { const j = (i * ch) * 2; plane[i] = s[j] | (s[j + 1] << 8) }
+    else { all16 = false; for (let i = 0; i < n; i++) plane[i] = s[i * ch] }
     planes.push(plane)
   }
   const spp = planes.length
   const n = W * H
-  const samples = new Uint8Array(n * spp)
-  for (let i = 0; i < n; i++) for (let c = 0; c < spp; c++) samples[i * spp + c] = planes[c][i]
+  // Bound the assembled raster the same way applyToImage bounds its output: channel COUNT
+  // is user-driven (one dropped file each), so W*H*spp is otherwise unbounded.
+  const bytesPerSample = all16 ? 2 : 1
+  const total = n * spp * bytesPerSample
+  if (total > MAX_OUT_BYTES) {
+    throw new Error(
+      `The assembled TIFF would be ${Math.round(total / (1024 * 1024))} MB ` +
+      `(${W}×${H} × ${spp} channels${all16 ? ', 16-bit' : ''}), over the ` +
+      `${Math.round(MAX_OUT_BYTES / (1024 * 1024))} MB limit.`)
+  }
+  // Interleave. 16-bit output is written natively little-endian, matching what the
+  // encoder expects (and what decodeImage delivers back).
+  const samples = new Uint8Array(total)
+  if (all16) {
+    const view = new Uint16Array(samples.buffer)
+    for (let i = 0; i < n; i++) for (let c = 0; c < spp; c++) view[i * spp + c] = planes[c][i]
+  } else {
+    // Mixed depths: reduce any 16-bit plane to 8-bit (high byte) so the stack is uniform.
+    for (let i = 0; i < n; i++) {
+      for (let c = 0; c < spp; c++) {
+        const v = planes[c][i]
+        samples[i * spp + c] = v > 255 ? (v >> 8) : v
+      }
+    }
+  }
   // libtiff writes minisblack + (spp-1) unspecified extra samples for the multichannel stack.
-  const bytes = await encodeImage({ format: 'tiff', width: W, height: H, channels: spp, bitDepth: 8, photometric: 1, samples })
+  const bytes = await encodeImage({
+    format: 'tiff', width: W, height: H, channels: spp,
+    bitDepth: all16 ? 16 : 8, photometric: 1, samples,
+  })
   return { bytes, filename: 'spectral.tif' }
 }

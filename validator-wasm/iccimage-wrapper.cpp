@@ -146,9 +146,14 @@ Bytes tiffProfile(const Bytes& b) {
 struct PngMemSrc { const std::uint8_t* p; size_t len, off; };
 void pngReadFn(png_structp png, png_bytep out, png_size_t n) {
   PngMemSrc* s = (PngMemSrc*)png_get_io_ptr(png);
-  size_t k = (s->off + n <= s->len) ? n : (s->len - s->off);
-  std::memcpy(out, s->p + s->off, k);
-  s->off += k;
+  // libpng's read-callback contract is "deliver exactly n bytes or fail". Silently
+  // short-copying on a truncated/crafted PNG would leave the tail of libpng's buffer
+  // holding whatever was previously on the heap, and that stale memory can surface in
+  // the decoded raster or in an extracted iCCP profile handed back to the browser.
+  // Fail loudly instead — same contract pngStreamRead already honours.
+  if (n > s->len - s->off) { png_error(png, "short read"); return; }
+  std::memcpy(out, s->p + s->off, n);
+  s->off += n;
 }
 struct PngMemDst { Bytes* out; };
 void pngWriteFn(png_structp png, png_bytep data, png_size_t n) {
@@ -651,6 +656,22 @@ emscripten::val decodeImageImpl(const Bytes& b) {
 }
 
 // ── encoders (each returns the container bytes, throws on failure) ──────────
+
+// Independently bound every ENCODE entry point, mirroring what the decoders already
+// do. Two reasons this is computed in 64-bit rather than size_t: (1) size_t is 32-bit
+// on wasm32, so a caller-supplied geometry could wrap the product and slip a tiny
+// `need` past the `samples.size() < need` check, after which the scanline/plane loops
+// would read past the real allocation; (2) it enforces the same kMaxImageBytes ceiling
+// the decode path uses, so no entry point trusts the JS caller to have bounded input.
+static size_t encodeNeedBytes(int width, int height, int spp, int bits) {
+  if (width <= 0 || height <= 0 || spp <= 0 || bits <= 0)
+    throw std::runtime_error("Invalid image geometry.");
+  const std::uint64_t need = (std::uint64_t)width * (std::uint64_t)height
+                           * (std::uint64_t)spp * (std::uint64_t)(bits / 8);
+  if (need == 0 || need > (std::uint64_t)kMaxImageBytes)
+    throw std::runtime_error("Image too large to encode.");
+  return (size_t)need;
+}
 // sampleFmt: 0 = unsigned integer (bits 8/16), 1 = IEEE float (bits 32) — the
 //   iccApplyProfiles "float" destination encoding (G1).
 // compression: 0 = none, 1 = LZW, 2 = ZIP/Adobe-Deflate (G2). zlib is linked
@@ -664,7 +685,7 @@ Bytes encodeTiffBytes(int width, int height, int spp, int bits,
   if (width <= 0 || height <= 0 || spp <= 0 ||
       (isFloat ? bits != 32 : (bits != 8 && bits != 16)))
     throw std::runtime_error("Invalid TIFF parameters.");
-  const size_t need = (size_t)width * height * spp * (bits / 8);
+  const size_t need = encodeNeedBytes(width, height, spp, bits);
   if (samples.size() < need) throw std::runtime_error("Sample buffer too small for the given geometry.");
 
   MemfsTemp tmp;
@@ -735,7 +756,7 @@ Bytes encodePngBytes(int width, int height, int channels, int bits,
   if (width <= 0 || height <= 0 || (bits != 8 && bits != 16) ||
       channels < 1 || channels > 4)
     throw std::runtime_error("Invalid PNG parameters.");
-  if (samples.size() < (size_t)width * height * channels * (bits / 8))
+  if (samples.size() < encodeNeedBytes(width, height, channels, bits))
     throw std::runtime_error("Sample buffer too small for the given geometry.");
   png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
   if (!png) throw std::runtime_error("libpng init failed.");
@@ -765,7 +786,7 @@ Bytes encodeJpegBytes(int width, int height, int channels,
                       const Bytes& samples, int quality, const Bytes& profile) {
   if (width <= 0 || height <= 0 || (channels != 1 && channels != 3))
     throw std::runtime_error("JPEG supports 1 (gray) or 3 (RGB) channels.");
-  if (samples.size() < (size_t)width * height * channels)
+  if (samples.size() < encodeNeedBytes(width, height, channels, 8))
     throw std::runtime_error("Sample buffer too small for the given geometry.");
   struct jpeg_compress_struct cinfo; JpegErr jerr;
   cinfo.err = jpeg_std_error(&jerr.pub); jerr.pub.error_exit = jpegErrorExit; jerr.pub.emit_message = jpegEmit;

@@ -51,6 +51,18 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
+      # The committed WASM artifacts ship verbatim (the runner has no Emscripten/iccDEV),
+      # so at minimum verify each one still matches the checksum recorded beside it before
+      # it goes to production. NOTE the honest limit of this gate: SHA256SUMS is produced
+      # by the same build that produced the binaries and is committed alongside them, so
+      # this detects corruption, a partial commit, or artifact/manifest drift — it is NOT
+      # an integrity control against a malicious commit, which would simply update both.
+      # Proving the binary matches the C++ source still requires `scripts/build-wasm.sh
+      # --verify` in an Emscripten+iccDEV environment.
+      - name: Verify committed WASM checksums
+        working-directory: frontend/public/wasm
+        run: sha256sum -c SHA256SUMS
+
       - name: Build SPA
         working-directory: frontend
         run: |

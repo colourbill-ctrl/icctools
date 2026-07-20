@@ -481,11 +481,16 @@ export default function App() {
     const params = new URLSearchParams(window.location.search)
     if (params.get('source') !== 'chardata') return
     if (!window.opener) return
-    const allowedOrigins = new Set([
-      window.location.origin,
-      'http://localhost:3001',
-      'http://127.0.0.1:3001',
-    ])
+    // Same-origin always; chardata's dev server ONLY in a dev build. Shipping the
+    // localhost entries to production made any co-resident process on port 3001 a trusted
+    // sender of `profiletool:load` — bytes ingested with no confirmation dialog — and the
+    // ready-broadcast below actively announced this tab to it. In production chardata is
+    // served from the same origin, so the dev entries buy nothing there.
+    const allowedOrigins = new Set([window.location.origin])
+    if (import.meta.env.DEV) {
+      allowedOrigins.add('http://localhost:3001')
+      allowedOrigins.add('http://127.0.0.1:3001')
+    }
     function onMessage(ev) {
       if (ev.source !== window.opener) return
       if (!allowedOrigins.has(ev.origin)) return
