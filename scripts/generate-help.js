@@ -92,104 +92,118 @@ function callout(lx, ly, tx, ty, label, cls='t3') {
 ${T(tx, ty - 3, label, cls, tx > lx ? 'start' : 'end')}`;
 }
 
-// ── Diagram 1: Overall layout (profile loaded) ───────────────────────────────
+// ── Diagram 1: The workspace (pool + canvas tabs + Profile view) ─────────────
+// Depicts the 2.x layout: a persistent Profiles pool down the left, the canvas
+// with its four top-level tabs + accumulator chips, the Profile-tab bar (Save
+// profile / Modified pill), and the per-profile viewer nested inside it.
 function diag_layout() {
-  const W = 780, H = 420;
-  const CX = 30, CW = 640;             // centred card
-  const BX = 700, BW = 70;             // right blade (collapsed-ish slice w/ tab column)
+  const W = 780, H = 470;
+  const PX = 10,  PW = 172;                 // Profiles pane
+  const CX = 194, CW = 440;                 // canvas column
+  const BB = W-14, BTX = W-52;              // blade bar / blade buttons
 
-  let b = '';
-  b += R(0,0,W,H,'bg',0);
+  let b = R(0,0,W,H,'bg',0);
 
-  // Main card
-  b += R(CX,10,CW,H-20,'pnl',8);
+  // ── Profiles pane ──
+  b += R(PX,10,PW,H-20,'pnl',8);
+  b += R(PX,10,PW,28,'hd',8);
+  b += T(PX+12,29,'Profiles','tB','start');
+  b += R(PX+64,17,18,14,'act',7);  b += T(PX+73,28,'3','tW');
+  b += T(PX+PW-44,29,'A–Z ↕','t3','start');
+  b += T(PX+PW-10,29,'‹','t3','end');
+  b += R(PX+12,46,110,20,'act',5); b += T(PX+67,60,'Load Profiles','tW tB');
+  b += T(PX+12,84,'＋ New from .cube','tA','start');
+  b += T(PX+12,106,'▾ Output','t3 tB','start');
+  b += T(PX+PW-14,106,'2','t3','end');
+  const prow = (y,name,badges) =>
+    R(PX+10,y,PW-20,32,'sec',5)
+    + T(PX+18,y+13,name,'t2 mono','start')
+    + T(PX+18,y+26,badges,'t3','start')
+    + T(PX+PW-18,y+16,'×','t3','end');
+  b += prow(114,'Coated.icc','prtr · CMYK · v4.3');
+  b += prow(152,'sRGB.icc','mntr · RGB · v4.2');
+  b += T(PX+12,206,'▸ Display','t3 tB','start');
+  b += T(PX+PW-14,206,'1','t3','end');
+  b += T(PX+12,232,'drag a row onto a tab →','t3','start');
 
-  // Title row + banner
-  b += T(CX+20, 36, 'ICC Profile Tool', 'tT', 'start');
-  b += T(CX+20, 60, 'Upload an ICC profile to validate it against the ICC.1 specification', 't3', 'start');
-  b += T(CX+20, 74, 'using the iccDEV reference implementation.', 't3', 'start');
-  b += L(CX+20, 84, CX+CW-20, 84);
+  // ── canvas: title + tagline ──
+  b += T(CX,30,'ICC Profile Tool','tT','start');
+  b += T(CX,46,'Based on iccDEV demo implementation','t3','start');
+  b += L(CX,54,CX+CW,54);
 
-  // Toolbar
-  b += R(CX+20, 96, 110, 22, 'act', 4);
-  b += T(CX+20+55, 111, 'Save ICC profile', 'tW tB');
-  b += R(CX+136, 96, 100, 22, 'btn', 4);
-  b += T(CX+136+50, 111, 'Load another', 't2');
-  b += R(CX+244, 100, 130, 16, 'lnbd', 3);
-  b += T(CX+244+65, 112, '● Modified — unsaved', 'tA');
-
-  // Profile viewer card
-  const VY = 130;
-  b += R(CX+20, VY, CW-40, H-VY-30, 'pnl', 6);
-
-  // Title bar inside viewer
-  b += R(CX+20, VY, CW-40, 28, 'sec', 6);
-  b += T(CX+30, VY+18, 'sample-cmyk.icc', 'tB mono', 'start');
-  b += T(CX+150, VY+18, '· 488 bytes · IccProfLib 2.3.1', 't3', 'start');
-  b += R(CX+CW-80, VY+6, 50, 16, 'green', 3);
-  b += T(CX+CW-55, VY+18, 'VALID', 'tW tB');
-
-  // Tab strip
-  const TY = VY+28;
-  const tabs = [['Header', true], ['Tags', false], ['Validation', false], ['Analysis', false], ['XML', false], ['JSON', false]];
-  let tx = CX+30;
-  for (const [label, active] of tabs) {
-    const tw = label === 'Header' ? 60 : label === 'Validation' || label === 'Analysis' ? 78 : label === 'Tags' ? 70 : 50;
+  // top-level tabs
+  const tabs = [['Profile',true,1],['Compare',false,2],['Combine',false,0],['Spectral',false,0]];
+  let tx = CX;
+  for (const [label,active,n] of tabs) {
+    const tw = 74;
     if (active) {
-      b += `<line x1="${tx}" y1="${TY+30}" x2="${tx+tw}" y2="${TY+30}" stroke="var(--act)" stroke-width="3"/>`;
-      b += T(tx + tw/2, TY+20, label, 'tA');
-    } else {
-      b += T(tx + tw/2, TY+20, label, 't2');
-    }
-    if (label === 'Tags') {
-      b += R(tx+tw-22, TY+9, 20, 12, 'act', 6);
-      b += T(tx+tw-12, TY+19, '14', 'tW');
-    }
-    tx += tw + 6;
+      b += `<line x1="${tx}" y1="78" x2="${tx+tw}" y2="78" stroke="var(--act)" stroke-width="3"/>`;
+      b += T(tx+tw/2,72,label,'tA');
+    } else b += T(tx+tw/2,72,label,'t2');
+    if (n) { b += R(tx+tw-14,62,16,12,'act',6); b += T(tx+tw-6,72,String(n),'tW'); }
+    tx += tw + 8;
   }
-  b += L(CX+20, TY+32, CX+CW-20, TY+32);
+  b += L(CX,80,CX+CW,80);
 
-  // Profile-ID strip (Header content)
-  const PY = TY+44;
-  b += R(CX+30, PY, CW-60, 24, 'sec', 4);
-  b += T(CX+40, PY+15, 'PROFILE ID', 't3 tB', 'start');
-  b += T(CX+120, PY+15, '9efa8dc6c12f4e0b8b3a04e6c5a6e51c', 'tA mono', 'start');
+  // accumulator chip strip
+  b += R(CX,90,116,20,'lnbd',9);
+  b += T(CX+10,104,'Coated.icc   ×','t3','start');
 
-  // Header table rows
-  const rowH = 18;
+  // Profile-tab bar: filename · modified pill · Save profile
+  b += T(CX,133,'Coated.icc','tB','start');
+  b += R(CX+76,121,122,16,'amber',8);
+  b += T(CX+137,133,'● Modified — unsaved','tW');
+  b += R(CX+CW-90,119,90,22,'act',5);
+  b += T(CX+CW-45,134,'Save profile','tW tB');
+
+  // ── per-profile viewer ──
+  const VY = 150;
+  b += R(CX,VY,CW,H-VY-14,'pnl',6);
+  b += R(CX,VY,CW,26,'sec',6);
+  b += T(CX+10,VY+17,'Coated.icc','tB mono','start');
+  b += T(CX+86,VY+17,'· 1,838,244 bytes · IccProfLib 2.3.1','t3','start');
+  b += R(CX+CW-52,VY+6,44,14,'green',3);
+  b += T(CX+CW-30,VY+17,'Pass','tW tB');
+
+  const TY = VY+26;
+  const itabs = [['Header',58,true,0],['Tags',50,false,14],['Validation',72,false,0],
+                 ['Analysis',66,false,0],['XML',38,false,0],['JSON',42,false,0]];
+  let ix = CX+10;
+  for (const [label,tw,active,badge] of itabs) {
+    if (active) {
+      b += `<line x1="${ix}" y1="${TY+26}" x2="${ix+tw}" y2="${TY+26}" stroke="var(--act)" stroke-width="3"/>`;
+      b += T(ix+tw/2,TY+18,label,'tA');
+    } else b += T(ix+tw/2,TY+18,label,'t2');
+    if (badge) { b += R(ix+tw-12,TY+8,18,12,'act',6); b += T(ix+tw-3,TY+18,String(badge),'tW'); }
+    ix += tw + 4;
+  }
+  b += L(CX+10,TY+28,CX+CW-10,TY+28);
+
+  const PY = TY+40;
+  b += R(CX+10,PY,CW-20,20,'sec',4);
+  b += T(CX+18,PY+13,'PROFILE ID','t3 tB','start');
+  b += T(CX+90,PY+13,'9efa8dc6c12f4e0b8b3a04e6c5a6e51c','tA mono','start');
   const rows = [
-    ['Profile Class',     'Output Profile'],
-    ['Data Color Space',  'CMYK'],
-    ['PCS',               'Lab'],
-    ['Profile Version',   '4.30.00'],
-    ['Rendering Intent',  'Perceptual'],
-    ['Creation Date',     '2025-08-14 10:24:09 UTC'],
-    ['Cmm',               'Adobe ACMS'],
-    ['Platform',          'Apple'],
+    ['Profile Class','Output Profile'], ['Data Color Space','CMYK'],
+    ['PCS','Lab'], ['Profile Version','4.30.00'],
+    ['Rendering Intent','Perceptual'], ['Creation Date','2025-08-14 10:24 UTC'],
   ];
   for (let i = 0; i < rows.length; i++) {
-    const ry = PY + 28 + i*rowH;
-    if (i % 2 === 0) b += R(CX+30, ry, CW-60, rowH, 'sec', 0);
-    b += T(CX+40, ry+12, rows[i][0], 't3', 'start');
-    b += T(CX+220, ry+12, rows[i][1], 't2', 'start');
+    const ry = PY + 26 + i*18;
+    if (i % 2 === 0) b += R(CX+10, ry, CW-20, 18, 'sec', 0);
+    b += T(CX+18, ry+12, rows[i][0], 't3', 'start');
+    b += T(CX+150, ry+12, rows[i][1], 't2', 'start');
   }
 
-  // Right settings blade — collapsed bar with tab column floating off the edge
-  b += R(BX, 10, 6, H-20, 'pnl', 0);          // narrow bar (collapsed state)
-  b += R(BX+6, 30, 38, 34, 'btn', 5);          // ⚙
-  b += T(BX+25, 51, '⚙', 't2 tB');
-  b += R(BX+6, 70, 38, 34, 'btn', 5);          // ?
-  b += T(BX+25, 91, '?', 't2 tB');
-  b += R(BX+6, 110, 38, 34, 'btn', 5);         // ✉
-  b += T(BX+25, 131, '✉', 't2');
-
-  // Callouts
-  b += callout(CX+20+55, 111, CX+20+55, 88, 'Toolbar', 't3');
-  b += callout(CX+CW-55, VY+18, CX+CW-55, VY-2, 'Validity badge', 't3');
-  b += callout(CX+150, TY+19, CX+CW-100, TY+8, 'Tabs · count badge on Tags', 't3');
-  b += callout(BX+25, 51, BX-10, 51, '⚙ Settings', 't3');
-  b += callout(BX+25, 91, BX-10, 91, '? Help', 't3');
-  b += callout(BX+25, 131, BX-10, 131, '✉ Contact', 't3');
+  // ── settings blade (collapsed bar + tab column) ──
+  b += R(BB,10,6,H-20,'pnl',0);
+  b += R(BTX,30,38,32,'btn',5);  b += T(BTX+19,51,'⚙','t2 tB');
+  b += R(BTX,68,38,32,'btn',5);  b += T(BTX+19,89,'?','t2 tB');
+  b += R(BTX,106,38,32,'btn',5); b += T(BTX+19,127,'✉','t2');
+  // Labels point LEFT into the gutter between the canvas card and the blade.
+  b += callout(BTX+19,46,BTX-16,42,'⚙ Settings','t3');
+  b += callout(BTX+19,84,BTX-16,80,'? Help','t3');
+  b += callout(BTX+19,122,BTX-16,118,'✉ Contact','t3');
 
   return svg(W, H, b);
 }
@@ -218,6 +232,7 @@ function diag_settings() {
 
   section('Display');
   row('Background', 'System');
+  row('Number format', 'Hexadecimal');
   row('Language', 'System default (English)');
 
   const H = gy + 18;
@@ -416,7 +431,7 @@ function insertAfter(html, marker, injection) {
 
 const intro = mdToHtml(introMd);
 let body = mdToHtml(bodyMd);
-body = insertAfter(body, 'id="1-loading-a-profile"', '\n' + diag_layout());
+body = insertAfter(body, 'id="1-the-workspace"',     '\n' + diag_layout());
 body = insertAfter(body, 'id="2-settings-panel"',    '\n' + diag_settings());
 body = insertAfter(body, 'id="4-combine-tab"',       '\n' + diag_combine());
 
@@ -483,7 +498,7 @@ ${intro}
   <nav>
     <strong>Contents</strong>
     <ol>
-      <li><a href="#1-loading-a-profile">Loading a profile</a></li>
+      <li><a href="#1-the-workspace">The workspace</a></li>
       <li><a href="#2-settings-panel">Settings panel</a></li>
       <li><a href="#3-profile-views">Profile views</a>
         <ol>
@@ -501,7 +516,7 @@ ${intro}
           <li><a href="#4-2-make-devicelink">Make DeviceLink</a></li>
           <li><a href="#4-3-transform-image">Transform Image</a></li>
           <li><a href="#4-4-transform-data">Transform Data</a></li>
-          <li><a href="#4-5-v4-display-maker">V4 Display maker</a></li>
+          <li><a href="#4-5-observer-change">Observer Change</a></li>
           <li><a href="#4-6-compare-and-spectral-tabs">Compare and Spectral tabs</a></li>
         </ol>
       </li>

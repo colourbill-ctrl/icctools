@@ -20,7 +20,7 @@ Everything runs client-side. Profile bytes never leave the browser tab.
 
 ## Contents
 
-1. [Loading a profile](#1-loading-a-profile)
+1. [The workspace](#1-the-workspace)
 2. [Settings panel](#2-settings-panel)
 3. [Profile views](#3-profile-views)
    - [Header](#3-1-header)
@@ -34,7 +34,7 @@ Everything runs client-side. Profile bytes never leave the browser tab.
    - [Make DeviceLink](#4-2-make-devicelink)
    - [Transform Image](#4-3-transform-image)
    - [Transform Data](#4-4-transform-data)
-   - [V4 Display maker](#4-5-v4-display-maker)
+   - [Observer Change](#4-5-observer-change)
    - [Compare and Spectral tabs](#4-6-compare-and-spectral-tabs)
 5. [Round-trip editing](#5-round-trip-editing)
 6. [Launching from chardata](#6-launching-from-chardata)
@@ -44,16 +44,45 @@ Everything runs client-side. Profile bytes never leave the browser tab.
 
 ---
 
-## 1. Loading a profile
+## 1. The workspace
 
-When the app first opens, the centre of the page shows a drop zone.
+profiletool is a **multi-profile workbench**. The window has three parts:
 
-- **Drag and drop** an `.icc` or `.icm` file onto the drop zone, or
-- Click **Choose file** and pick one from the file system.
+- the **Profiles** pane down the left — the *pool* of everything you've loaded;
+- the **canvas** on the right, with four tabs across the top — **Profile**, **Compare**, **Combine**, **Spectral**;
+- the **Settings** blade on the right edge (see [Settings panel](#2-settings-panel)).
 
-Once a profile loads, the drop zone is replaced by a toolbar with **Load another** and **Save ICC profile** buttons, followed by a tabbed viewer.
+### Loading profiles
 
-A profile is accepted if its first 36 bytes contain the `acsp` signature and it parses through IccProfLib's `ValidateIccProfile`. Files that fail header parsing are rejected with the specific IccProfLib error message; bytes are not retained.
+Load files in either of two ways:
+
+- Click **Load Profiles** at the top of the Profiles pane and pick one or more files, or
+- **Drag and drop** files onto the Profiles pane.
+
+You can load `.icc` / `.icm` profiles *and* images — drop a TIFF, PNG or JPEG and the tool extracts its **embedded ICC profile** (reading only the file's metadata, never the pixels) and adds that to the pool. A **＋ New from .cube** button builds a DeviceLink from a `.cube` LUT.
+
+A profile is accepted if its first 36 bytes contain the `acsp` signature and it parses through IccProfLib's `ValidateIccProfile`. Files that fail are listed in a rejection summary with the specific reason; their bytes are not retained.
+
+### The Profiles pane
+
+Loaded profiles are grouped into collapsible sections by **profile class** (Input, Display, Output, DeviceLink, ColorSpace, Abstract, Named Color, …). Each row shows the filename and badges for class, colour space, version and size; a profile that could only be partially parsed is flagged. Use the **A–Z** button to cycle the sort (load order → ascending → descending), the **×** on a row to remove it, and the handle on the pane's right edge to resize it — or collapse the pane entirely.
+
+Click to select a row; Ctrl/Cmd-click to toggle and Shift-click to select a range. **Drag rows out of the pool onto a tab** to put them to work.
+
+<div class="note">
+<strong>The pool is session-only.</strong> Nothing is uploaded and nothing is persisted — your filesystem stays the durable store. Reloading the page empties the pool.
+</div>
+
+### The four tabs
+
+| Tab | What it does |
+|---|---|
+| **Profile** | Inspects **one** profile — header, tags, validation, analysis, XML, JSON. Dropping a new profile here replaces the current one. |
+| **Compare** | Overlays the gamuts of **two or more** profiles. |
+| **Combine** | Chains profiles into a DeviceLink, or transforms an image / dataset through them. |
+| **Spectral** | Assembles single-channel spectral images into one multi-channel TIFF. |
+
+Each tab keeps its own set of profiles, shown as removable chips beneath the tab strip, with a count badge on the tab itself. The first profile you load opens automatically in the **Profile** tab; after that, drag from the pool onto whichever tab you want. Dropping files straight onto a tab loads them into the pool *and* places them on that tab in one action.
 
 <div class="note">
 <strong>Size limit:</strong> the loader rejects anything larger than 256 MB. Real profiles are normally well under 10 MB; the cap exists only to prevent a hostile drop or postMessage from exhausting the tab's WASM heap.
@@ -63,17 +92,26 @@ A profile is accepted if its first 36 bytes contain the `acsp` signature and it 
 
 ## 2. Settings panel
 
-Open Settings by clicking the **⚙** button on the right edge of the screen (or the gear icon at the top-right on mobile). The panel slides over the content without resizing it. A **?** button below ⚙ opens this help page in a new tab; a **✉** button opens the contact form.
+Open Settings by clicking the **⚙** button on the right edge of the screen (or the gear icon at the top-right on mobile). The panel slides over the content without resizing it.
 
-The panel currently exposes the **Display** group:
+Two more buttons sit below ⚙:
+
+- **?** opens this guide **inside the app**, as a pane that slides in over the window. It has a search box in its header — type to highlight matches, then use `Enter` / `Shift+Enter` (or the `˄` `˅` buttons) to step through them; `Escape` clears the search, and a second `Escape` closes the pane.
+- **✉** opens the contact form on colourbill.com in a new browser tab.
+
+The panel exposes the **Display** group:
 
 ### Background
 
 Switches the app between **Light**, **Dark**, and **System** (follows the OS preference) themes. The choice persists across sessions. In **System** mode the app subscribes to `prefers-color-scheme` and flips automatically when the OS theme changes; choosing Light or Dark explicitly detaches that listener.
 
+### Number format
+
+Chooses how numeric values are displayed throughout the profile views — **Hexadecimal** or **Decimal**.
+
 ### Language
 
-Overrides the interface language. **System default (…)** detects the browser locale and uses the closest supported language, with the native name in the parenthetical so you can see which it picked. Translation covers the app chrome (heading, banner, drop zone, save toolbar, tab labels, settings panel). Strings produced by IccProfLib — tag descriptions, validation messages, header field names — are emitted by the C++ library in English and are not translated.
+Overrides the interface language. **System default (…)** detects the browser locale and uses the closest supported language, with the native name in the parenthetical so you can see which it picked. Translation covers the app chrome (the Profiles pane, tab labels, the Combine and Spectral tools, settings panel and this guide's chrome). Strings produced by IccProfLib — tag descriptions, validation messages, header field names — are emitted by the C++ library in English and are not translated.
 
 Supported languages: English, Français, Deutsch, Italiano, Español, Português (PT), Português (BR), Svenska, 中文（简体）, 中文（繁體）, 日本語, 한국어. The chardata Settings panel offers the same set, so toggling Language in one app gives a consistent reading experience in the other.
 
@@ -81,7 +119,13 @@ Supported languages: English, Français, Deutsch, Italiano, Español, Português
 
 ## 3. Profile views
 
-Once a profile is loaded the viewer shows a title bar (filename · size · IccProfLib version · validity badge) and a tab strip. The badge summarises the **Validation** report: green **Pass** when no check fails or warns, amber **Warning** when at least one check warns, red **Fail** when any check fails.
+Drag a profile from the pool onto the **Profile** tab to inspect it. The tab shows a bar with the filename and a **Save profile** button (plus a *● Modified — unsaved edits* pill once you've edited it), and below that the viewer: a title bar (filename · size in bytes · IccProfLib version · validity badge) and its own tab strip.
+
+The badge summarises the **Validation** report: green **Pass** when no check fails or warns, amber **Warning** when at least one check warns, red **Fail** when any check fails.
+
+<div class="note">
+<strong>Partially-parsed profiles:</strong> if a profile is damaged enough that the validator can only read it structurally, a warning banner appears and only the <strong>Header</strong> and <strong>Tags</strong> tabs are available — Validation, Analysis, XML and JSON are hidden, because the profile must not be applied.
+</div>
 
 ### 3.1 Header
 
@@ -173,7 +217,7 @@ Sweeps the neutral axis (a\*=b\*=0) from white (L\*=100) down to black (L\*=0) t
 
 ### 3.5 XML
 
-Converts the profile to XML (via IccLibXML, the same writer the iccDEV `iccToXml` CLI uses) and shows it in a CodeMirror editor with syntax highlighting. Edit the XML and click **Convert to ICC** to round-trip back to binary; the viewer re-validates and the **Save ICC profile** button downloads the result.
+Converts the profile to XML (via IccLibXML, the same writer the iccDEV `iccToXml` CLI uses) and shows it in a CodeMirror editor with syntax highlighting. Edit the XML and click **Convert to ICC** to round-trip back to binary; the viewer re-validates and the **Save profile** button in the Profile-tab bar downloads the result.
 
 A **dirty** indicator shows when the editor text differs from the last converter output, so you can tell at a glance whether your edits have been applied. If conversion fails, IccLibXML's parse error is shown above the editor with the offending line / column.
 
@@ -221,9 +265,9 @@ The friendly default keeps RGB/Gray output as a PNG; choosing a TIFF-only knob (
 
 Drop a colour dataset (CGATS/IT8, CSV, CxF, or JSON) into the data slot and click **Transform Data** to run every patch through the chain (the `iccApplyNamedCmm` equivalent). The tool reads the dataset's kinds (device / Lab / XYZ / spectral) and feeds whichever the chain's input needs; a **spectral** input is converted to colorimetry with iccDEV's canonical calculator, using the **Observer** and **Illuminant** you choose. Duplicate patches can be filtered (median or mean). The result opens in a table you can **Save** as CSV.
 
-### 4.5 V4 Display maker
+### 4.5 Observer Change
 
-Above the Link Pipeline, the **V4 Display Maker** card builds a v4.3 matrix/TRC display profile from a V5 display profile plus a V5 observer profile — drop one into each role slot and click **Create**. The result joins the pool.
+The Combine tab holds **two** maker cards. Above the Link Pipeline, the **Observer Change** card builds a v4.3 matrix/TRC display profile from a V5 RGB display profile plus a V5 observer (PCC) profile. Drag both onto the card — they are routed automatically into the **V5 RGB display** and **V5 observer (PCC)** slots by profile class — then click **Make V4 Display Profile**, name it, and click **Create**. The result joins the pool and this tab. A profile that is neither is ignored with a warning.
 
 ### 4.6 Compare and Spectral tabs
 
@@ -239,8 +283,8 @@ Both the XML and JSON tabs can write the profile back to ICC binary. The typical
 2. Open the **XML** or **JSON** tab. Click **Convert to XML** / **Convert to JSON** to populate the editor.
 3. **Edit** in the in-page editor. A dirty indicator appears next to the toolbar.
 4. Click **Convert to ICC**. The wrapper builds a new profile, re-runs validation, and updates the Header / Tags / Validation tabs.
-5. A **● Modified — unsaved edits** pill appears in the top toolbar.
-6. Click **Save ICC profile**. The edited bytes are downloaded as `<original>-edited.icc`.
+5. A **● Modified — unsaved edits** pill appears next to the filename in the Profile-tab bar.
+6. Click **Save profile**. The edited bytes are downloaded as `<original>-edited.icc`.
 
 Both editors are independent — editing XML then editing JSON doesn't mix the two paths. The most recently produced ICC bytes are what gets saved.
 
@@ -262,7 +306,7 @@ The handover works entirely in-browser:
 2. chardata replies with `{type:'profiletool:load', filename, bytes}`.
 3. profiletool accepts the bytes (after verifying the sender's origin against an allowlist and the size against the 256 MB cap), runs validation, and shows the profile.
 
-No upload, no server round-trip. The flow is one-way — edits made here are saved by clicking **Save ICC profile**, not handed back to chardata.
+No upload, no server round-trip. The flow is one-way — edits made here are saved by clicking **Save profile**, not handed back to chardata.
 
 ---
 
@@ -298,6 +342,7 @@ https://chardata.colourbill.com/profiletool#url=https://example.org/profiles/sRG
 | Header | `HEADER` | `Header` |
 | Tags | `TAGS` | `Tags` |
 | Validation | `VAL` | `Validation` |
+| Analysis | `ANALYSIS` | `Analysis` |
 | XML | `XML` | `XML` |
 | JSON | `JSON` | `JSON` |
 
@@ -315,8 +360,8 @@ On screens narrower than 700 px:
 
 - The Settings panel collapses into a slide-in drawer from the right.
 - A **⚙** floating button at the top-right opens / closes Settings.
-- A **?** button below ⚙ opens this help page.
-- A **✉** button opens the contact form.
+- A **?** button below ⚙ opens this guide in its slide-in pane.
+- A **✉** button opens the contact form in a new browser tab.
 - Tapping the dimmed backdrop closes the open drawer.
 - The tag table reflows from a wide grid into stacked cards so every column stays readable without horizontal scrolling.
 - The tag detail modal goes full-screen.

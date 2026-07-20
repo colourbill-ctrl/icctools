@@ -74,7 +74,7 @@
   <nav>
     <strong>Contents</strong>
     <ol>
-      <li><a href="#1-loading-a-profile">Loading a profile</a></li>
+      <li><a href="#1-the-workspace">The workspace</a></li>
       <li><a href="#2-settings-panel">Settings panel</a></li>
       <li><a href="#3-profile-views">Profile views</a>
         <ol>
@@ -92,7 +92,7 @@
           <li><a href="#4-2-make-devicelink">Make DeviceLink</a></li>
           <li><a href="#4-3-transform-image">Transform Image</a></li>
           <li><a href="#4-4-transform-data">Transform Data</a></li>
-          <li><a href="#4-5-v4-display-maker">V4 Display maker</a></li>
+          <li><a href="#4-5-observer-change">Observer Change</a></li>
           <li><a href="#4-6-compare-and-spectral-tabs">Compare and Spectral tabs</a></li>
         </ol>
       </li>
@@ -104,9 +104,9 @@
     </ol>
   </nav>
 
-<h2 id="1-loading-a-profile">1. Loading a profile</h2>
+<h2 id="1-the-workspace">1. The workspace</h2>
 
-<svg xmlns="http://www.w3.org/2000/svg" class="diag" viewBox="0 0 780 420"
+<svg xmlns="http://www.w3.org/2000/svg" class="diag" viewBox="0 0 780 470"
   style="width:100%;max-width:780px;display:block;margin:20px 0;border-radius:8px;overflow:visible;">
 
 <style>
@@ -153,27 +153,46 @@ body.dark .diag {
 .diag text.tA    { fill:var(--txA); font-weight:bold; }
 .diag text.mono  { font-family:ui-monospace,Menlo,Consolas,monospace; }
 </style>
-<rect x="0" y="0" width="780" height="420" rx="0" class="bg"/><rect x="30" y="10" width="640" height="400" rx="8" class="pnl"/><text x="50" y="36" text-anchor="start" class="tT">ICC Profile Tool</text><text x="50" y="60" text-anchor="start" class="t3">Upload an ICC profile to validate it against the ICC.1 specification</text><text x="50" y="74" text-anchor="start" class="t3">using the iccDEV reference implementation.</text><line x1="50" y1="84" x2="650" y2="84" class="div"/><rect x="50" y="96" width="110" height="22" rx="4" class="act"/><text x="105" y="111" text-anchor="middle" class="tW tB">Save ICC profile</text><rect x="166" y="96" width="100" height="22" rx="4" class="btn"/><text x="216" y="111" text-anchor="middle" class="t2">Load another</text><rect x="274" y="100" width="130" height="16" rx="3" class="lnbd"/><text x="339" y="112" text-anchor="middle" class="tA">● Modified — unsaved</text><rect x="50" y="130" width="600" height="260" rx="6" class="pnl"/><rect x="50" y="130" width="600" height="28" rx="6" class="sec"/><text x="60" y="148" text-anchor="start" class="tB mono">sample-cmyk.icc</text><text x="180" y="148" text-anchor="start" class="t3">· 488 bytes · IccProfLib 2.3.1</text><rect x="590" y="136" width="50" height="16" rx="3" class="green"/><text x="615" y="148" text-anchor="middle" class="tW tB">VALID</text><line x1="60" y1="188" x2="120" y2="188" stroke="var(--act)" stroke-width="3"/><text x="90" y="178" text-anchor="middle" class="tA">Header</text><text x="161" y="178" text-anchor="middle" class="t2">Tags</text><rect x="174" y="167" width="20" height="12" rx="6" class="act"/><text x="184" y="177" text-anchor="middle" class="tW">14</text><text x="241" y="178" text-anchor="middle" class="t2">Validation</text><text x="325" y="178" text-anchor="middle" class="t2">Analysis</text><text x="395" y="178" text-anchor="middle" class="t2">XML</text><text x="451" y="178" text-anchor="middle" class="t2">JSON</text><line x1="50" y1="190" x2="650" y2="190" class="div"/><rect x="60" y="202" width="580" height="24" rx="4" class="sec"/><text x="70" y="217" text-anchor="start" class="t3 tB">PROFILE ID</text><text x="150" y="217" text-anchor="start" class="tA mono">9efa8dc6c12f4e0b8b3a04e6c5a6e51c</text><rect x="60" y="230" width="580" height="18" rx="0" class="sec"/><text x="70" y="242" text-anchor="start" class="t3">Profile Class</text><text x="250" y="242" text-anchor="start" class="t2">Output Profile</text><text x="70" y="260" text-anchor="start" class="t3">Data Color Space</text><text x="250" y="260" text-anchor="start" class="t2">CMYK</text><rect x="60" y="266" width="580" height="18" rx="0" class="sec"/><text x="70" y="278" text-anchor="start" class="t3">PCS</text><text x="250" y="278" text-anchor="start" class="t2">Lab</text><text x="70" y="296" text-anchor="start" class="t3">Profile Version</text><text x="250" y="296" text-anchor="start" class="t2">4.30.00</text><rect x="60" y="302" width="580" height="18" rx="0" class="sec"/><text x="70" y="314" text-anchor="start" class="t3">Rendering Intent</text><text x="250" y="314" text-anchor="start" class="t2">Perceptual</text><text x="70" y="332" text-anchor="start" class="t3">Creation Date</text><text x="250" y="332" text-anchor="start" class="t2">2025-08-14 10:24:09 UTC</text><rect x="60" y="338" width="580" height="18" rx="0" class="sec"/><text x="70" y="350" text-anchor="start" class="t3">Cmm</text><text x="250" y="350" text-anchor="start" class="t2">Adobe ACMS</text><text x="70" y="368" text-anchor="start" class="t3">Platform</text><text x="250" y="368" text-anchor="start" class="t2">Apple</text><rect x="700" y="10" width="6" height="400" rx="0" class="pnl"/><rect x="706" y="30" width="38" height="34" rx="5" class="btn"/><text x="725" y="51" text-anchor="middle" class="t2 tB">⚙</text><rect x="706" y="70" width="38" height="34" rx="5" class="btn"/><text x="725" y="91" text-anchor="middle" class="t2 tB">?</text><rect x="706" y="110" width="38" height="34" rx="5" class="btn"/><text x="725" y="131" text-anchor="middle" class="t2">✉</text><line x1="105" y1="111" x2="105" y2="88" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
-<text x="105" y="85" text-anchor="end" class="t3">Toolbar</text><line x1="615" y1="148" x2="615" y2="128" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
-<text x="615" y="125" text-anchor="end" class="t3">Validity badge</text><line x1="180" y1="177" x2="570" y2="166" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
-<text x="570" y="163" text-anchor="start" class="t3">Tabs · count badge on Tags</text><line x1="725" y1="51" x2="690" y2="51" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
-<text x="690" y="48" text-anchor="end" class="t3">⚙ Settings</text><line x1="725" y1="91" x2="690" y2="91" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
-<text x="690" y="88" text-anchor="end" class="t3">? Help</text><line x1="725" y1="131" x2="690" y2="131" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
-<text x="690" y="128" text-anchor="end" class="t3">✉ Contact</text>
-</svg><p>When the app first opens, the centre of the page shows a drop zone.</p>
+<rect x="0" y="0" width="780" height="470" rx="0" class="bg"/><rect x="10" y="10" width="172" height="450" rx="8" class="pnl"/><rect x="10" y="10" width="172" height="28" rx="8" class="hd"/><text x="22" y="29" text-anchor="start" class="tB">Profiles</text><rect x="74" y="17" width="18" height="14" rx="7" class="act"/><text x="83" y="28" text-anchor="middle" class="tW">3</text><text x="138" y="29" text-anchor="start" class="t3">A–Z ↕</text><text x="172" y="29" text-anchor="end" class="t3">‹</text><rect x="22" y="46" width="110" height="20" rx="5" class="act"/><text x="77" y="60" text-anchor="middle" class="tW tB">Load Profiles</text><text x="22" y="84" text-anchor="start" class="tA">＋ New from .cube</text><text x="22" y="106" text-anchor="start" class="t3 tB">▾ Output</text><text x="168" y="106" text-anchor="end" class="t3">2</text><rect x="20" y="114" width="152" height="32" rx="5" class="sec"/><text x="28" y="127" text-anchor="start" class="t2 mono">Coated.icc</text><text x="28" y="140" text-anchor="start" class="t3">prtr · CMYK · v4.3</text><text x="164" y="130" text-anchor="end" class="t3">×</text><rect x="20" y="152" width="152" height="32" rx="5" class="sec"/><text x="28" y="165" text-anchor="start" class="t2 mono">sRGB.icc</text><text x="28" y="178" text-anchor="start" class="t3">mntr · RGB · v4.2</text><text x="164" y="168" text-anchor="end" class="t3">×</text><text x="22" y="206" text-anchor="start" class="t3 tB">▸ Display</text><text x="168" y="206" text-anchor="end" class="t3">1</text><text x="22" y="232" text-anchor="start" class="t3">drag a row onto a tab →</text><text x="194" y="30" text-anchor="start" class="tT">ICC Profile Tool</text><text x="194" y="46" text-anchor="start" class="t3">Based on iccDEV demo implementation</text><line x1="194" y1="54" x2="634" y2="54" class="div"/><line x1="194" y1="78" x2="268" y2="78" stroke="var(--act)" stroke-width="3"/><text x="231" y="72" text-anchor="middle" class="tA">Profile</text><rect x="254" y="62" width="16" height="12" rx="6" class="act"/><text x="262" y="72" text-anchor="middle" class="tW">1</text><text x="313" y="72" text-anchor="middle" class="t2">Compare</text><rect x="336" y="62" width="16" height="12" rx="6" class="act"/><text x="344" y="72" text-anchor="middle" class="tW">2</text><text x="395" y="72" text-anchor="middle" class="t2">Combine</text><text x="477" y="72" text-anchor="middle" class="t2">Spectral</text><line x1="194" y1="80" x2="634" y2="80" class="div"/><rect x="194" y="90" width="116" height="20" rx="9" class="lnbd"/><text x="204" y="104" text-anchor="start" class="t3">Coated.icc   ×</text><text x="194" y="133" text-anchor="start" class="tB">Coated.icc</text><rect x="270" y="121" width="122" height="16" rx="8" class="amber"/><text x="331" y="133" text-anchor="middle" class="tW">● Modified — unsaved</text><rect x="544" y="119" width="90" height="22" rx="5" class="act"/><text x="589" y="134" text-anchor="middle" class="tW tB">Save profile</text><rect x="194" y="150" width="440" height="306" rx="6" class="pnl"/><rect x="194" y="150" width="440" height="26" rx="6" class="sec"/><text x="204" y="167" text-anchor="start" class="tB mono">Coated.icc</text><text x="280" y="167" text-anchor="start" class="t3">· 1,838,244 bytes · IccProfLib 2.3.1</text><rect x="582" y="156" width="44" height="14" rx="3" class="green"/><text x="604" y="167" text-anchor="middle" class="tW tB">Pass</text><line x1="204" y1="202" x2="262" y2="202" stroke="var(--act)" stroke-width="3"/><text x="233" y="194" text-anchor="middle" class="tA">Header</text><text x="291" y="194" text-anchor="middle" class="t2">Tags</text><rect x="304" y="184" width="18" height="12" rx="6" class="act"/><text x="313" y="194" text-anchor="middle" class="tW">14</text><text x="356" y="194" text-anchor="middle" class="t2">Validation</text><text x="429" y="194" text-anchor="middle" class="t2">Analysis</text><text x="485" y="194" text-anchor="middle" class="t2">XML</text><text x="529" y="194" text-anchor="middle" class="t2">JSON</text><line x1="204" y1="204" x2="624" y2="204" class="div"/><rect x="204" y="216" width="420" height="20" rx="4" class="sec"/><text x="212" y="229" text-anchor="start" class="t3 tB">PROFILE ID</text><text x="284" y="229" text-anchor="start" class="tA mono">9efa8dc6c12f4e0b8b3a04e6c5a6e51c</text><rect x="204" y="242" width="420" height="18" rx="0" class="sec"/><text x="212" y="254" text-anchor="start" class="t3">Profile Class</text><text x="344" y="254" text-anchor="start" class="t2">Output Profile</text><text x="212" y="272" text-anchor="start" class="t3">Data Color Space</text><text x="344" y="272" text-anchor="start" class="t2">CMYK</text><rect x="204" y="278" width="420" height="18" rx="0" class="sec"/><text x="212" y="290" text-anchor="start" class="t3">PCS</text><text x="344" y="290" text-anchor="start" class="t2">Lab</text><text x="212" y="308" text-anchor="start" class="t3">Profile Version</text><text x="344" y="308" text-anchor="start" class="t2">4.30.00</text><rect x="204" y="314" width="420" height="18" rx="0" class="sec"/><text x="212" y="326" text-anchor="start" class="t3">Rendering Intent</text><text x="344" y="326" text-anchor="start" class="t2">Perceptual</text><text x="212" y="344" text-anchor="start" class="t3">Creation Date</text><text x="344" y="344" text-anchor="start" class="t2">2025-08-14 10:24 UTC</text><rect x="766" y="10" width="6" height="450" rx="0" class="pnl"/><rect x="728" y="30" width="38" height="32" rx="5" class="btn"/><text x="747" y="51" text-anchor="middle" class="t2 tB">⚙</text><rect x="728" y="68" width="38" height="32" rx="5" class="btn"/><text x="747" y="89" text-anchor="middle" class="t2 tB">?</text><rect x="728" y="106" width="38" height="32" rx="5" class="btn"/><text x="747" y="127" text-anchor="middle" class="t2">✉</text><line x1="747" y1="46" x2="712" y2="42" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="712" y="39" text-anchor="end" class="t3">⚙ Settings</text><line x1="747" y1="84" x2="712" y2="80" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="712" y="77" text-anchor="end" class="t3">? Help</text><line x1="747" y1="122" x2="712" y2="118" stroke="var(--tx3)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="712" y="115" text-anchor="end" class="t3">✉ Contact</text>
+</svg><p>profiletool is a <strong>multi-profile workbench</strong>. The window has three parts:</p>
 <ul>
-<li><strong>Drag and drop</strong> an <code>.icc</code> or <code>.icm</code> file onto the drop zone, or</li>
-<li>Click <strong>Choose file</strong> and pick one from the file system.</li>
+<li>the <strong>Profiles</strong> pane down the left — the <em>pool</em> of everything you've loaded;</li>
+<li>the <strong>canvas</strong> on the right, with four tabs across the top — <strong>Profile</strong>, <strong>Compare</strong>, <strong>Combine</strong>, <strong>Spectral</strong>;</li>
+<li>the <strong>Settings</strong> blade on the right edge (see <a href="#2-settings-panel">Settings panel</a>).</li>
 </ul>
-<p>Once a profile loads, the drop zone is replaced by a toolbar with <strong>Load another</strong> and <strong>Save ICC profile</strong> buttons, followed by a tabbed viewer.</p>
-<p>A profile is accepted if its first 36 bytes contain the <code>acsp</code> signature and it parses through IccProfLib's <code>ValidateIccProfile</code>. Files that fail header parsing are rejected with the specific IccProfLib error message; bytes are not retained.</p>
+<h3 id="loading-profiles">Loading profiles</h3>
+<p>Load files in either of two ways:</p>
+<ul>
+<li>Click <strong>Load Profiles</strong> at the top of the Profiles pane and pick one or more files, or</li>
+<li><strong>Drag and drop</strong> files onto the Profiles pane.</li>
+</ul>
+<p>You can load <code>.icc</code> / <code>.icm</code> profiles <em>and</em> images — drop a TIFF, PNG or JPEG and the tool extracts its <strong>embedded ICC profile</strong> (reading only the file's metadata, never the pixels) and adds that to the pool. A <strong>＋ New from .cube</strong> button builds a DeviceLink from a <code>.cube</code> LUT.</p>
+<p>A profile is accepted if its first 36 bytes contain the <code>acsp</code> signature and it parses through IccProfLib's <code>ValidateIccProfile</code>. Files that fail are listed in a rejection summary with the specific reason; their bytes are not retained.</p>
+<h3 id="the-profiles-pane">The Profiles pane</h3>
+<p>Loaded profiles are grouped into collapsible sections by <strong>profile class</strong> (Input, Display, Output, DeviceLink, ColorSpace, Abstract, Named Color, …). Each row shows the filename and badges for class, colour space, version and size; a profile that could only be partially parsed is flagged. Use the <strong>A–Z</strong> button to cycle the sort (load order → ascending → descending), the <strong>×</strong> on a row to remove it, and the handle on the pane's right edge to resize it — or collapse the pane entirely.</p>
+<p>Click to select a row; Ctrl/Cmd-click to toggle and Shift-click to select a range. <strong>Drag rows out of the pool onto a tab</strong> to put them to work.</p>
+<div class="note">
+<strong>The pool is session-only.</strong> Nothing is uploaded and nothing is persisted — your filesystem stays the durable store. Reloading the page empties the pool.
+</div>
+<h3 id="the-four-tabs">The four tabs</h3>
+<table><thead>
+<tr><th>Tab</th><th>What it does</th></tr></thead><tbody>
+<tr><td><strong>Profile</strong></td><td>Inspects <strong>one</strong> profile — header, tags, validation, analysis, XML, JSON. Dropping a new profile here replaces the current one.</td></tr>
+<tr><td><strong>Compare</strong></td><td>Overlays the gamuts of <strong>two or more</strong> profiles.</td></tr>
+<tr><td><strong>Combine</strong></td><td>Chains profiles into a DeviceLink, or transforms an image / dataset through them.</td></tr>
+<tr><td><strong>Spectral</strong></td><td>Assembles single-channel spectral images into one multi-channel TIFF.</td></tr>
+</tbody></table>
+<p>Each tab keeps its own set of profiles, shown as removable chips beneath the tab strip, with a count badge on the tab itself. The first profile you load opens automatically in the <strong>Profile</strong> tab; after that, drag from the pool onto whichever tab you want. Dropping files straight onto a tab loads them into the pool <em>and</em> places them on that tab in one action.</p>
 <div class="note">
 <strong>Size limit:</strong> the loader rejects anything larger than 256 MB. Real profiles are normally well under 10 MB; the cap exists only to prevent a hostile drop or postMessage from exhausting the tab's WASM heap.
 </div>
 <hr>
 <h2 id="2-settings-panel">2. Settings panel</h2>
 
-<svg xmlns="http://www.w3.org/2000/svg" class="diag" viewBox="0 0 380 156"
+<svg xmlns="http://www.w3.org/2000/svg" class="diag" viewBox="0 0 380 186"
   style="width:100%;max-width:380px;display:block;margin:20px 0;border-radius:8px;overflow:visible;">
 
 <style>
@@ -220,17 +239,28 @@ body.dark .diag {
 .diag text.tA    { fill:var(--txA); font-weight:bold; }
 .diag text.mono  { font-family:ui-monospace,Menlo,Consolas,monospace; }
 </style>
-<rect x="0" y="0" width="380" height="156" rx="0" class="bg"/><rect x="8" y="8" width="364" height="140" rx="8" class="pnl"/><rect x="8" y="24" width="38" height="34" rx="5" class="btn"/><text x="27" y="45" text-anchor="middle" class="t2 tB">⚙</text><rect x="8" y="64" width="38" height="34" rx="5" class="btn"/><text x="27" y="85" text-anchor="middle" class="t2 tB">?</text><rect x="8" y="104" width="38" height="34" rx="5" class="btn"/><text x="27" y="125" text-anchor="middle" class="t2">✉</text><line x1="46" y1="8" x2="46" y2="148" class="div"/><text x="54" y="32" text-anchor="start" class="tT">Settings</text><line x1="50" y1="44" x2="366" y2="44" class="div"/><text x="54" y="69" text-anchor="start" class="tA tB">Display</text><text x="54" y="91" text-anchor="start" class="t3 tB">Background</text><rect x="232" y="78" width="130" height="22" rx="4" class="btn"/><text x="242" y="93" text-anchor="start" class="t2">System</text><text x="352" y="93" text-anchor="end" class="t3">▾</text><text x="54" y="121" text-anchor="start" class="t3 tB">Language</text><rect x="232" y="108" width="130" height="22" rx="4" class="btn"/><text x="242" y="123" text-anchor="start" class="t2">System default (English)</text><text x="352" y="123" text-anchor="end" class="t3">▾</text>
-</svg><p>Open Settings by clicking the <strong>⚙</strong> button on the right edge of the screen (or the gear icon at the top-right on mobile). The panel slides over the content without resizing it. A <strong>?</strong> button below ⚙ opens this help page in a new tab; a <strong>✉</strong> button opens the contact form.</p>
-<p>The panel currently exposes the <strong>Display</strong> group:</p>
+<rect x="0" y="0" width="380" height="186" rx="0" class="bg"/><rect x="8" y="8" width="364" height="170" rx="8" class="pnl"/><rect x="8" y="24" width="38" height="34" rx="5" class="btn"/><text x="27" y="45" text-anchor="middle" class="t2 tB">⚙</text><rect x="8" y="64" width="38" height="34" rx="5" class="btn"/><text x="27" y="85" text-anchor="middle" class="t2 tB">?</text><rect x="8" y="104" width="38" height="34" rx="5" class="btn"/><text x="27" y="125" text-anchor="middle" class="t2">✉</text><line x1="46" y1="8" x2="46" y2="178" class="div"/><text x="54" y="32" text-anchor="start" class="tT">Settings</text><line x1="50" y1="44" x2="366" y2="44" class="div"/><text x="54" y="69" text-anchor="start" class="tA tB">Display</text><text x="54" y="91" text-anchor="start" class="t3 tB">Background</text><rect x="232" y="78" width="130" height="22" rx="4" class="btn"/><text x="242" y="93" text-anchor="start" class="t2">System</text><text x="352" y="93" text-anchor="end" class="t3">▾</text><text x="54" y="121" text-anchor="start" class="t3 tB">Number format</text><rect x="232" y="108" width="130" height="22" rx="4" class="btn"/><text x="242" y="123" text-anchor="start" class="t2">Hexadecimal</text><text x="352" y="123" text-anchor="end" class="t3">▾</text><text x="54" y="151" text-anchor="start" class="t3 tB">Language</text><rect x="232" y="138" width="130" height="22" rx="4" class="btn"/><text x="242" y="153" text-anchor="start" class="t2">System default (English)</text><text x="352" y="153" text-anchor="end" class="t3">▾</text>
+</svg><p>Open Settings by clicking the <strong>⚙</strong> button on the right edge of the screen (or the gear icon at the top-right on mobile). The panel slides over the content without resizing it.</p>
+<p>Two more buttons sit below ⚙:</p>
+<ul>
+<li><strong>?</strong> opens this guide <strong>inside the app</strong>, as a pane that slides in over the window. It has a search box in its header — type to highlight matches, then use <code>Enter</code> / <code>Shift+Enter</code> (or the <code>˄</code> <code>˅</code> buttons) to step through them; <code>Escape</code> clears the search, and a second <code>Escape</code> closes the pane.</li>
+<li><strong>✉</strong> opens the contact form on colourbill.com in a new browser tab.</li>
+</ul>
+<p>The panel exposes the <strong>Display</strong> group:</p>
 <h3 id="background">Background</h3>
 <p>Switches the app between <strong>Light</strong>, <strong>Dark</strong>, and <strong>System</strong> (follows the OS preference) themes. The choice persists across sessions. In <strong>System</strong> mode the app subscribes to <code>prefers-color-scheme</code> and flips automatically when the OS theme changes; choosing Light or Dark explicitly detaches that listener.</p>
+<h3 id="number-format">Number format</h3>
+<p>Chooses how numeric values are displayed throughout the profile views — <strong>Hexadecimal</strong> or <strong>Decimal</strong>.</p>
 <h3 id="language">Language</h3>
-<p>Overrides the interface language. <strong>System default (…)</strong> detects the browser locale and uses the closest supported language, with the native name in the parenthetical so you can see which it picked. Translation covers the app chrome (heading, banner, drop zone, save toolbar, tab labels, settings panel). Strings produced by IccProfLib — tag descriptions, validation messages, header field names — are emitted by the C++ library in English and are not translated.</p>
+<p>Overrides the interface language. <strong>System default (…)</strong> detects the browser locale and uses the closest supported language, with the native name in the parenthetical so you can see which it picked. Translation covers the app chrome (the Profiles pane, tab labels, the Combine and Spectral tools, settings panel and this guide's chrome). Strings produced by IccProfLib — tag descriptions, validation messages, header field names — are emitted by the C++ library in English and are not translated.</p>
 <p>Supported languages: English, Français, Deutsch, Italiano, Español, Português (PT), Português (BR), Svenska, 中文（简体）, 中文（繁體）, 日本語, 한국어. The chardata Settings panel offers the same set, so toggling Language in one app gives a consistent reading experience in the other.</p>
 <hr>
 <h2 id="3-profile-views">3. Profile views</h2>
-<p>Once a profile is loaded the viewer shows a title bar (filename · size · IccProfLib version · validity badge) and a tab strip. The badge summarises the <strong>Validation</strong> report: green <strong>Pass</strong> when no check fails or warns, amber <strong>Warning</strong> when at least one check warns, red <strong>Fail</strong> when any check fails.</p>
+<p>Drag a profile from the pool onto the <strong>Profile</strong> tab to inspect it. The tab shows a bar with the filename and a <strong>Save profile</strong> button (plus a <em>● Modified — unsaved edits</em> pill once you've edited it), and below that the viewer: a title bar (filename · size in bytes · IccProfLib version · validity badge) and its own tab strip.</p>
+<p>The badge summarises the <strong>Validation</strong> report: green <strong>Pass</strong> when no check fails or warns, amber <strong>Warning</strong> when at least one check warns, red <strong>Fail</strong> when any check fails.</p>
+<div class="note">
+<strong>Partially-parsed profiles:</strong> if a profile is damaged enough that the validator can only read it structurally, a warning banner appears and only the <strong>Header</strong> and <strong>Tags</strong> tabs are available — Validation, Analysis, XML and JSON are hidden, because the profile must not be applied.
+</div>
 <h3 id="3-1-header">3.1 Header</h3>
 <p>A two-column table of every field in the ICC profile's 128-byte binary header. Values are decoded into human-readable strings (signatures expanded, dates formatted, fixed-point values converted) using IccProfLib's <code>CIccInfo</code>. The <strong>profile ID</strong> (MD5 hash from the header) is shown in a highlighted strip at the top.</p>
 <h3 id="3-2-tags">3.2 Tags</h3>
@@ -298,7 +328,7 @@ body.dark .diag {
 <h4>Neutral Axis Inking</h4>
 <p>Sweeps the neutral axis (a*=b*=0) from white (L*=100) down to black (L*=0) through the profile's <code>B2A</code> (PCS → device) table and plots how much of each device colorant the profile lays down along the way — the classic GCR / neutral-build curve. One curve per device channel, colour-coded per colorant. <strong>Output (printer) profiles only</strong>; other profile classes show a note.</p>
 <h3 id="3-5-xml">3.5 XML</h3>
-<p>Converts the profile to XML (via IccLibXML, the same writer the iccDEV <code>iccToXml</code> CLI uses) and shows it in a CodeMirror editor with syntax highlighting. Edit the XML and click <strong>Convert to ICC</strong> to round-trip back to binary; the viewer re-validates and the <strong>Save ICC profile</strong> button downloads the result.</p>
+<p>Converts the profile to XML (via IccLibXML, the same writer the iccDEV <code>iccToXml</code> CLI uses) and shows it in a CodeMirror editor with syntax highlighting. Edit the XML and click <strong>Convert to ICC</strong> to round-trip back to binary; the viewer re-validates and the <strong>Save profile</strong> button in the Profile-tab bar downloads the result.</p>
 <p>A <strong>dirty</strong> indicator shows when the editor text differs from the last converter output, so you can tell at a glance whether your edits have been applied. If conversion fails, IccLibXML's parse error is shown above the editor with the offending line / column.</p>
 <h3 id="3-6-json">3.6 JSON</h3>
 <p>Same idea as the XML tab but using a JSON representation of the profile produced by the validator wrapper (<code>json-wrapper.cpp</code>). Edit, click <strong>Convert to ICC</strong>, save. The JSON form is more compact and easier to script against; the XML form is more familiar if you've used the iccDEV CLI tools.</p>
@@ -381,8 +411,8 @@ body.dark .diag {
 </div>
 <h3 id="4-4-transform-data">4.4 Transform Data</h3>
 <p>Drop a colour dataset (CGATS/IT8, CSV, CxF, or JSON) into the data slot and click <strong>Transform Data</strong> to run every patch through the chain (the <code>iccApplyNamedCmm</code> equivalent). The tool reads the dataset's kinds (device / Lab / XYZ / spectral) and feeds whichever the chain's input needs; a <strong>spectral</strong> input is converted to colorimetry with iccDEV's canonical calculator, using the <strong>Observer</strong> and <strong>Illuminant</strong> you choose. Duplicate patches can be filtered (median or mean). The result opens in a table you can <strong>Save</strong> as CSV.</p>
-<h3 id="4-5-v4-display-maker">4.5 V4 Display maker</h3>
-<p>Above the Link Pipeline, the <strong>V4 Display Maker</strong> card builds a v4.3 matrix/TRC display profile from a V5 display profile plus a V5 observer profile — drop one into each role slot and click <strong>Create</strong>. The result joins the pool.</p>
+<h3 id="4-5-observer-change">4.5 Observer Change</h3>
+<p>The Combine tab holds <strong>two</strong> maker cards. Above the Link Pipeline, the <strong>Observer Change</strong> card builds a v4.3 matrix/TRC display profile from a V5 RGB display profile plus a V5 observer (PCC) profile. Drag both onto the card — they are routed automatically into the <strong>V5 RGB display</strong> and <strong>V5 observer (PCC)</strong> slots by profile class — then click <strong>Make V4 Display Profile</strong>, name it, and click <strong>Create</strong>. The result joins the pool and this tab. A profile that is neither is ignored with a warning.</p>
 <h3 id="4-6-compare-and-spectral-tabs">4.6 Compare and Spectral tabs</h3>
 <p>The <strong>Compare</strong> tab overlays the gamut boundaries of two or more pooled profiles — a 3-D shell plus a 2-D lightness slice — to see where they differ. The <strong>Spectral</strong> tab assembles a set of single-channel spectral images (dropped in channel order) into one multi-channel TIFF (<code>iccSpecSepToTiff</code>).</p>
 <hr>
@@ -397,9 +427,9 @@ body.dark .diag {
  
 4. Click <strong>Convert to ICC</strong>. The wrapper builds a new profile, re-runs validation, and updates the Header / Tags / Validation tabs.
  
-5. A <strong>● Modified — unsaved edits</strong> pill appears in the top toolbar.
+5. A <strong>● Modified — unsaved edits</strong> pill appears next to the filename in the Profile-tab bar.
  
-6. Click <strong>Save ICC profile</strong>. The edited bytes are downloaded as <code><original>-edited.icc</code>.
+6. Click <strong>Save profile</strong>. The edited bytes are downloaded as <code><original>-edited.icc</code>.
 </p>
 <p>Both editors are independent — editing XML then editing JSON doesn't mix the two paths. The most recently produced ICC bytes are what gets saved.</p>
 <div class="note">
@@ -417,7 +447,7 @@ body.dark .diag {
  
 3. profiletool accepts the bytes (after verifying the sender's origin against an allowlist and the size against the 256 MB cap), runs validation, and shows the profile.
 </p>
-<p>No upload, no server round-trip. The flow is one-way — edits made here are saved by clicking <strong>Save ICC profile</strong>, not handed back to chardata.</p>
+<p>No upload, no server round-trip. The flow is one-way — edits made here are saved by clicking <strong>Save profile</strong>, not handed back to chardata.</p>
 <hr>
 <h2 id="7-launching-with-a-url">7. Launching with a URL</h2>
 <p>You can open the tool with a link that names a profile to load — and the tab to land on — using a <strong>URL fragment</strong> (the part after <code>#</code>):</p>
@@ -451,6 +481,7 @@ https://chardata.colourbill.com/profiletool#url=https://example.org/profiles/sRG
 <tr><td>Header</td><td><code>HEADER</code></td><td><code>Header</code></td></tr>
 <tr><td>Tags</td><td><code>TAGS</code></td><td><code>Tags</code></td></tr>
 <tr><td>Validation</td><td><code>VAL</code></td><td><code>Validation</code></td></tr>
+<tr><td>Analysis</td><td><code>ANALYSIS</code></td><td><code>Analysis</code></td></tr>
 <tr><td>XML</td><td><code>XML</code></td><td><code>XML</code></td></tr>
 <tr><td>JSON</td><td><code>JSON</code></td><td><code>JSON</code></td></tr>
 </tbody></table>
@@ -464,8 +495,8 @@ https://chardata.colourbill.com/profiletool#url=https://example.org/profiles/sRG
 <ul>
 <li>The Settings panel collapses into a slide-in drawer from the right.</li>
 <li>A <strong>⚙</strong> floating button at the top-right opens / closes Settings.</li>
-<li>A <strong>?</strong> button below ⚙ opens this help page.</li>
-<li>A <strong>✉</strong> button opens the contact form.</li>
+<li>A <strong>?</strong> button below ⚙ opens this guide in its slide-in pane.</li>
+<li>A <strong>✉</strong> button opens the contact form in a new browser tab.</li>
 <li>Tapping the dimmed backdrop closes the open drawer.</li>
 <li>The tag table reflows from a wide grid into stacked cards so every column stays readable without horizontal scrolling.</li>
 <li>The tag detail modal goes full-screen.</li>
