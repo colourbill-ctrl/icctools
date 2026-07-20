@@ -491,7 +491,7 @@ const html = `<!DOCTYPE html>
 <div class="page">
 
   <h1>ICC Profile Tool — Help</h1>
-  <p class="subtitle">Browser-based ICC profile inspector, validator, and round-trip editor</p>
+  <p class="subtitle">Browser-based inspector, validator and round-trip editor for ICC.1 and ICC.2 (iccMAX) profiles</p>
 
 ${intro}
 

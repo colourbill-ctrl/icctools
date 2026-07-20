@@ -2,7 +2,7 @@
 
 # ICC Profile Tool — User Manual
 
-**ICC Profile Tool** (profiletool) is a browser-based tool for inspecting, validating, and round-trip editing **ICC.1** colour profiles. It runs entirely in your browser — no upload, no install — using a WebAssembly build of [iccDEV](https://github.com/InternationalColorConsortium/iccDEV), the ICC's official demo implementation of IccProfLib.
+**ICC Profile Tool** (profiletool) is a browser-based tool for inspecting, validating, and round-trip editing **ICC.1** and **ICC.2 (iccMAX)** colour profiles. It runs entirely in your browser — no upload, no install — using a WebAssembly build of [iccDEV](https://github.com/InternationalColorConsortium/iccDEV), the ICC's official demo implementation of IccProfLib.
 
 **What you can do:**
 
@@ -15,6 +15,10 @@
 - **Launch with a URL** — open a link that points the tool at a profile hosted on the web and, optionally, the tab to land on (e.g. `…/profiletool#url=…&tab=VAL`).
 
 Everything runs client-side. Profile bytes never leave the browser tab.
+
+<div class="note">
+<strong>ICC.2 (iccMAX) support is partial in 2.0.0.</strong> ICC.2 profiles load, inspect, validate and round-trip like ICC.1 ones — the validation checklist includes iccMAX-specific checks, spectral PCS and multi-processing-element tags are decoded, and the transform engines are built against the full iccMAX stack. Not yet covered: multi-part <strong>ICS</strong> (Interchange Color Space) workflows, selecting a V5 <em>sub-profile</em> when applying a transform, and inverse search on some ICC.2 profiles. Expect gaps on the more exotic ICC.2 features; they are being filled release by release.
+</div>
 
 ---
 
@@ -376,7 +380,7 @@ profiletool makes no network requests after the initial page load. The validator
 
 | Limit | Where | Notes |
 |---|---|---|
-| **256 MB** | postMessage / drop-zone load | Refuses to load anything larger; prevents heap exhaustion from a hostile opener |
+| **256 MB** | postMessage / file load | Refuses to load anything larger; prevents heap exhaustion from a hostile opener |
 | **32 MB** | XML and JSON converters | Both the JS guard (`MAX_XML_BYTES` / `MAX_JSON_BYTES`) and the C++ wrappers (`kMaxXmlBytes` / `kMaxJsonBytes`) enforce this; the C++ side is independently authoritative |
 | **XML entity-bomb guard** | XML converter | Any XML containing `<!DOCTYPE` or `<!ENTITY` is rejected before libxml2 sees it (defence against billion-laughs since IccLibXML enables `XML_PARSE_HUGE`) |
 | **Origin allowlist** | postMessage launch | Only same-origin and chardata's dev-host origins can send `profiletool:load` bytes |
@@ -385,3 +389,7 @@ profiletool makes no network requests after the initial page load. The validator
 The `#url=` launch (added in 1.1.5) is the one case where the tool makes an off-origin request after page load: it widens the Content-Security-Policy `connect-src` to `https:` so the named profile can be fetched. Script loading is **not** widened — only data fetches.
 
 If you need to inspect a profile that exceeds these limits, build iccDEV from source and use the native CLI tools — those have no JS-side caps.
+
+### ICC.2 (iccMAX) coverage
+
+Both **ICC.1** and **ICC.2** profiles are supported, but ICC.2 coverage is **incomplete in 2.0.0**. Loading, the header and tag views, validation, the XML/JSON round-trip and the transform engines all understand ICC.2; the known gaps are multi-part **ICS** interchange workflows, choosing a V5 **sub-profile** when applying a transform, and inverse search on some ICC.2 profiles. A profile using an unsupported ICC.2 construct is reported by the Validation tab rather than silently mis-read.

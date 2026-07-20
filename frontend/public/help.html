@@ -54,11 +54,11 @@
 <div class="page">
 
   <h1>ICC Profile Tool — Help</h1>
-  <p class="subtitle">Browser-based ICC profile inspector, validator, and round-trip editor</p>
+  <p class="subtitle">Browser-based inspector, validator and round-trip editor for ICC.1 and ICC.2 (iccMAX) profiles</p>
 
 <p><!-- (c) 2026 William Li --></p>
 <h1>ICC Profile Tool — User Manual</h1>
-<p><strong>ICC Profile Tool</strong> (profiletool) is a browser-based tool for inspecting, validating, and round-trip editing <strong>ICC.1</strong> colour profiles. It runs entirely in your browser — no upload, no install — using a WebAssembly build of <a href="https://github.com/InternationalColorConsortium/iccDEV">iccDEV</a>, the ICC's official demo implementation of IccProfLib.</p>
+<p><strong>ICC Profile Tool</strong> (profiletool) is a browser-based tool for inspecting, validating, and round-trip editing <strong>ICC.1</strong> and <strong>ICC.2 (iccMAX)</strong> colour profiles. It runs entirely in your browser — no upload, no install — using a WebAssembly build of <a href="https://github.com/InternationalColorConsortium/iccDEV">iccDEV</a>, the ICC's official demo implementation of IccProfLib.</p>
 <p><strong>What you can do:</strong></p>
 <ul>
 <li><strong>Browse the header</strong> — every field of the 128-byte profile header, decoded into human-readable strings.</li>
@@ -70,6 +70,9 @@
 <li><strong>Launch with a URL</strong> — open a link that points the tool at a profile hosted on the web and, optionally, the tab to land on (e.g. <code>…/profiletool#url=…&tab=VAL</code>).</li>
 </ul>
 <p>Everything runs client-side. Profile bytes never leave the browser tab.</p>
+<div class="note">
+<strong>ICC.2 (iccMAX) support is partial in 2.0.0.</strong> ICC.2 profiles load, inspect, validate and round-trip like ICC.1 ones — the validation checklist includes iccMAX-specific checks, spectral PCS and multi-processing-element tags are decoded, and the transform engines are built against the full iccMAX stack. Not yet covered: multi-part <strong>ICS</strong> (Interchange Color Space) workflows, selecting a V5 <em>sub-profile</em> when applying a transform, and inverse search on some ICC.2 profiles. Expect gaps on the more exotic ICC.2 features; they are being filled release by release.
+</div>
 
   <nav>
     <strong>Contents</strong>
@@ -507,7 +510,7 @@ https://chardata.colourbill.com/profiletool#url=https://example.org/profiles/sRG
 <p>profiletool makes no network requests after the initial page load. The validator, the XML converter, and the JSON converter are all WebAssembly compiled from iccDEV C++ sources and run entirely client-side.</p>
 <table><thead>
 <tr><th>Limit</th><th>Where</th><th>Notes</th></tr></thead><tbody>
-<tr><td><strong>256 MB</strong></td><td>postMessage / drop-zone load</td><td>Refuses to load anything larger; prevents heap exhaustion from a hostile opener</td></tr>
+<tr><td><strong>256 MB</strong></td><td>postMessage / file load</td><td>Refuses to load anything larger; prevents heap exhaustion from a hostile opener</td></tr>
 <tr><td><strong>32 MB</strong></td><td>XML and JSON converters</td><td>Both the JS guard (<code>MAX_XML_BYTES</code> / <code>MAX_JSON_BYTES</code>) and the C++ wrappers (<code>kMaxXmlBytes</code> / <code>kMaxJsonBytes</code>) enforce this; the C++ side is independently authoritative</td></tr>
 <tr><td><strong>XML entity-bomb guard</strong></td><td>XML converter</td><td>Any XML containing <code><!DOCTYPE</code> or <code><!ENTITY</code> is rejected before libxml2 sees it (defence against billion-laughs since IccLibXML enables <code>XML_PARSE_HUGE</code>)</td></tr>
 <tr><td><strong>Origin allowlist</strong></td><td>postMessage launch</td><td>Only same-origin and chardata's dev-host origins can send <code>profiletool:load</code> bytes</td></tr>
@@ -515,6 +518,8 @@ https://chardata.colourbill.com/profiletool#url=https://example.org/profiles/sRG
 </tbody></table>
 <p>The <code>#url=</code> launch (added in 1.1.5) is the one case where the tool makes an off-origin request after page load: it widens the Content-Security-Policy <code>connect-src</code> to <code>https:</code> so the named profile can be fetched. Script loading is <strong>not</strong> widened — only data fetches.</p>
 <p>If you need to inspect a profile that exceeds these limits, build iccDEV from source and use the native CLI tools — those have no JS-side caps.</p>
+<h3 id="icc-2-iccmax-coverage">ICC.2 (iccMAX) coverage</h3>
+<p>Both <strong>ICC.1</strong> and <strong>ICC.2</strong> profiles are supported, but ICC.2 coverage is <strong>incomplete in 2.0.0</strong>. Loading, the header and tag views, validation, the XML/JSON round-trip and the transform engines all understand ICC.2; the known gaps are multi-part <strong>ICS</strong> interchange workflows, choosing a V5 <strong>sub-profile</strong> when applying a transform, and inverse search on some ICC.2 profiles. A profile using an unsupported ICC.2 construct is reported by the Validation tab rather than silently mis-read.</p>
 
 </div>
 </body>
