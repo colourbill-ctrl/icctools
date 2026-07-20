@@ -116,6 +116,33 @@ export async function gamutVolume(bytes, tagSig, intent) {
 }
 
 /**
+ * Round-trip ΔE against quantized lightness — the reference QC scatter. Seeds are
+ * taken ON the gamut boundary at each lightness level and then eroded toward neutral
+ * (chroma ×0.8, ×0.5, ×0.2), so within each band the error falls from the gamut
+ * surface to the neutral axis; that within-band shape is the whole point, which is
+ * why this returns individual points rather than a summary.
+ *
+ * → { n, levels, perHue, loL, hiL, mean, p90, max,
+ *     levelL: [...],   // L* of each band edge, for the separators
+ *     x: [...],        // monotonic pseudo-L* coordinate, one per point
+ *     de: [...] }      // ΔE*ab, one per point
+ *
+ * `intent` is the ICC value (0/1/2/3). This has its OWN seeding, so it is independent
+ * of the round-trip *type* selector and is NOT numerically comparable to
+ * `roundTripStats` — it deliberately over-weights the gamut boundary, where inversion
+ * is hardest. Needs a matching AToB/BToA pair, and the lightness range comes from the
+ * ink corners (CMYK/CMY) with a raw-gamut-extent fallback otherwise.
+ */
+export async function roundTripByLightness(bytes, intent) {
+  const mod = await loadModule()
+  let out
+  try { out = mod.roundTripByLightness(bytes, intent) } catch (e) { throw toError(mod, e) }
+  const r = JSON.parse(out)
+  if (r.error) throw new Error(r.error)
+  return r
+}
+
+/**
  * Media white / black point + total area coverage, for the "Extrema Colorimetry"
  * analysis. `tagSig` is the 4-char B2A tag id ('B2A0'|'B2A1'|'B2A2') — TAG-driven,
  * not intent-driven, because the black point is whatever inking that particular
@@ -238,6 +265,10 @@ export async function gamutMesh(bytes, intent, steps = 0) {
  *   PRMG = Perceptual Reference Medium Gamut interoperability histogram
  * A top-level `.error` (module/parse failure) still throws; per-type `ok:false`
  * does NOT throw — the UI shows that type as "not evaluated".
+ */
+/**
+ * For ΔE resolved against lightness, see `roundTripByLightness` — a separate walk with
+ * its own gamut-boundary-weighted seeding, not a re-slice of these statistics.
  */
 export async function roundTripStats(bytes, intent, useMpe = false) {
   const mod = await loadModule()

@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import {
   enumerateVisualizations, renderGraph, tagEvalInfo, gamutVolume, roundTripStats,
-  whiteBlackPoints, hueExtrema, shadowInkPaths,
+  whiteBlackPoints, hueExtrema, shadowInkPaths, roundTripByLightness,
 } from '../lib/vizPlot.js'
 import { channelColor } from './viz/colors.js'
 import { labToRgb } from '../lib/rasterDecode.js'
@@ -219,7 +219,7 @@ function ProfileStatsSection({ bytes, t }) {
       {/* Dynamic, code-grounded description of the selected round-trip type. */}
       <p className={styles.typeDesc}>{t(typeMeta.descKey) || typeMeta.descFallback}</p>
 
-      <StatsTable gamut={gamut} rts={rts} type={type} t={t} />
+      <StatsTable gamut={gamut} rts={rts} type={type} bytes={bytes} intent={intent} t={t} />
     </Collapsible>
   )
 }
@@ -229,7 +229,7 @@ function ProfileStatsSection({ bytes, t }) {
 // crosses the WASM→JS boundary, so each field is shape-guarded before formatting —
 // a partial or malformed result degrades to '—' or a note, never a render-time
 // TypeError that would blank the whole Analysis tab.
-function StatsTable({ gamut, rts, type, t }) {
+function StatsTable({ gamut, rts, type, bytes, intent, t }) {
   if (gamut.loading || rts.loading) {
     return <div className={styles.loading}><span className={styles.spinner} /> {t('analysis_loading') || 'Analysing…'}</div>
   }
@@ -340,12 +340,81 @@ function StatsTable({ gamut, rts, type, t }) {
         </div>
       )}
 
+      <RtByLightness bytes={bytes} intent={intent} t={t} />
+
       {/* Worst-error colour: the device/PCS colour where this round trip fails hardest. */}
       {worst && (
         <p className={styles.rtGamut}>
           <strong>{t('analysis_rt_worstlab') || 'Worst L, a, b'}:</strong> {worst}
         </p>
       )}
+    </>
+  )
+}
+
+// ── Round-trip ΔE by quantized lightness ──────────────────────────────────────
+// The reference QC report's scatter: every seed drawn individually, grouped into
+// lightness bands, with the points inside each band marching from the gamut boundary
+// inward to neutral. The shape WITHIN a band is the content — error is largest on the
+// gamut surface and falls away toward the neutral axis — so this is one place where a
+// summary (an envelope, a mean line) would erase exactly what the plot is for.
+//
+// It carries its own seeding, so it follows the rendering intent but NOT the
+// round-trip type selector, and its numbers are not comparable with the table above:
+// it deliberately over-weights the gamut boundary, where inversion is hardest.
+function RtByLightness({ bytes, intent, t }) {
+  const [state, setState] = useState({ loading: true })
+
+  useEffect(() => {
+    let cancelled = false
+    setState({ loading: true })
+    roundTripByLightness(bytes, intent).then(
+      (r) => { if (!cancelled) setState({ loading: false, data: r }) },
+      (e) => { if (!cancelled) setState({ loading: false, error: e.message }) },
+    )
+    return () => { cancelled = true }
+  }, [bytes, intent])
+
+  if (state.loading) {
+    return <div className={styles.loading}><span className={styles.spinner} /> {t('analysis_loading') || 'Analysing…'}</div>
+  }
+  // A profile without the AToB/BToA pair (or one whose lightness range cannot be
+  // derived) simply doesn't get this plot; the section above still stands.
+  if (state.error || !state.data) return null
+
+  const d = state.data
+  const yHi = d.max > 0 ? d.max * 1.05 : 1
+  const bandW = (d.hiL - d.loL) / (d.levels - 1)
+
+  // Band separators as ONE series: vertical segments joined by null-y breaks, rather
+  // than 32 separate series cluttering the legend.
+  const sep = []
+  for (const L of d.levelL) { sep.push(L, 0, L, yHi, L, null) }
+
+  const graph = {
+    xAxis: { label: t('analysis_rt_band_xaxis') || 'L* (lightness of the requested colour)', min: d.loL, max: d.hiL + bandW },
+    yAxis: { label: t('analysis_rt_band_yaxis') || 'ΔE*ab', min: 0, max: yHi },
+    // Neither series is named: this plot shows no legend (one data series plus
+    // reference geometry), so a name would only be dead weight in the payload.
+    series: [
+      { id: 'sep', role: 'hint', shape: 'polyline', points: sep, color: '#b9bec7' },
+      {
+        id: 'de', role: 'primary', shape: 'scatter', color: '#2f6fb3', markerSize: 2,
+        points: d.x.flatMap((x, i) => [x, d.de[i]]),
+      },
+    ],
+  }
+
+  return (
+    <>
+      <p className={styles.rtGamut}>
+        <strong>{t('analysis_rt_band_heading') || 'Round-trip ΔE by lightness'}</strong>{' '}
+        <span className={styles.histCount}>
+          ({d.n.toLocaleString()} {t('analysis_rt_band_pts') || 'points, gamut boundary → neutral'};{' '}
+          {t('analysis_rt_mean') || 'Mean'} {d.mean.toFixed(3)} · P90 {d.p90.toFixed(3)} · {t('analysis_rt_max') || 'Max'} {d.max.toFixed(2)})
+        </span>
+      </p>
+      <PlotlyGraph graph={graph} storageKey="profiletool.rtBandHeight" defaultH={280} />
     </>
   )
 }

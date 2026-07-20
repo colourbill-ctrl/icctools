@@ -215,6 +215,14 @@ The four round-trip types:
 - **Reproducibility (RT2)** — ΔE\*ab between the first and second round trips: how stable a repeated round trip is, independent of the first trip's gamut clipping.
 - **PRMG interoperability** — PCS colours inside the Perceptual Reference Medium Gamut round-tripped once; the ΔE distribution indicates cross-profile interoperability.
 
+Below the histogram, **Round-trip ΔE by lightness** answers the question the summary figures cannot: *where* in the tone scale the inversion struggles, and *how far into the gamut* the trouble reaches.
+
+It samples 32 lightness levels. At each level it takes 64 points **on the gamut boundary**, then repeats them eroded toward the neutral axis at 80 %, 50 % and 20 % of their chroma — 8,192 points in all, each plotted individually, with dotted separators between levels.
+
+Read it band by band. Within one band the points run from the gamut surface on the left to neutral on the right, so the error should **fall away** across the band: colours near the boundary are the hardest to invert, colours near neutral the easiest. A band whose error stays high all the way to neutral is a profile in trouble at that lightness. The tallest spikes mark the lightness levels where the gamut boundary itself is least well inverted.
+
+Every seed is inside the gamut by construction, so what you see is genuine `B2A`/`A2B` disagreement rather than colours being clipped for being unreachable. Note that this plot has its **own** sampling — deliberately weighted toward the gamut boundary — so its mean and maximum are higher than, and not comparable with, the table above. It follows the rendering intent but not the round-trip type.
+
 A profile lacking the device↔PCS transforms a metric needs shows a *not applicable* note; a device space too wide to sample is reported as skipped rather than as an error.
 
 #### Extrema Colorimetry

@@ -61,7 +61,10 @@ function seriesToTraces(s, hl, tone) {
     // highlight is active every non-hit point dims (mirrors GraphSvg's isMiss).
     const hits = text.map((tt) => hl != null && tt && tt.toLowerCase() === hl)
     const anyHit = hits.some(Boolean)
-    const size = x.map((_, i) => (isHint ? 4 : (hits[i] ? 9 : 6)))
+    // `markerSize` lets a dense scatter (thousands of points) ask for small dots;
+    // without it the default 6 px would merge into a solid mass.
+    const mSize = s.markerSize || (isHint ? 4 : 6)
+    const size = x.map((_, i) => (hits[i] ? mSize + 3 : mSize))
     const opacity = x.map((_, i) => ((hl != null && !hits[i]) ? 0.35 : 1))
     const base = {
       type: 'scatter',   // SVG scatter (never scattergl) so no WebGL / CSP eval

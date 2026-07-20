@@ -54,6 +54,7 @@ struct DeStats {
   icFloatNumber worstLab[3] = {0, 0, 0};   // representative colour at the max ΔE
   std::vector<float> des;                  // every finite ΔE, for the exact P90
 
+
   // Add one sample. `labForWorst` (may be null) is the colour recorded when this
   // sample sets a new maximum, so the UI can point at the worst-error location.
   void add(double de, const icFloatNumber* labForWorst) {

@@ -322,7 +322,45 @@ we should check what our voxel integration does at the extremes before comparing
 *Cost:* medium. A B2A-direction boundary needs a different construction than our
 device-cube-face mesh — the script builds it by walking the B2A table.
 
-### Q12 — B2A1 round-trip accuracy with GBD-eroded seeding · **PARTIAL**
+### Q12 — B2A1 round-trip accuracy with GBD-eroded seeding · **BUILT**
+
+`iccviz::RoundTripByLightness()` → the scatter under the histogram in Profile
+Statistics. **The reference's seeding is implemented**, not approximated: 32 lightness
+levels × 64 gamut-boundary points, each repeated eroded toward neutral at chroma
+×0.8/×0.5/×0.2, last point of each level replaced by neutral. **8192 points — the
+reference's exact count.**
+
+An envelope was built first and **discarded**: the reference figure's entire content is
+the *within-band* shape (error falling from gamut surface to neutral), and any summary
+erases it. Individual points, dotted band separators, 2 px markers.
+
+**Convergence against the published figures**, and what each step cost:
+
+| | mean | P90 | max |
+|---|---:|---:|---:|
+| Published | 0.343 | 0.947 | 2.76 |
+| First cut (raw gamut extent, bin-max GBD) | 0.482 | 1.377 | 8.43 |
+| + reference L\* range (corner-derived) | 0.416 | 1.222 | 8.79 |
+| + L-interpolated GBD (removes outward bias) | 0.386 | 1.149 | 6.25 |
+| + denser boundary sampling (S=36) | **0.411** | **1.248** | **3.22** |
+
+Two findings worth keeping:
+
+- **The L\* range is inkset-derived, not gamut-derived**: `hi = (100 + L_yellow)/2`,
+  `lo = (L_blackpoint + L_blue)/2`. Reproducing it gave 18.82–96.85, matching the
+  reference exactly. The raw gamut extent pulls in very dark levels the reference
+  excludes, where the gamut is a sliver and the errors say more about the sliver.
+- **A cell-maximum GBD biases outward.** Taking max chroma within an L-bin places
+  seeds slightly *outside* the gamut, where B2A merely clamps — the ΔE then measures
+  our sampling, not the profile. Symptom: a 13× cliff between the boundary ring and
+  the ×0.8 ring. Interpolating in L and sampling denser fixed most of it.
+
+**Residual ≈20 % on mean.** Our GBD comes from a boundary point cloud; the reference
+builds one with a gamut routine that lives in the toolbox we do not have. Our figures
+err **high**, which is the conservative direction. The plot's shape and scale match;
+treat the absolute numbers as ours, not as reproductions of the report's.
+
+
 
 *Script:* §11. Seeds **32 L\* levels**, each with 64 gamut-boundary points, then
 **erodes toward neutral at chroma × 0.8 / 0.5 / 0.2**, last point forced to neutral.

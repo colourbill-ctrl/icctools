@@ -2,6 +2,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import HeaderTable from './HeaderTable.jsx'
 import TagTable from './TagTable.jsx'
+import ErrorBoundary from './ErrorBoundary.jsx'
 import { preloadPlotly } from './viz/plotly.js'
 import { useT } from '../i18n.jsx'
 import { TAB_DEFS as TABS } from '../lib/tabs.js'
@@ -122,9 +123,22 @@ export default function ProfileViewer({
           </Suspense>
         )}
         {active === 'Analysis'   && (
-          <Suspense fallback={<div className={styles.loading}>{t('analysis_loading') || 'Analysing…'}</div>}>
-            <AnalysisPanel bytes={bytes} profileClass={data.header?.['Profile Class']} />
-          </Suspense>
+          /* Boundaried: the Analysis tab hosts several independent analyses, each
+             fed by untrusted profile data through a WASM engine. Without this, one
+             bad render takes the WHOLE React tree down and the browser tab goes
+             blank — no message, nothing to act on. Reset when the profile changes. */
+          <ErrorBoundary
+            resetKey={bytes}
+            fallback={(err) => (
+              <div className={styles.panelError}>
+                <strong>{t('error_label')}</strong> {err?.message || String(err)}
+              </div>
+            )}
+          >
+            <Suspense fallback={<div className={styles.loading}>{t('analysis_loading') || 'Analysing…'}</div>}>
+              <AnalysisPanel bytes={bytes} profileClass={data.header?.['Profile Class']} />
+            </Suspense>
+          </ErrorBoundary>
         )}
         {active === 'XML'        && (
           <Suspense fallback={<div className={styles.loading}>{t('loading_xml_editor')}</div>}>

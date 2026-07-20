@@ -436,6 +436,28 @@ std::string gamutVolumeImpl(const std::string& bytes, const std::string& tagSigS
               {"nColorants", v.nColorants}, {"degenerate", v.degenerate}}.dump();
 }
 
+// ── Round-trip ΔE by quantized lightness (iccviz::RoundTripByLightness) ──────
+// Returns the individual points, because the reference figure's whole content is the
+// within-band structure (ΔE falling from the gamut boundary to the neutral axis) —
+// any summary erases it. ~8k points at the default sampling, which is well within
+// what a JSON round trip and an SVG scatter handle.
+std::string roundTripByLightnessImpl(const std::string& bytes, int intent) {
+  if (bytes.size() > kMaxIccBytes)
+    return json{{"error", "Profile exceeds size limit"}}.dump();
+  CIccProfile* pIcc = parseCached(bytes);
+  if (!pIcc) return json{{"error", "Failed to parse ICC profile"}}.dump();
+  if (intent < 0 || intent > 3) intent = 1;
+
+  iccviz::RoundTripLightnessResult v =
+      iccviz::RoundTripByLightness(pIcc, static_cast<icRenderingIntent>(intent));
+  if (!v.ok) return json{{"error", v.error}}.dump();
+
+  return json{{"n", v.n}, {"levels", v.levels}, {"perHue", v.perHue},
+              {"loL", v.loL}, {"hiL", v.hiL},
+              {"mean", v.meanDE}, {"p90", v.p90DE}, {"max", v.maxDE},
+              {"levelL", v.levelL}, {"x", v.x}, {"de", v.de}}.dump();
+}
+
 // ── Extrema colorimetry: white/black points + TAC (see iccviz::WhiteBlackPoints) ──
 // Tag-driven, because the black point is whatever inking the chosen B2A table picks
 // for PCS black — it genuinely differs between perceptual, relative and saturation.
@@ -566,6 +588,12 @@ std::string gamutVolume(const std::string& bytes, const std::string& tagSigStr, 
   try { return gamutVolumeImpl(bytes, tagSigStr, intent); }
   catch (const std::exception& e) { return json{{"error", std::string("gamutVolume threw: ") + e.what()}}.dump(); }
   catch (...) { return json{{"error", "gamutVolume threw an unknown exception"}}.dump(); }
+}
+
+std::string roundTripByLightness(const std::string& bytes, int intent) {
+  try { return roundTripByLightnessImpl(bytes, intent); }
+  catch (const std::exception& e) { return json{{"error", std::string("roundTripByLightness threw: ") + e.what()}}.dump(); }
+  catch (...) { return json{{"error", "roundTripByLightness threw an unknown exception"}}.dump(); }
 }
 
 std::string whiteBlackPoints(const std::string& bytes, const std::string& tagSigStr) {
@@ -831,6 +859,7 @@ EMSCRIPTEN_BINDINGS(iccplot) {
   emscripten::function("tagEvalInfo", &tagEvalInfo);
   emscripten::function("evaluateTag", &evaluateTag);
   emscripten::function("gamutVolume", &gamutVolume);
+  emscripten::function("roundTripByLightness", &roundTripByLightness);
   emscripten::function("whiteBlackPoints", &whiteBlackPoints);
   emscripten::function("hueExtrema", &hueExtrema);
   emscripten::function("shadowInkPaths", &shadowInkPaths);

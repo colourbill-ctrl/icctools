@@ -1979,6 +1979,249 @@ RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
   return r;
 }
 
+// ── Round-trip ΔE by quantized lightness (see IccVizModel.hpp) ───────────────
+RoundTripLightnessResult RoundTripByLightness(CIccProfile* pIcc, icRenderingIntent intent,
+                                              int levels, int perHue) {
+  RoundTripLightnessResult r;
+  auto fail = [&](const char* why) -> RoundTripLightnessResult { r.ok = false; r.error = why; return r; };
+
+  if (!pIcc) return fail("no profile");
+  int NL = levels > 0 ? levels : 32;
+  int NH = perHue > 0 ? perHue : 64;
+  if (NL < 2)    NL = 2;
+  if (NL > 128)  NL = 128;
+  if (NH < 8)    NH = 8;
+  if (NH > 512)  NH = 512;
+  r.levels = NL; r.perHue = NH;
+
+  // ── 1. A boundary point cloud in Lab, reused from the gamut-mesh sampler ──
+  // Its vertices ARE the device-cube surface mapped to Lab, which is what a gamut
+  // boundary descriptor is built from; no need for a second sampler.
+  // Sample DENSER than the render default. Each descriptor cell keeps the maximum
+  // chroma of the points that land in it, so a sparse cloud biases the boundary
+  // outward — seeds then fall outside the gamut, the B2A clamps them, and the ΔE
+  // reports our sampling error instead of the profile's. Density is the cheap fix
+  // (a few×10⁴ extra transform evaluations, once).
+  GamutMeshResult mesh = GamutBoundaryMesh(pIcc, intent, 36);
+  if (!mesh.ok) return fail(mesh.error.empty() ? "could not sample the gamut boundary"
+                                               : mesh.error.c_str());
+  const std::size_t nv = mesh.vertices.size() / 3;
+  if (nv < 8) return fail("gamut boundary produced too few points");
+
+  // ── 2. Cylindrical gamut boundary: max chroma per (lightness, hue) cell ──
+  // Coarser in L than the requested levels would suggest, then sampled: a fine L
+  // binning leaves empty cells on sparse boundaries, and an empty cell is worse than
+  // a slightly smoothed one (it would silently place a "boundary" point at chroma 0,
+  // i.e. on the neutral axis, and report a suspiciously small ΔE there).
+  const int GL = 48;                              // L bins for the descriptor
+  std::vector<float> gbdC((std::size_t)GL * NH, -1.0f);
+  double minL = 1e9, maxL = -1e9;
+  for (std::size_t i = 0; i < nv; ++i) {
+    const float L = mesh.vertices[i * 3 + 0];
+    const float a = mesh.vertices[i * 3 + 1];
+    const float b = mesh.vertices[i * 3 + 2];
+    if (!std::isfinite(L) || !std::isfinite(a) || !std::isfinite(b)) continue;
+    if (L < 0.0f || L > 100.0f) continue;
+    if (L < minL) minL = L;
+    if (L > maxL) maxL = L;
+    int li = (int)(L * GL / 100.0);
+    if (li < 0) li = 0; if (li >= GL) li = GL - 1;
+    double h = std::atan2((double)b, (double)a);            // −π..π
+    int hi = (int)((h + 3.14159265358979323846) / (2.0 * 3.14159265358979323846) * NH);
+    if (hi < 0) hi = 0; if (hi >= NH) hi = NH - 1;
+    const float C = std::sqrt(a * a + b * b);
+    float& slot = gbdC[(std::size_t)li * NH + hi];
+    if (C > slot) slot = C;
+  }
+  if (minL > maxL) return fail("gamut boundary had no finite points");
+
+  // Fill empty hue cells from the nearest populated neighbour on the same L ring, so
+  // every (level, hue) query yields a real boundary chroma.
+  for (int li = 0; li < GL; ++li) {
+    float* ring = &gbdC[(std::size_t)li * NH];
+    bool anyHere = false;
+    for (int h = 0; h < NH; ++h) if (ring[h] >= 0.0f) { anyHere = true; break; }
+    if (!anyHere) continue;                        // whole ring empty → handled at query time
+    for (int h = 0; h < NH; ++h) {
+      if (ring[h] >= 0.0f) continue;
+      for (int d = 1; d <= NH / 2; ++d) {
+        const float lo = ring[(h - d + NH) % NH], hi2 = ring[(h + d) % NH];
+        if (lo >= 0.0f || hi2 >= 0.0f) { ring[h] = std::max(lo, hi2); break; }
+      }
+    }
+  }
+  // Chroma of one ring, walking outward in L for a ring that has data.
+  auto ringChroma = [&](int li, int h) -> double {
+    if (li < 0) li = 0;
+    if (li >= GL) li = GL - 1;
+    for (int d = 0; d < GL; ++d) {
+      for (int s = 0; s < 2; ++s) {
+        const int q = s ? li - d : li + d;
+        if (q < 0 || q >= GL) continue;
+        const float c = gbdC[(std::size_t)q * NH + h];
+        if (c >= 0.0f) return c;
+      }
+    }
+    return 0.0;
+  };
+  // Query at an arbitrary L by INTERPOLATING between the two nearest ring centres,
+  // rather than taking the containing ring's value. Each ring holds the MAXIMUM
+  // chroma seen anywhere in its ~2 L* span, which biases outward: near the cusp the
+  // gamut narrows quickly with L, so the ring maximum can exceed the true boundary
+  // at the queried L. A seed placed there is out of gamut, the B2A merely clamps it,
+  // and the resulting large ΔE measures our sampling error rather than the profile.
+  // Interpolating removes that bias in the L direction.
+  auto boundaryChroma = [&](double L, int h) -> double {
+    const double t = L * GL / 100.0 - 0.5;      // position in ring-centre coordinates
+    const int i0 = (int)std::floor(t);
+    const double f = t - i0;
+    const double c0 = ringChroma(i0, h), c1 = ringChroma(i0 + 1, h);
+    return c0 + (c1 - c0) * f;
+  };
+
+  // ── 3. Lightness range ──
+  // Match the reference's definition, which is stated in terms of the inkset rather
+  // than the raw gamut extent:
+  //     hi = halfway between paper white and Yellow
+  //     lo = halfway between the media black point and Blue
+  // This deliberately excludes the extreme shadow levels below Blue, where the gamut
+  // has collapsed to a sliver: sampling a "boundary" there produces large errors that
+  // say more about the sliver than about the profile, and they would dominate the
+  // summary statistics. Falls back to the raw extent (inset a little, for the same
+  // reason) when the corners are unavailable — i.e. any non-CMYK/CMY device.
+  bool haveRange = false;
+  {
+    HueExtremaResult hx = HueExtrema(pIcc, 2);          // corners only
+    if (hx.ok) {
+      double lYel = 0.0, lBlu = 0.0;
+      bool okY = false, okB = false;
+      for (const auto& e : hx.entries) {
+        if (e.name == "Yellow") { lYel = e.fullToneLab[0]; okY = true; }
+        else if (e.name == "Blue") { lBlu = e.fullToneLab[0]; okB = true; }
+      }
+      if (okY && okB) {
+        icTagSignature bpTag = (intent == icPerceptual) ? icSigBToA0Tag
+                             : (intent == icSaturation) ? icSigBToA2Tag : icSigBToA1Tag;
+        WhiteBlackResult wb = WhiteBlackPoints(pIcc, bpTag);
+        if (wb.ok) {
+          r.hiL = (100.0 + lYel) * 0.5;
+          r.loL = (wb.blackLabRel[0] + lBlu) * 0.5;
+          haveRange = true;
+        }
+      }
+    }
+  }
+  if (!haveRange) { r.loL = minL + 3.0; r.hiL = maxL - 3.0; }
+  if (r.hiL - r.loL < 5.0) { r.loL = minL; r.hiL = maxL; }
+  if (r.hiL <= r.loL) return fail("gamut lightness range is degenerate");
+
+  // ── 4. Transforms: Lab → device (B2A) → Lab (A2B), both at `intent` ──
+  icTagSignature aTag, bTag;
+  switch (intent) {
+    case icPerceptual: aTag = icSigAToB0Tag; bTag = icSigBToA0Tag; break;
+    case icSaturation: aTag = icSigAToB2Tag; bTag = icSigBToA2Tag; break;
+    default:           aTag = icSigAToB1Tag; bTag = icSigBToA1Tag; break;
+  }
+  CIccTag* ta = pIcc->FindTag(aTag);
+  CIccTag* tb = pIcc->FindTag(bTag);
+  if (!ta || !tb) return fail("profile lacks the AToB/BToA pair this intent needs");
+
+  CIccXform* xA = CIccXform::Create(pIcc, ta, /*bInput=*/true,  intent, icInterpLinear,
+                                    NULL, false, NULL, false);
+  CIccXform* xB = CIccXform::Create(pIcc, tb, /*bInput=*/false, intent, icInterpLinear,
+                                    NULL, false, NULL, false);
+  if (!xA || !xB) { delete xA; delete xB; return fail("could not build the round-trip transforms"); }
+  xA->ShareProfile(); xB->ShareProfile();
+  if (xA->Begin() != icCmmStatOk || xB->Begin() != icCmmStatOk) {
+    delete xA; delete xB; return fail("round-trip transform Begin failed");
+  }
+  const int N    = xA->GetNumSrcSamples();
+  const int nPcs = xA->GetNumDstSamples();
+  // Guard both directions so Apply can never over-read or over-write the buffers.
+  if (N <= 0 || N > kMaxInkChannels || nPcs < 3 ||
+      xB->GetNumSrcSamples() != nPcs || xB->GetNumDstSamples() != N) {
+    delete xA; delete xB; return fail("round-trip transform shape mismatch");
+  }
+  icStatusCMM st = icCmmStatOk;
+  CIccApplyXform* apA = xA->GetNewApply(st);
+  CIccApplyXform* apB = (st == icCmmStatOk) ? xB->GetNewApply(st) : nullptr;
+  if (!apA || !apB || st != icCmmStatOk) {
+    delete apA; delete apB; delete xA; delete xB; return fail("transform apply init failed");
+  }
+  const icColorSpaceSignature pcsSp = xA->GetDstSpace();
+
+  // ── 5. Walk the levels, erode toward neutral, round-trip each point ──
+  const double kChroma[4] = { 1.0, 0.8, 0.5, 0.2 };   // reference erosion schedule
+  const int    perLevel   = NH * 4;
+  const double dL = (r.hiL - r.loL) / (double)(NL - 1);
+
+  r.levelL.reserve(NL);
+  r.x.reserve((std::size_t)NL * perLevel);
+  r.de.reserve((std::size_t)NL * perLevel);
+  std::vector<double> des;
+  des.reserve((std::size_t)NL * perLevel);
+
+  std::vector<icFloatNumber> pcsIn(nPcs, 0.0f), dev(N, 0.0f), pcsOut(nPcs, 0.0f);
+
+  for (int i = 0; i < NL; ++i) {
+    const double L = r.loL + dL * i;
+    r.levelL.push_back((float)L);
+    // Band i occupies [L(i), L(i+1)) on the x axis, so bands sit side by side.
+    const double xLo = L;
+    const double xHi = (i < NL - 1) ? (L + dL) : (L + dL);
+
+    for (int k = 0; k < perLevel; ++k) {
+      const int ring = k / NH;                       // 0..3 → chroma factor
+      const int h    = k % NH;
+      double a, b;
+      if (k == perLevel - 1) {                       // last point of the level = neutral
+        a = 0.0; b = 0.0;
+      } else {
+        const double theta = (h + 0.5) * 2.0 * 3.14159265358979323846 / NH
+                           - 3.14159265358979323846;
+        const double C = boundaryChroma(L, h) * kChroma[ring];
+        a = C * std::cos(theta);
+        b = C * std::sin(theta);
+      }
+      // Lab → PCS encoding → device → PCS → Lab
+      if (pcsSp == icSigXYZData) {
+        icFloatNumber lab[3] = { (icFloatNumber)L, (icFloatNumber)a, (icFloatNumber)b };
+        icLabtoXYZ(pcsIn.data(), lab, nullptr);
+        icXyzToPcs(pcsIn.data());
+      } else {
+        pcsIn[0] = (icFloatNumber)L; pcsIn[1] = (icFloatNumber)a; pcsIn[2] = (icFloatNumber)b;
+        icLabToPcs(pcsIn.data());
+      }
+      xB->Apply(apB, dev.data(), pcsIn.data());
+      xA->Apply(apA, pcsOut.data(), dev.data());
+      icFloatNumber lab2[3];
+      if (!pcsToLabFull(pcsOut.data(), pcsSp, lab2)) continue;
+      const icFloatNumber lab1[3] = { (icFloatNumber)L, (icFloatNumber)a, (icFloatNumber)b };
+      const double de = deltaEab(lab1, lab2);
+      if (!std::isfinite(de)) continue;
+      const double frac = (double)k / (double)(perLevel - 1);
+      r.x.push_back((float)(xLo + (xHi - xLo) * frac));
+      r.de.push_back((float)de);
+      des.push_back(de);
+    }
+  }
+
+  delete apA; delete apB; delete xA; delete xB;
+  if (des.empty()) return fail("no finite round-trip samples");
+
+  r.n = (int)des.size();
+  double sum = 0.0, mx = 0.0;
+  for (double d : des) { sum += d; if (d > mx) mx = d; }
+  r.meanDE = sum / (double)des.size();
+  r.maxDE  = mx;
+  std::vector<double> sorted(des);
+  const std::size_t p90i = (std::size_t)std::floor(0.90 * (sorted.size() - 1));
+  std::nth_element(sorted.begin(), sorted.begin() + p90i, sorted.end());
+  r.p90DE = sorted[p90i];
+  r.ok = true;
+  return r;
+}
+
 // ── Media white / black point + TAC (see IccVizModel.hpp) ────────────────────
 // Two legs. The B2A leg asks the profile what inking it *chooses* for PCS black —
 // that is the black point, and it differs per intent because each B2A table makes

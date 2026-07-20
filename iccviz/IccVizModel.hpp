@@ -351,6 +351,47 @@ struct RoundTripResult {
 RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
                             int samplesPerAxis = 0);
 
+// ── Round-trip ΔE by quantized lightness (the reference QC scatter) ───────────
+// Reproduces the reference report's "B2A1 Roundtrip dEab by quantized L*; Pts vary
+// from GBD to Neutral" figure, whose entire information content is the WITHIN-BAND
+// structure — so this returns the individual points, not a summary.
+//
+// Seeding, which is what makes the picture readable:
+//   • `levels` lightness levels spanning the gamut's usable L* range.
+//   • At each level, `perHue` points on the GAMUT BOUNDARY (max chroma per hue angle).
+//   • Each boundary point then eroded toward neutral at chroma ×0.8, ×0.5, ×0.2.
+//   • The last point of each level is replaced by neutral itself.
+// So each level contributes perHue×4 points that march from the gamut surface inward,
+// and the plot shows ΔE falling from the boundary to the neutral axis. Defaults
+// (32 levels × 64 hues) give 8192 points — the reference's exact count.
+//
+// Every seed is IN GAMUT by construction, so the ΔE measures genuine B2A/A2B
+// disagreement rather than clipping of unreachable colours.
+//
+// `x` is a monotonic pseudo-L* coordinate: within level i the points spread linearly
+// from L(i) to L(i+1), so bands sit side by side and never overlap. `levelL` holds the
+// band edges for drawing separators. This differs from the interior-grid seeding used
+// by RoundTripDE, so the two are NOT numerically comparable — this one deliberately
+// over-weights the gamut boundary, where inversion is hardest.
+struct RoundTripLightnessResult {
+  bool        ok = false;
+  std::string error;
+  int         n         = 0;     // finite points (≤ levels × perHue × 4)
+  int         levels    = 0;
+  int         perHue    = 0;
+  double      loL       = 0.0;   // lightness range actually sampled
+  double      hiL       = 0.0;
+  double      meanDE    = 0.0;
+  double      p90DE     = 0.0;
+  double      maxDE     = 0.0;
+  std::vector<float> levelL;     // L* of each level, for the band separators
+  std::vector<float> x;          // pseudo-L* coordinate, one per point
+  std::vector<float> de;         // ΔE*ab, one per point
+};
+// levels / perHue ≤0 → 32 / 64 (the reference's sampling).
+RoundTripLightnessResult RoundTripByLightness(CIccProfile* pIcc, icRenderingIntent intent,
+                                              int levels = 0, int perHue = 0);
+
 // ── Media white / black point + total area coverage ───────────────────────────
 // The four numbers a print operator reads first, derived the way the reference QC
 // script does it (doQCpfA.m / getBlackWhitePts):

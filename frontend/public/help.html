@@ -329,6 +329,10 @@ body.dark .diag {
 <li><strong>Reproducibility (RT2)</strong> — ΔE*ab between the first and second round trips: how stable a repeated round trip is, independent of the first trip's gamut clipping.</li>
 <li><strong>PRMG interoperability</strong> — PCS colours inside the Perceptual Reference Medium Gamut round-tripped once; the ΔE distribution indicates cross-profile interoperability.</li>
 </ul>
+<p>Below the histogram, <strong>Round-trip ΔE by lightness</strong> answers the question the summary figures cannot: <em>where</em> in the tone scale the inversion struggles, and <em>how far into the gamut</em> the trouble reaches.</p>
+<p>It samples 32 lightness levels. At each level it takes 64 points <strong>on the gamut boundary</strong>, then repeats them eroded toward the neutral axis at 80 %, 50 % and 20 % of their chroma — 8,192 points in all, each plotted individually, with dotted separators between levels.</p>
+<p>Read it band by band. Within one band the points run from the gamut surface on the left to neutral on the right, so the error should <strong>fall away</strong> across the band: colours near the boundary are the hardest to invert, colours near neutral the easiest. A band whose error stays high all the way to neutral is a profile in trouble at that lightness. The tallest spikes mark the lightness levels where the gamut boundary itself is least well inverted.</p>
+<p>Every seed is inside the gamut by construction, so what you see is genuine <code>B2A</code>/<code>A2B</code> disagreement rather than colours being clipped for being unreachable. Note that this plot has its <strong>own</strong> sampling — deliberately weighted toward the gamut boundary — so its mean and maximum are higher than, and not comparable with, the table above. It follows the rendering intent but not the round-trip type.</p>
 <p>A profile lacking the device↔PCS transforms a metric needs shows a <em>not applicable</em> note; a device space too wide to sample is reported as skipped rather than as an error.</p>
 <h4>Extrema Colorimetry</h4>
 <p>The ends of the profile's reproduction range — the numbers a print operator usually reads first.</p>
