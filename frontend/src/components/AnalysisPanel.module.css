@@ -134,6 +134,32 @@
 .table th.statNum,  .table td.statNum  { text-align: right; }
 .table th.statNumC, .table td.statNumC { text-align: center; }
 
+/* ── Grouped-column headers (Extrema Colorimetry) ──────────────────────────
+   The white-point/black-point and per-hue tables give every colorimetric axis its
+   OWN column, under a spanning group header, so the figures line up under their
+   labels instead of being one space-separated blob. Two supporting rules: the
+   group header centres over its span, and a hairline marks where each group
+   begins so the eye can tell the two triplets apart without extra chrome.
+   (NB: do not write an asterisk immediately before a slash in these comments —
+   "L*" followed by "/" closes the comment early and breaks the build.) */
+.table th.groupHead {
+  text-align: center;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border-soft);
+  font-weight: 600;
+}
+.table th.groupStart, .table td.groupStart { border-left: 1px solid var(--border-soft); }
+
+/* Grouped tables run to 7–8 columns, which overflows a phone. Scroll them inside
+   their own box so the page body never scrolls sideways (project responsive rule). */
+.tableScroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.tableScroll > .table { min-width: 30rem; }
+
+/* Axis sub-header row: lighter than the group label above it, and the numbers
+   below are narrow, so trim the horizontal padding to keep the table compact. */
+.table thead tr + tr th { font-weight: 500; padding-top: 2px; }
+.table th.statNum, .table td.statNum { padding-left: 6px; padding-right: 8px; }
+
 /* Degenerate-gamut flag: a ⚠ appended to the unreliable volume cell, plus a note
    below the table. Uses --warning so it reads as caution, not error. */
 .warnMark { color: var(--warning); cursor: help; }

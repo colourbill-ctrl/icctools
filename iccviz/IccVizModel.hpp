@@ -109,7 +109,8 @@ enum class Kind : unsigned int {
   ClutImage      = 5,   // nD CLUT lattice flattened to an image (raster)
   // SmoothnessLattice = 6,  // reserved — deferred to a later phase
   // InkReversalL     = 7,   // retired — per-channel L* tone-reversal scan (removed); value reserved
-  NeutralAxisInking = 8,// device colorant along the neutral axis from a PCS→device LUT (graph)
+  NeutralAxisInking = 8,// device colorant along the neutral axis from a PCS→device LUT,
+                        // plus the neutral tone response and its round-trip ΔE (graph)
 };
 
 enum class Output : unsigned char { Graph, Raster };
@@ -133,12 +134,21 @@ struct Series {
   Shape shape = Shape::Polyline;
   std::string auxKind;     // "", "Lstar", "nm", "kelvin" — meaning of Vertex.aux
   std::string colorHint;   // optional: "R","G","B","white","neutral","locus"
+  // When true this series is measured in the units of Graph::y2Axis, not yAxis, and
+  // the receiver must plot it against the secondary axis. Set it whenever a series
+  // shares a chart with data of a DIFFERENT physical quantity (e.g. ΔE*ab alongside
+  // colorant %) — the two would otherwise be silently drawn on one scale, which
+  // either flattens one to the baseline or inflates it into nonsense.
+  bool useY2 = false;
   std::vector<Vertex> verts;
 };
 
 struct Axis {
   std::string label;       // "Input", "a*", "x (CIE 1931)"
-  float minHint = 0.0f;    // suggested range only — caller may recompute/override
+  // Suggested range only — the caller may recompute or override. minHint == maxHint
+  // means "no hint": the receiver should autorange (see Graph::y2Axis, whose extent
+  // is data-dependent and deliberately left to the plotting layer).
+  float minHint = 0.0f;
   float maxHint = 1.0f;
   bool  equalAspect = false;  // chart wants square aspect (xy / ab plots)
 };
@@ -147,6 +157,10 @@ struct Graph {
   std::string title;
   std::string description;   // e.g. curve Describe() text
   Axis xAxis, yAxis;
+  // Optional right-hand axis for series carrying a second physical quantity.
+  // `y2Axis` is meaningful only when `hasY2`; series opt in via Series::useY2.
+  bool hasY2 = false;
+  Axis y2Axis;
   std::vector<Series> series;  // mixed Primary + Hint
 };
 
@@ -336,6 +350,123 @@ struct RoundTripResult {
 // samplesPerAxis 0 → auto-pick the device seed grid from the colorant count.
 RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
                             int samplesPerAxis = 0);
+
+// ── Media white / black point + total area coverage ───────────────────────────
+// The four numbers a print operator reads first, derived the way the reference QC
+// script does it (doQCpfA.m / getBlackWhitePts):
+//
+//   WHITE = the colour of ZERO colorant, i.e. bare substrate. Read through the
+//     forward A2B1 table at relative intent (≈ L*100,0,0 by definition) and again at
+//     absolute intent (the substrate's actual colour — e.g. L*95.02 a*0.98 b*-4.02
+//     for a blue-white paper).
+//   BLACK = the darkest the profile will actually go: push PCS black (L*=0,a*=b*=0)
+//     through the chosen B2A table to get the inking the profile *chooses* for black,
+//     then read that inking back through A2B1, relative and absolute.
+//   TAC = the sum of that black inking — total area coverage, the ink-limit figure
+//     (returned as a fraction; ×100 gives the usual "320%").
+//
+// The black point is intent-dependent, because each B2A table picks its own inking
+// for black — hence `b2aTag` rather than an intent enum: pass icSigBToA0Tag /
+// BToA1 / BToA2 and the matching intent is used to build the transform.
+//
+// NOTE the substrate assumption: "white = zero colorant" holds for subtractive
+// (printing) devices, which is what this analysis is for. Restrict it to output
+// profiles; on an additive device zero colorant is black, and `whiteLab*` would then
+// describe the wrong end of the axis.
+//
+// `hasAbsolute` is false when the absolute leg could not be built — a profile with no
+// mediaWhitePoint tag cannot be read absolutely. It is also legitimate for the
+// absolute and relative numbers to be identical: IccProfLib only applies the media
+// adjustment when the media white differs from the illuminant.
+struct WhiteBlackResult {
+  bool        ok = false;
+  std::string error;
+  int         nColorants = 0;
+  bool        hasAbsolute = false;
+  double      whiteLabRel[3] = {0.0, 0.0, 0.0};   // L*, a*, b*
+  double      whiteLabAbs[3] = {0.0, 0.0, 0.0};
+  double      blackLabRel[3] = {0.0, 0.0, 0.0};
+  double      blackLabAbs[3] = {0.0, 0.0, 0.0};
+  std::vector<double> blackInk;                   // device values 0..1, one per colorant
+  double      tac = 0.0;                          // sum(blackInk); ×100 = TAC %
+};
+
+// Compute white/black points and TAC from one B2A (PCS→device) tag plus the forward
+// A2B1 table. Needs both: A2B1 alone cannot say what inking the profile picks for black.
+WhiteBlackResult WhiteBlackPoints(CIccProfile* pIcc, icTagSignature b2aTag);
+
+// ── Per-hue full-tone / maximum-chroma colorimetry ────────────────────────────
+// For each chromatic corner of the inkset (C, M, Y, R, G, B, plus K) report where the
+// profile puts it in L*C*h — twice:
+//
+//   fullTone   — the corner itself (100% of the contributing inks).
+//   maxChroma  — the most chromatic point found while ramping from bare substrate to
+//                that corner, together with the inking that achieved it.
+//
+// The DIAGNOSIS is the difference between the two. On a well-behaved profile maximum
+// chroma sits at full tone and the rows are identical (as they are for GRACoL2013).
+// When they diverge, the profile is over-inking: past some point more ink stops adding
+// chroma and starts darkening — `rampFraction` says where that turn happened.
+//
+// Measured through A2B1 at relative intent, matching the reference QC script; the
+// result is therefore intent-independent.
+//
+// Requires a device space whose channel ORDER is fixed and known — icSigCmykData or
+// icSigCmyData. An n-colour (nCLR) space names its channels through colorantTable and
+// they can be in any order, so the corners cannot be stated without guessing; those
+// profiles return ok=false rather than a plausible-looking wrong answer.
+struct HueExtremaEntry {
+  std::string name;                    // "Cyan","Magenta","Yellow","Red","Green","Blue","Black"
+  double fullToneLab[3]  = {0,0,0};    // L*, a*, b*
+  double fullToneHCL[3]  = {0,0,0};    // hue°, C*, L*
+  double maxChromaLab[3] = {0,0,0};
+  double maxChromaHCL[3] = {0,0,0};
+  std::vector<double> maxChromaInk;    // device values 0..1 at maximum chroma
+  double rampFraction = 0.0;           // 0..1 along substrate→full tone where max C* fell
+};
+struct HueExtremaResult {
+  bool        ok = false;
+  std::string error;
+  int         nColorants = 0;
+  std::vector<HueExtremaEntry> entries;
+};
+// rampSamples 0 → 1024 (the reference script's sampling density); clamped to [16,4096].
+HueExtremaResult HueExtrema(CIccProfile* pIcc, int rampSamples = 0);
+
+// ── Ink usage in the shadows ──────────────────────────────────────────────────
+// Four straight paths across the a*b* plane at ONE constant, deliberately dark L*,
+// pushed through a B2A table so you can watch the separation change as the colour
+// travels from far out of gamut, through the gamut, and out the other side.
+//
+// This is where gamut-mapping artefacts live: an abrupt step or a reversal in a
+// colorant here is a visible shadow artefact in print. Because all four paths share
+// one L*, any change is attributable to hue/chroma handling alone.
+//
+// The plane is chosen the way the reference script does: halfway between the
+// profile's Blue corner and the darkest of C, M, Y, R, G — i.e. just inside the
+// shadow end of the gamut. Paths run at 0° (the a* axis), 45°, 90° (the b* axis)
+// and 135°, each swept across the full ±127 PCS range.
+//
+// BLACK POINT COMPENSATION: the perceptual and saturation tables expect PCS black at
+// L*=0, so for B2A0/B2A2 the L* is first stretched from the media black point up to
+// PCS black — exactly as the reference script does before those transforms. Following
+// that script, the media black point always comes from B2A0 (falling back to the
+// selected tag when the profile has no B2A0), so the three intents stay comparable.
+// `bpcApplied` reports whether the stretch happened.
+//
+// Same device-space restriction as HueExtrema: the constant-L* plane is derived from
+// the CMYRGB corners, so CMYK/CMY only.
+struct ShadowInkResult {
+  bool        ok = false;
+  std::string error;
+  int         nColorants = 0;
+  double      lStar      = 0.0;    // the constant L* plane actually sampled (after BPC)
+  double      lStarRaw   = 0.0;    // …before BPC, so the UI can show both
+  bool        bpcApplied = false;
+  std::vector<Graph> graphs;       // one per path angle, in 0/45/90/135° order
+};
+// pathSamples 0 → 256 (the reference script's density); clamped to [16,4096].
+ShadowInkResult ShadowInkPaths(CIccProfile* pIcc, icTagSignature b2aTag, int pathSamples = 0);
 
 } // namespace iccviz
 

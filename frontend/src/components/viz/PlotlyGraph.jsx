@@ -44,7 +44,9 @@ function seriesToTraces(s, hl, tone) {
   const pts = s.points || []
   const x = [], y = []
   for (let i = 0; i < pts.length; i += 2) { x.push(pts[i]); y.push(pts[i + 1]) }
-  if (tone) for (let i = 0; i < y.length; i++) y[i] -= x[i]
+  // Never apply the y−x tone transform to a secondary-axis series: it carries a
+  // different quantity than x, so the subtraction would be meaningless.
+  if (tone && !s.useY2) for (let i = 0; i < y.length; i++) y[i] -= x[i]
   const color = s.color || colorFor(s)
   const isHint = s.role === 'hint'
   const named = !!s.name
@@ -88,14 +90,20 @@ function seriesToTraces(s, hl, tone) {
   if (s.shape === 'closedPath' && x.length) { lx.push(x[0]); ly.push(y[0]) }
   return [{
     type: 'scatter', mode: 'lines', x: lx, y: ly, name: s.name || undefined,
-    line: { color, width: isHint ? 1 : 2 }, opacity: seriesDimmed ? 0.35 : (isHint ? 0.7 : 1),
+    line: { color, width: isHint ? 1 : 2, dash: s.dash || undefined },
+    opacity: seriesDimmed ? 0.35 : (isHint ? 0.7 : 1),
+    // A secondary-axis series is drawn against y2; everything else keeps the default.
+    yaxis: s.useY2 ? 'y2' : undefined,
     showlegend: named, hovertemplate: '%{x:.3g}, %{y:.3g}<extra></extra>',
   }]
 }
 
-// A finite [min,max] pair → an explicit axis range; otherwise let Plotly autorange.
+// A usable [min,max] pair → an explicit axis range; otherwise let Plotly autorange.
+// max must exceed min: the model uses minHint == maxHint to mean "no hint" (an axis
+// whose extent is data-dependent), and a [0,0] range would collapse the plot.
 function axisRange(a) {
-  return (a && Number.isFinite(a.min) && Number.isFinite(a.max)) ? [a.min, a.max] : undefined
+  return (a && Number.isFinite(a.min) && Number.isFinite(a.max) && a.max !== a.min)
+    ? [a.min, a.max] : undefined
 }
 
 export default function PlotlyGraph({ graph, legend = false, highlight, toneOption = false, storageKey = 'profiletool.plotHeight', defaultH = 360 }) {
@@ -135,8 +143,11 @@ export default function PlotlyGraph({ graph, legend = false, highlight, toneOpti
       const traces = ordered.flatMap((s) => seriesToTraces(s, hl, tone))
       const anyNamed = traces.some((tr) => tr.showlegend)
 
+      const hasY2 = !!graph.hasY2 && graph.series.some((s) => s.useY2)
       const layout = {
-        margin: { l: 56, r: 16, t: 12, b: 46 }, autosize: true,
+        // A right-hand axis needs room for its ticks and title, so widen that margin
+        // only when one is actually present.
+        margin: { l: 56, r: hasY2 ? 58 : 16, t: 12, b: 46 }, autosize: true,
         xaxis: {
           title: { text: graph.xAxis?.label || '', font: { color: c.font }, standoff: 4 },
           range: axisRange(graph.xAxis), zeroline: false, showgrid: true, gridcolor: c.grid,
@@ -157,6 +168,19 @@ export default function PlotlyGraph({ graph, legend = false, highlight, toneOpti
         legend: { orientation: 'h', x: 0, y: 1.12, font: { color: c.font } },
         plot_bgcolor: c.plotBg, paper_bgcolor: c.paperBg, font: { color: c.font },
         hovermode: 'closest',
+      }
+      // Secondary y axis for series measured in a different quantity than the primary
+      // one (ΔE*ab beside colorant %). `rangemode: 'tozero'` keeps the baseline at 0 so
+      // the curve's height stays honest — autoranging both ends would magnify noise on
+      // a near-perfect profile into something that looks like a problem.
+      if (hasY2) {
+        layout.yaxis2 = {
+          title: { text: graph.y2Axis?.label || '', font: { color: c.font }, standoff: 4 },
+          range: axisRange(graph.y2Axis), rangemode: 'tozero',
+          overlaying: 'y', side: 'right',
+          showgrid: false,                 // one grid only; two would read as a lattice
+          zeroline: false, linecolor: c.frame, tickfont: { color: c.font },
+        }
       }
       // Equal-aspect plots (e.g. a*b* / chromaticity) lock the y scale to x.
       if (graph.xAxis?.equalAspect) { layout.yaxis.scaleanchor = 'x'; layout.yaxis.scaleratio = 1 }

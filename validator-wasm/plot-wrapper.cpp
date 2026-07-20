@@ -154,6 +154,9 @@ json seriesToJson(const iccviz::Series& s) {
   js["shape"] = shapeStr(s.shape);
   js["colorHint"] = s.colorHint;
   js["auxKind"] = s.auxKind;
+  // Series carrying a different physical quantity than the primary y axis (e.g.
+  // ΔE*ab beside colorant %) must be drawn against Graph.y2Axis, not yAxis.
+  js["useY2"] = s.useY2;
 
   json pts = json::array();
   pts.get_ptr<json::array_t*>()->reserve(s.verts.size() * 2);
@@ -185,6 +188,8 @@ json graphToJson(const iccviz::Graph& g) {
   jg["description"] = g.description;
   jg["xAxis"] = axisToJson(g.xAxis);
   jg["yAxis"] = axisToJson(g.yAxis);
+  jg["hasY2"] = g.hasY2;
+  if (g.hasY2) jg["y2Axis"] = axisToJson(g.y2Axis);
   json series = json::array();
   for (const auto& s : g.series) series.push_back(seriesToJson(s));
   jg["series"] = std::move(series);
@@ -431,6 +436,88 @@ std::string gamutVolumeImpl(const std::string& bytes, const std::string& tagSigS
               {"nColorants", v.nColorants}, {"degenerate", v.degenerate}}.dump();
 }
 
+// ── Extrema colorimetry: white/black points + TAC (see iccviz::WhiteBlackPoints) ──
+// Tag-driven, because the black point is whatever inking the chosen B2A table picks
+// for PCS black — it genuinely differs between perceptual, relative and saturation.
+std::string whiteBlackPointsImpl(const std::string& bytes, const std::string& tagSigStr) {
+  if (bytes.size() > kMaxIccBytes)
+    return json{{"error", "Profile exceeds size limit"}}.dump();
+  CIccProfile* pIcc = parseCached(bytes);
+  if (!pIcc) return json{{"error", "Failed to parse ICC profile"}}.dump();
+  if (tagSigStr.size() != 4) return json{{"error", "Bad tag signature"}}.dump();
+
+  icTagSignature sig = static_cast<icTagSignature>(
+      (icUInt8Number(tagSigStr[0]) << 24) | (icUInt8Number(tagSigStr[1]) << 16) |
+      (icUInt8Number(tagSigStr[2]) << 8)  |  icUInt8Number(tagSigStr[3]));
+
+  iccviz::WhiteBlackResult w = iccviz::WhiteBlackPoints(pIcc, sig);
+  if (!w.ok) return json{{"error", w.error}}.dump();
+
+  auto lab3 = [](const double v[3]) { return json::array({v[0], v[1], v[2]}); };
+  json j;
+  j["nColorants"]  = w.nColorants;
+  j["hasAbsolute"] = w.hasAbsolute;
+  j["whiteLabRel"] = lab3(w.whiteLabRel);
+  j["blackLabRel"] = lab3(w.blackLabRel);
+  if (w.hasAbsolute) {
+    j["whiteLabAbs"] = lab3(w.whiteLabAbs);
+    j["blackLabAbs"] = lab3(w.blackLabAbs);
+  }
+  j["blackInk"] = w.blackInk;
+  j["tac"]      = w.tac;
+  return j.dump();
+}
+
+// ── Extrema colorimetry: per-hue full-tone vs max chroma (iccviz::HueExtrema) ──
+// Intent-independent (always measured through A2B1 relative), so no tag argument.
+std::string hueExtremaImpl(const std::string& bytes) {
+  if (bytes.size() > kMaxIccBytes)
+    return json{{"error", "Profile exceeds size limit"}}.dump();
+  CIccProfile* pIcc = parseCached(bytes);
+  if (!pIcc) return json{{"error", "Failed to parse ICC profile"}}.dump();
+
+  iccviz::HueExtremaResult h = iccviz::HueExtrema(pIcc);
+  if (!h.ok) return json{{"error", h.error}}.dump();
+
+  auto v3 = [](const double v[3]) { return json::array({v[0], v[1], v[2]}); };
+  json entries = json::array();
+  for (const auto& e : h.entries) {
+    json je;
+    je["name"]          = e.name;
+    je["fullToneLab"]   = v3(e.fullToneLab);
+    je["fullToneHCL"]   = v3(e.fullToneHCL);
+    je["maxChromaLab"]  = v3(e.maxChromaLab);
+    je["maxChromaHCL"]  = v3(e.maxChromaHCL);
+    je["maxChromaInk"]  = e.maxChromaInk;
+    je["rampFraction"]  = e.rampFraction;
+    entries.push_back(std::move(je));
+  }
+  return json{{"nColorants", h.nColorants}, {"entries", std::move(entries)}}.dump();
+}
+
+// ── Ink usage in the shadows (iccviz::ShadowInkPaths) ────────────────────────
+// Returns four ready-to-plot Graphs (0/45/90/135°) plus the constant-L* plane that
+// was used and whether black-point compensation was applied to reach it.
+std::string shadowInkPathsImpl(const std::string& bytes, const std::string& tagSigStr) {
+  if (bytes.size() > kMaxIccBytes)
+    return json{{"error", "Profile exceeds size limit"}}.dump();
+  CIccProfile* pIcc = parseCached(bytes);
+  if (!pIcc) return json{{"error", "Failed to parse ICC profile"}}.dump();
+  if (tagSigStr.size() != 4) return json{{"error", "Bad tag signature"}}.dump();
+
+  icTagSignature sig = static_cast<icTagSignature>(
+      (icUInt8Number(tagSigStr[0]) << 24) | (icUInt8Number(tagSigStr[1]) << 16) |
+      (icUInt8Number(tagSigStr[2]) << 8)  |  icUInt8Number(tagSigStr[3]));
+
+  iccviz::ShadowInkResult s = iccviz::ShadowInkPaths(pIcc, sig);
+  if (!s.ok) return json{{"error", s.error}}.dump();
+
+  json graphs = json::array();
+  for (const auto& g : s.graphs) graphs.push_back(graphToJson(g));
+  return json{{"nColorants", s.nColorants}, {"lStar", s.lStar}, {"lStarRaw", s.lStarRaw},
+              {"bpcApplied", s.bpcApplied}, {"graphs", std::move(graphs)}}.dump();
+}
+
 // ── exception-safe boundary wrappers ─────────────────────────────────────────
 // The names embind binds. Every entry point converts an unexpected C++ throw
 // (std::bad_alloc on a crafted huge LUT, an nlohmann type_error, an IccProfLib
@@ -479,6 +566,24 @@ std::string gamutVolume(const std::string& bytes, const std::string& tagSigStr, 
   try { return gamutVolumeImpl(bytes, tagSigStr, intent); }
   catch (const std::exception& e) { return json{{"error", std::string("gamutVolume threw: ") + e.what()}}.dump(); }
   catch (...) { return json{{"error", "gamutVolume threw an unknown exception"}}.dump(); }
+}
+
+std::string whiteBlackPoints(const std::string& bytes, const std::string& tagSigStr) {
+  try { return whiteBlackPointsImpl(bytes, tagSigStr); }
+  catch (const std::exception& e) { return json{{"error", std::string("whiteBlackPoints threw: ") + e.what()}}.dump(); }
+  catch (...) { return json{{"error", "whiteBlackPoints threw an unknown exception"}}.dump(); }
+}
+
+std::string hueExtrema(const std::string& bytes) {
+  try { return hueExtremaImpl(bytes); }
+  catch (const std::exception& e) { return json{{"error", std::string("hueExtrema threw: ") + e.what()}}.dump(); }
+  catch (...) { return json{{"error", "hueExtrema threw an unknown exception"}}.dump(); }
+}
+
+std::string shadowInkPaths(const std::string& bytes, const std::string& tagSigStr) {
+  try { return shadowInkPathsImpl(bytes, tagSigStr); }
+  catch (const std::exception& e) { return json{{"error", std::string("shadowInkPaths threw: ") + e.what()}}.dump(); }
+  catch (...) { return json{{"error", "shadowInkPaths threw an unknown exception"}}.dump(); }
 }
 
 // Gamut boundary MESH for the profile's device→PCS transform at a rendering intent —
@@ -726,6 +831,9 @@ EMSCRIPTEN_BINDINGS(iccplot) {
   emscripten::function("tagEvalInfo", &tagEvalInfo);
   emscripten::function("evaluateTag", &evaluateTag);
   emscripten::function("gamutVolume", &gamutVolume);
+  emscripten::function("whiteBlackPoints", &whiteBlackPoints);
+  emscripten::function("hueExtrema", &hueExtrema);
+  emscripten::function("shadowInkPaths", &shadowInkPaths);
   emscripten::function("gamutMesh", &gamutMesh);
   emscripten::function("roundTripDE", &roundTripDE);
   emscripten::function("roundTripStats", &roundTripStats);

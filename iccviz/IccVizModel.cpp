@@ -903,6 +903,28 @@ bool isPcsSpace(icColorSpaceSignature s) {
   return s == icSigLabData || s == icSigXYZData;
 }
 
+// ── Shared PCS / Lab helpers ─────────────────────────────────────────────────
+// Used by both the neutral-axis tone/ΔE curves and the B2A round-trip metric, so
+// they live above the first caller rather than inside either section.
+//
+// pcsToLabFull — decode a transform's internal-PCS-encoded output (Lab or XYZ) to
+// human L*a*b*, returning false for an unsupported PCS. Callers compare in L*a*b*,
+// so both legs are brought to the same human Lab here rather than at each call site.
+bool pcsToLabFull(const icFloatNumber* pcs, icColorSpaceSignature sp, icFloatNumber out[3]) {
+  icFloatNumber v[3] = { pcs[0], pcs[1], pcs[2] };
+  if (sp == icSigLabData) { icLabFromPcs(v); out[0]=v[0]; out[1]=v[1]; out[2]=v[2]; return true; }
+  if (sp == icSigXYZData) { icXyzFromPcs(v); icXYZtoLab(out, v, nullptr); return true; }  // D50
+  return false;
+}
+// deltaEab — plain Euclidean ΔE*ab (CIE76) between two L*a*b* triples. CIE76 (not
+// ΔE2000) is deliberate: these are relative agreement checks, so the simplest
+// distance keeps the number interpretable — and it matches every other ΔE in this
+// codebase, so figures stay comparable across analyses.
+double deltaEab(const icFloatNumber a[3], const icFloatNumber b[3]) {
+  const double dL=a[0]-b[0], da=a[1]-b[1], db=a[2]-b[2];
+  return std::sqrt(dL*dL + da*da + db*db);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Neutral Axis Inking  (Kind::NeutralAxisInking)
 //
@@ -939,6 +961,85 @@ void neutralSrc(float L, icColorSpaceSignature pcs, icFloatNumber* src) {
     src[0] = L; src[1] = 0.0f; src[2] = 0.0f;                        // human L*a*b*
     icLabToPcs(src);
   }
+}
+
+// inkColorHints — the Lab of 100% of each colorant alone, read through the forward
+// A2B1 (relative) table and formatted as a "L,a,b" string per channel (empty where
+// unavailable). DATA only: the receiver does the Lab→sRGB display mapping, since this
+// model never produces display colours. Shared by every ink-separation plot so they
+// all colour their traces identically; returns an all-empty vector when the profile
+// has no usable A2B1, which the receivers treat as "fall back to the channel palette".
+std::vector<std::string> inkColorHints(CIccProfile* pIcc, int outCh) {
+  std::vector<std::string> hints(outCh);
+  CIccTag* fwdTag = pIcc ? pIcc->FindTag(icSigAToB1Tag) : nullptr;
+  if (!fwdTag) return hints;
+  CIccXform* fwd = CIccXform::Create(pIcc, fwdTag, /*bInput=*/true, icRelativeColorimetric,
+                                     icInterpLinear, /*pPcc=*/NULL, /*bUseSpectralPCS=*/false,
+                                     /*pHintManager=*/NULL, /*bOwnsProfile=*/false);
+  if (!fwd) return hints;
+  fwd->ShareProfile();
+  icStatusCMM fst = icCmmStatOk;
+  CIccApplyXform* fapply = (fwd->Begin() == icCmmStatOk) ? fwd->GetNewApply(fst) : nullptr;
+  if (fapply && fst == icCmmStatOk &&
+      fwd->GetNumSrcSamples() == outCh && fwd->GetNumDstSamples() >= 3) {
+    const icColorSpaceSignature fOut = fwd->GetDstSpace();
+    std::vector<icFloatNumber> usrc(outCh, 0.0f), udst(fwd->GetNumDstSamples(), 0.0f);
+    for (int c = 0; c < outCh; ++c) {
+      for (int k = 0; k < outCh; ++k) usrc[k] = (k == c) ? 1.0f : 0.0f;   // 100% of ink c
+      fwd->Apply(fapply, udst.data(), usrc.data());
+      icFloatNumber lab[3] = { 0, 0, 0 };
+      if (!pcsToLabFull(udst.data(), fOut, lab)) continue;
+      if (!std::isfinite(lab[0])) continue;
+      char buf[48];
+      std::snprintf(buf, sizeof buf, "%.1f,%.1f,%.1f",
+                    static_cast<double>(lab[0]), static_cast<double>(lab[1]), static_cast<double>(lab[2]));
+      hints[c] = buf;
+    }
+  }
+  delete fapply;
+  delete fwd;
+  return hints;
+}
+
+// cmyrgbCorners — device values for the six chromatic full-tone corners (C, M, Y, R,
+// G, B), plus K where the inkset has one.
+//
+// This is only statable when the colour space FIXES the channel order. icSigCmykData
+// and icSigCmyData do. An n-colour (nCLR) space names its channels through
+// colorantTable and may order them any way it likes, so "channel 0 is cyan" would be
+// a guess — and a guess here silently mislabels every downstream hue. Unsupported
+// spaces return false and the caller reports N/A.
+struct HueCorner { const char* name; std::vector<float> ink; };
+bool cmyrgbCorners(icColorSpaceSignature space, int N, std::vector<HueCorner>& out) {
+  out.clear();
+  auto mk = [&](const char* nm, std::initializer_list<float> v) {
+    HueCorner hc; hc.name = nm;
+    hc.ink.assign(v.begin(), v.end());
+    hc.ink.resize(static_cast<std::size_t>(N), 0.0f);
+    out.push_back(std::move(hc));
+  };
+  if (space == icSigCmykData && N == 4) {
+    mk("Cyan", {1,0,0,0});  mk("Magenta", {0,1,0,0}); mk("Yellow", {0,0,1,0});
+    mk("Red",  {0,1,1,0});  mk("Green",   {1,0,1,0}); mk("Blue",   {1,1,0,0});
+    mk("Black",{0,0,0,1});
+    return true;
+  }
+  if (space == icSigCmyData && N == 3) {
+    mk("Cyan", {1,0,0});    mk("Magenta", {0,1,0});   mk("Yellow", {0,0,1});
+    mk("Red",  {0,1,1});    mk("Green",   {1,0,1});   mk("Blue",   {1,1,0});
+    return true;
+  }
+  return false;
+}
+
+// labToHCL — L*a*b* → (hue°, C*, L*). Hue is normalised to [0,360) so the reported
+// angle matches the conventional colour wheel rather than atan2's ±180 range.
+void labToHCL(const double lab[3], double out[3]) {
+  double h = std::atan2(lab[2], lab[1]) * 180.0 / 3.14159265358979323846;
+  if (h < 0.0) h += 360.0;
+  out[0] = h;
+  out[1] = std::sqrt(lab[1]*lab[1] + lab[2]*lab[2]);
+  out[2] = lab[0];
 }
 
 // buildNeutralAxisGraph — build the neutral-axis inking graph for one B2A tag: walk
@@ -996,12 +1097,20 @@ bool buildNeutralAxisGraph(CIccProfile* pIcc, icTagSignature sig, Graph& out,
     series[c].verts.reserve(kNeutralSamples);
   }
 
+  // Keep every sample's device values: the tone / ΔE curves below re-drive them
+  // through the forward table, and re-running the B2A leg to get them back would
+  // double the transform cost for no benefit.
+  std::vector<icFloatNumber> devAll(static_cast<std::size_t>(kNeutralSamples) * outCh, 0.0f);
+  std::vector<float> Lin(kNeutralSamples, 0.0f);
+
   std::vector<icFloatNumber> src(inCh, 0.0f), dst(outCh, 0.0f);
   for (int i = 0; i < kNeutralSamples; ++i) {
     float L = 100.0f * (1.0f - static_cast<float>(i) / static_cast<float>(kNeutralSamples - 1));
+    Lin[i] = L;
     neutralSrc(L, inSp, src.data());
     xform->Apply(apply, dst.data(), src.data());
     for (int c = 0; c < outCh; ++c) {
+      devAll[static_cast<std::size_t>(i) * outCh + c] = dst[c];
       float v = static_cast<float>(dst[c]) * 100.0f;                  // device 0..1 → %
       if (!std::isfinite(v)) v = 0.0f;
       Vertex vert; vert.x = L; vert.y = v;
@@ -1012,11 +1121,34 @@ bool buildNeutralAxisGraph(CIccProfile* pIcc, icTagSignature sig, Graph& out,
   delete apply;
   delete xform;
 
-  // Per-colorant display hint: the Lab of 100% of each ink alone, obtained from
-  // the forward A2B1 (relative-colorimetric) table. Carried in series.colorHint as
-  // a "L,a,b" string — DATA only; the receiver does the Lab→sRGB display mapping
-  // (this model never produces display colours). Absent/odd A2B1 → no hint, and the
-  // receiver falls back to its channel palette.
+  {
+    const std::vector<std::string> hints = inkColorHints(pIcc, outCh);
+    for (int c = 0; c < outCh; ++c) series[c].colorHint = hints[c];
+  }
+
+  // The forward A2B1 (relative-colorimetric) table is also the return leg of the
+  // neutral round trip, which yields two more series: the TONE RESPONSE (L*-out vs
+  // L*-in) and the round-trip ΔE*ab.
+  //
+  // A2B1 is the measuring stick at every B2A intent — deliberately. It answers "what
+  // colour actually comes off the press", which is what an instrument would read, and
+  // holding it fixed keeps the perceptual / relative / saturation plots on one
+  // comparable scale. Using each intent's own A2B would instead measure each table
+  // against itself and hide exactly the differences this plot exists to show.
+  //
+  // Absent or odd A2B1 → no tone/ΔE series; the ink curves still render.
+  bool haveRoundTrip = false;
+  Series toneSeries, deSeries;
+  toneSeries.id = "tone";
+  toneSeries.name = "L* out";
+  toneSeries.role = Role::Primary;
+  toneSeries.shape = Shape::Polyline;
+  deSeries.id = "neutrality";
+  deSeries.name = "da*b*";
+  deSeries.role = Role::Primary;
+  deSeries.shape = Shape::Polyline;
+  deSeries.useY2 = true;          // not a colorant %, so it needs its own scale
+
   if (CIccTag* fwdTag = pIcc->FindTag(icSigAToB1Tag)) {
     if (CIccXform* fwd = CIccXform::Create(pIcc, fwdTag, /*bInput=*/true,
                                            icRelativeColorimetric, icInterpLinear, /*pPcc=*/NULL, /*bUseSpectralPCS=*/false, /*pHintManager=*/NULL, /*bOwnsProfile=*/false)) {
@@ -1027,26 +1159,39 @@ bool buildNeutralAxisGraph(CIccProfile* pIcc, icTagSignature sig, Graph& out,
           fwd->GetNumSrcSamples() == outCh && fwd->GetNumDstSamples() >= 3) {
         const icColorSpaceSignature fOut = fwd->GetDstSpace();
         std::vector<icFloatNumber> usrc(outCh, 0.0f), udst(fwd->GetNumDstSamples(), 0.0f);
-        for (int c = 0; c < outCh; ++c) {
-          for (int k = 0; k < outCh; ++k) usrc[k] = (k == c) ? 1.0f : 0.0f;   // 100% of ink c
+
+        // ── Return leg: device → A2B1 → Lab, per neutral sample ──
+        // The requested colour is (L, 0, 0) by construction, which splits the round-trip
+        // error cleanly into two curves that say different things:
+        //
+        //   tone = L*-out    — where the neutral axis lands in LIGHTNESS. Its plateau at
+        //                      the darkest reproducible L* IS the media black point.
+        //   da*b* = hypot(a*,b*) of the result — the NEUTRALITY error: how far the grey
+        //                      drifts off-neutral, i.e. where the profile tints greys.
+        //
+        // Lightness is deliberately EXCLUDED from the second curve rather than reporting
+        // a full ΔE*ab. Below the media black point the profile can only clamp, so a full
+        // ΔE grows without bound (≈10.8 at L*=0 on GRACoL2013_CRPC6) purely because the
+        // request was unreachable — not because anything is wrong. That artefact would
+        // dominate the axis and squash the real signal, which lives in the 0–0.3 range;
+        // and the lightness story is already told, exactly, by the tone curve's plateau.
+        // Measured this way the curve reproduces the reference QC plot: ~0.28 just above
+        // the black point, falling away below it.
+        toneSeries.verts.reserve(kNeutralSamples);
+        deSeries.verts.reserve(kNeutralSamples);
+        for (int i = 0; i < kNeutralSamples; ++i) {
+          for (int k = 0; k < outCh; ++k) usrc[k] = devAll[static_cast<std::size_t>(i) * outCh + k];
           fwd->Apply(fapply, udst.data(), usrc.data());
-          icFloatNumber lab[3] = { udst[0], udst[1], udst[2] };
-          if (fOut == icSigLabData) {
-            icLabFromPcs(lab);
-          } else if (fOut == icSigXYZData) {
-            icXyzFromPcs(lab);
-            icFloatNumber l2[3] = { 0, 0, 0 };
-            icXYZtoLab(l2, lab, nullptr);
-            lab[0] = l2[0]; lab[1] = l2[1]; lab[2] = l2[2];
-          } else {
-            continue;
-          }
-          if (!std::isfinite(lab[0])) continue;
-          char buf[48];
-          std::snprintf(buf, sizeof buf, "%.1f,%.1f,%.1f",
-                        static_cast<double>(lab[0]), static_cast<double>(lab[1]), static_cast<double>(lab[2]));
-          series[c].colorHint = buf;
+          icFloatNumber lab2[3] = { 0, 0, 0 };
+          if (!pcsToLabFull(udst.data(), fOut, lab2)) break;      // unsupported PCS → no curves
+          if (!std::isfinite(lab2[0]) || !std::isfinite(lab2[1]) || !std::isfinite(lab2[2])) continue;
+          Vertex tv; tv.x = Lin[i]; tv.y = static_cast<float>(lab2[0]);
+          toneSeries.verts.push_back(tv);
+          Vertex dv; dv.x = Lin[i];
+          dv.y = static_cast<float>(std::sqrt(lab2[1]*lab2[1] + lab2[2]*lab2[2]));
+          deSeries.verts.push_back(dv);
         }
+        haveRoundTrip = !toneSeries.verts.empty();
       }
       delete fapply;
       delete fwd;
@@ -1058,6 +1203,18 @@ bool buildNeutralAxisGraph(CIccProfile* pIcc, icTagSignature sig, Graph& out,
   out.xAxis.label = "L*";    out.xAxis.minHint = 100.0f; out.xAxis.maxHint = 0.0f;  // 100 left → 0 right
   out.yAxis.label = "% ink"; out.yAxis.minHint = 0.0f;   out.yAxis.maxHint = 100.0f;
   for (auto& s : series) out.series.push_back(std::move(s));
+  if (haveRoundTrip) {
+    // L*-out shares the 0–100 primary axis with colorant % — same numeric range, so
+    // it overlays the ink curves directly (as in the reference QC plots). ΔE*ab does
+    // NOT: a well-behaved profile sits near 0.02–0.3 ΔE, which would be pinned to the
+    // baseline on a 0–100 axis, so it gets the secondary axis. minHint == maxHint
+    // leaves the extent to the plotting layer (autorange from zero).
+    out.hasY2 = true;
+    out.y2Axis.label = "da*b*";
+    out.y2Axis.minHint = 0.0f; out.y2Axis.maxHint = 0.0f;
+    out.series.push_back(std::move(toneSeries));
+    out.series.push_back(std::move(deSeries));
+  }
   return true;
 }
 
@@ -1244,23 +1401,6 @@ void gamutVolumeParams(int N, int& steps, double& vs, int& dilate) {
 }
 
 // ── B2A round-trip helpers ────────────────────────────────────────────────────
-// pcsToLabFull — decode a transform's internal-PCS-encoded output (Lab or XYZ) to
-// human L*a*b*, returning false for an unsupported PCS. The round trip compares in
-// L*a*b*, so both legs are brought to the same human Lab here rather than at each
-// call site.
-bool pcsToLabFull(const icFloatNumber* pcs, icColorSpaceSignature sp, icFloatNumber out[3]) {
-  icFloatNumber v[3] = { pcs[0], pcs[1], pcs[2] };
-  if (sp == icSigLabData) { icLabFromPcs(v); out[0]=v[0]; out[1]=v[1]; out[2]=v[2]; return true; }
-  if (sp == icSigXYZData) { icXyzFromPcs(v); icXYZtoLab(out, v, nullptr); return true; }  // D50
-  return false;
-}
-// deltaEab — plain Euclidean ΔE*ab (CIE76) between two L*a*b* triples; the per-point
-// error the round-trip metric aggregates. CIE76 (not ΔE2000) is deliberate: this is
-// a relative agreement check, so the simplest distance keeps the number interpretable.
-double deltaEab(const icFloatNumber a[3], const icFloatNumber b[3]) {
-  const double dL=a[0]-b[0], da=a[1]-b[1], db=a[2]-b[2];
-  return std::sqrt(dL*dL + da*da + db*db);
-}
 // roundTripSteps — device interior-grid steps per axis, chosen so the full N-D seed
 // grid stays near ~30k points (bounded and clamped to [2,32]) regardless of channel
 // count, keeping the round trip fast without under-sampling low-channel devices.
@@ -1836,6 +1976,320 @@ RoundTripResult RoundTripDE(CIccProfile* pIcc, icRenderingIntent intent,
       ++r.hist[bi];
     }
   }
+  return r;
+}
+
+// ── Media white / black point + TAC (see IccVizModel.hpp) ────────────────────
+// Two legs. The B2A leg asks the profile what inking it *chooses* for PCS black —
+// that is the black point, and it differs per intent because each B2A table makes
+// its own choice. The A2B1 leg then measures that inking, and bare substrate, in
+// both relative and absolute colorimetry. A2B1 is the measuring stick at every
+// intent for the same reason as the neutral-axis curves: it reports what an
+// instrument would read, keeping the intents comparable.
+WhiteBlackResult WhiteBlackPoints(CIccProfile* pIcc, icTagSignature b2aTag) {
+  WhiteBlackResult r;
+  auto fail = [&](const char* why) -> WhiteBlackResult { r.ok = false; r.error = why; return r; };
+
+  if (!pIcc) return fail("no profile");
+
+  // ── guard the B2A tag exactly as the neutral-axis path does: untrusted geometry ──
+  CIccTag* bTag = pIcc->FindTag(b2aTag);
+  auto* blut = dynamic_cast<CIccMBB*>(bTag);
+  if (!blut) return fail("requested B2A tag is not a LUT");
+  if (!blut->GetCLUT()) return fail("B2A LUT carries no CLUT lattice");
+  const icColorSpaceSignature bIn = blut->GetCsInput(), bOut = blut->GetCsOutput();
+  if (!isPcsSpace(bIn)) return fail("B2A input is not a PCS");
+  if (isPcsSpace(bOut)) return fail("B2A output is not a device space");
+  const int bInCh = blut->InputChannels();
+  const int N     = blut->OutputChannels();
+  if (bInCh < 3 || N <= 0 || N > kMaxInkChannels) return fail("invalid B2A channel count");
+  r.nColorants = N;
+
+  // ── leg 1: PCS black → the inking the profile picks for it ──
+  std::vector<icFloatNumber> ink(N, 0.0f);
+  {
+    CIccXform* bx = CIccXform::Create(pIcc, bTag, /*bInput=*/false,
+                                      neutralIntentForSig(b2aTag), icInterpLinear, /*pPcc=*/NULL,
+                                      /*bUseSpectralPCS=*/false, /*pHintManager=*/NULL, /*bOwnsProfile=*/false);
+    if (!bx) return fail("could not build the PCS->device transform");
+    bx->ShareProfile();
+    if (bx->Begin() != icCmmStatOk) { delete bx; return fail("PCS->device transform Begin failed"); }
+    icStatusCMM st = icCmmStatOk;
+    CIccApplyXform* ba = bx->GetNewApply(st);
+    // Same src/dst sample-count guard as buildNeutralAxisGraph (cf. iccDEV #1633): a
+    // multi-element transform would otherwise over-read/over-write these buffers.
+    if (!ba || st != icCmmStatOk || bx->GetNumSrcSamples() != bInCh || bx->GetNumDstSamples() != N) {
+      delete ba; delete bx; return fail("PCS->device transform channel-count mismatch");
+    }
+    std::vector<icFloatNumber> src(bInCh, 0.0f);
+    neutralSrc(0.0f, bIn, src.data());                       // PCS black: L*=0, a*=b*=0
+    bx->Apply(ba, ink.data(), src.data());
+    delete ba; delete bx;
+  }
+
+  r.blackInk.resize(N);
+  for (int c = 0; c < N; ++c) {
+    const double v = std::isfinite(static_cast<double>(ink[c])) ? static_cast<double>(ink[c]) : 0.0;
+    r.blackInk[c] = v;
+    r.tac += v;
+    ink[c] = static_cast<icFloatNumber>(v);
+  }
+
+  // ── leg 2: measure bare substrate and that black inking through A2B1 ──
+  CIccTag* fTag = pIcc->FindTag(icSigAToB1Tag);
+  if (!fTag) return fail("profile has no AToB1 tag to measure against");
+
+  auto measure = [&](icRenderingIntent intent, double white[3], double black[3]) -> bool {
+    CIccXform* fx = CIccXform::Create(pIcc, fTag, /*bInput=*/true, intent, icInterpLinear,
+                                      /*pPcc=*/NULL, /*bUseSpectralPCS=*/false,
+                                      /*pHintManager=*/NULL, /*bOwnsProfile=*/false);
+    if (!fx) return false;
+    fx->ShareProfile();
+    // Begin() is where IccProfLib sets up the absolute media-white scaling, and it
+    // returns invalid-profile when absolute is asked for without a mediaWhitePoint
+    // tag — which is exactly how the optional absolute leg reports "unavailable".
+    if (fx->Begin() != icCmmStatOk) { delete fx; return false; }
+    icStatusCMM st = icCmmStatOk;
+    CIccApplyXform* fa = fx->GetNewApply(st);
+    if (!fa || st != icCmmStatOk || fx->GetNumSrcSamples() != N || fx->GetNumDstSamples() < 3) {
+      delete fa; delete fx; return false;
+    }
+    const icColorSpaceSignature fOut = fx->GetDstSpace();
+    std::vector<icFloatNumber> usrc(N, 0.0f), udst(fx->GetNumDstSamples(), 0.0f);
+    icFloatNumber lab[3] = { 0, 0, 0 };
+    bool ok = true;
+
+    for (int c = 0; c < N; ++c) usrc[c] = 0.0f;              // zero colorant = substrate
+    fx->Apply(fa, udst.data(), usrc.data());
+    if (pcsToLabFull(udst.data(), fOut, lab)) { white[0]=lab[0]; white[1]=lab[1]; white[2]=lab[2]; }
+    else ok = false;
+
+    for (int c = 0; c < N; ++c) usrc[c] = ink[c];            // the B2A's chosen black
+    fx->Apply(fa, udst.data(), usrc.data());
+    if (pcsToLabFull(udst.data(), fOut, lab)) { black[0]=lab[0]; black[1]=lab[1]; black[2]=lab[2]; }
+    else ok = false;
+
+    delete fa; delete fx;
+    return ok;
+  };
+
+  if (!measure(icRelativeColorimetric, r.whiteLabRel, r.blackLabRel))
+    return fail("could not measure through the AToB1 tag");
+  // Absolute is optional — a profile with no mediaWhitePoint still reports relative.
+  r.hasAbsolute = measure(icAbsoluteColorimetric, r.whiteLabAbs, r.blackLabAbs);
+
+  r.ok = true;
+  return r;
+}
+
+// ── Per-hue full-tone / max-chroma colorimetry (see IccVizModel.hpp) ─────────
+HueExtremaResult HueExtrema(CIccProfile* pIcc, int rampSamples) {
+  HueExtremaResult r;
+  auto fail = [&](const char* why) -> HueExtremaResult { r.ok = false; r.error = why; return r; };
+
+  if (!pIcc) return fail("no profile");
+  CIccTag* fTag = pIcc->FindTag(icSigAToB1Tag);
+  if (!fTag) return fail("profile has no AToB1 tag to measure against");
+
+  CIccXform* fx = CIccXform::Create(pIcc, fTag, /*bInput=*/true, icRelativeColorimetric,
+                                    icInterpLinear, /*pPcc=*/NULL, /*bUseSpectralPCS=*/false,
+                                    /*pHintManager=*/NULL, /*bOwnsProfile=*/false);
+  if (!fx) return fail("could not build the device->PCS transform");
+  fx->ShareProfile();
+  if (fx->Begin() != icCmmStatOk) { delete fx; return fail("device->PCS transform Begin failed"); }
+  icStatusCMM st = icCmmStatOk;
+  CIccApplyXform* fa = fx->GetNewApply(st);
+  if (!fa || st != icCmmStatOk || fx->GetNumDstSamples() < 3) {
+    delete fa; delete fx; return fail("device->PCS transform apply init failed");
+  }
+  const int N = fx->GetNumSrcSamples();
+  if (N <= 0 || N > kMaxInkChannels) { delete fa; delete fx; return fail("invalid colorant count"); }
+
+  std::vector<HueCorner> corners;
+  if (!cmyrgbCorners(pIcc->m_Header.colorSpace, N, corners)) {
+    delete fa; delete fx;
+    return fail("per-hue extrema needs a CMYK or CMY device space (channel order is not "
+                "knowable for n-colour spaces)");
+  }
+  r.nColorants = N;
+
+  int S = (rampSamples > 0) ? rampSamples : 1024;
+  if (S < 16)   S = 16;
+  if (S > 4096) S = 4096;
+
+  const icColorSpaceSignature fOut = fx->GetDstSpace();
+  std::vector<icFloatNumber> usrc(N, 0.0f), udst(fx->GetNumDstSamples(), 0.0f);
+
+  for (const HueCorner& hc : corners) {
+    HueExtremaEntry e;
+    e.name = hc.name;
+    double bestC = -1.0;
+    bool haveFull = false;
+
+    // Ramp bare substrate → full tone. The last sample IS the full-tone corner, so
+    // one sweep yields both rows.
+    for (int i = 0; i < S; ++i) {
+      const double f = static_cast<double>(i) / static_cast<double>(S - 1);
+      for (int k = 0; k < N; ++k) usrc[k] = static_cast<icFloatNumber>(hc.ink[k] * f);
+      fx->Apply(fa, udst.data(), usrc.data());
+      icFloatNumber lab[3] = { 0, 0, 0 };
+      if (!pcsToLabFull(udst.data(), fOut, lab)) continue;
+      if (!std::isfinite(lab[0]) || !std::isfinite(lab[1]) || !std::isfinite(lab[2])) continue;
+      const double labd[3] = { lab[0], lab[1], lab[2] };
+      double hcl[3]; labToHCL(labd, hcl);
+
+      if (hcl[1] > bestC) {
+        bestC = hcl[1];
+        for (int k = 0; k < 3; ++k) { e.maxChromaLab[k] = labd[k]; e.maxChromaHCL[k] = hcl[k]; }
+        e.maxChromaInk.assign(N, 0.0);
+        for (int k = 0; k < N; ++k) e.maxChromaInk[k] = hc.ink[k] * f;
+        e.rampFraction = f;
+      }
+      if (i == S - 1) {
+        for (int k = 0; k < 3; ++k) { e.fullToneLab[k] = labd[k]; e.fullToneHCL[k] = hcl[k]; }
+        haveFull = true;
+      }
+    }
+    if (!haveFull || bestC < 0.0) continue;    // corner unmeasurable → omit it
+    r.entries.push_back(std::move(e));
+  }
+
+  delete fa; delete fx;
+  if (r.entries.empty()) return fail("no corner could be measured through AToB1");
+  r.ok = true;
+  return r;
+}
+
+// ── Ink usage in the shadows (see IccVizModel.hpp) ───────────────────────────
+ShadowInkResult ShadowInkPaths(CIccProfile* pIcc, icTagSignature b2aTag, int pathSamples) {
+  ShadowInkResult r;
+  auto fail = [&](const char* why) -> ShadowInkResult { r.ok = false; r.error = why; return r; };
+
+  if (!pIcc) return fail("no profile");
+
+  // The constant-L* plane is defined by the CMYRGB corners, so this inherits
+  // HueExtrema's device-space restriction — reuse it rather than restate it.
+  HueExtremaResult hx = HueExtrema(pIcc, 2);   // corners only; no ramp search needed
+  if (!hx.ok) return fail(hx.error.empty() ? "corner colorimetry unavailable" : hx.error.c_str());
+
+  // Lconst = halfway between Blue and the darkest of C, M, Y, R, G — the shadow end
+  // of the gamut, per the reference script.
+  double lBlue = 0.0; bool haveBlue = false;
+  double lMin = 1e9;  bool haveMin = false;
+  for (const auto& e : hx.entries) {
+    if (e.name == "Blue") { lBlue = e.fullToneLab[0]; haveBlue = true; }
+    else if (e.name != "Black") { if (e.fullToneLab[0] < lMin) { lMin = e.fullToneLab[0]; haveMin = true; } }
+  }
+  if (!haveBlue || !haveMin) return fail("could not locate the CMYRGB corners");
+  r.lStarRaw = (lBlue + lMin) * 0.5;
+
+  // ── guard the B2A tag (untrusted geometry) ──
+  CIccTag* bTag = pIcc->FindTag(b2aTag);
+  auto* blut = dynamic_cast<CIccMBB*>(bTag);
+  if (!blut) return fail("requested B2A tag is not a LUT");
+  if (!blut->GetCLUT()) return fail("B2A LUT carries no CLUT lattice");
+  const icColorSpaceSignature bIn = blut->GetCsInput(), bOut = blut->GetCsOutput();
+  if (!isPcsSpace(bIn)) return fail("B2A input is not a PCS");
+  if (isPcsSpace(bOut)) return fail("B2A output is not a device space");
+  const int bInCh = blut->InputChannels();
+  const int N     = blut->OutputChannels();
+  if (bInCh < 3 || N <= 0 || N > kMaxInkChannels) return fail("invalid B2A channel count");
+  r.nColorants = N;
+
+  // ── BPC for the perceptual / saturation tables ──
+  // They expect PCS black at L*=0, so stretch [Lbp,100] → [0,100] first. The media
+  // black point comes from B2A0 (script parity), falling back to the selected tag.
+  double lStar = r.lStarRaw;
+  if (b2aTag == icSigBToA0Tag || b2aTag == icSigBToA2Tag) {
+    icTagSignature bpTag = pIcc->FindTag(icSigBToA0Tag) ? icSigBToA0Tag : b2aTag;
+    WhiteBlackResult wb = WhiteBlackPoints(pIcc, bpTag);
+    if (wb.ok) {
+      const double lbp = wb.blackLabRel[0];
+      if (lbp > 0.0 && lbp < 100.0) {
+        lStar = (lStar - lbp) * 100.0 / (100.0 - lbp);
+        if (lStar < 0.0) lStar = 0.0;
+        r.bpcApplied = true;
+      }
+    }
+  }
+  r.lStar = lStar;
+
+  int S = (pathSamples > 0) ? pathSamples : 256;
+  if (S < 16)   S = 16;
+  if (S > 4096) S = 4096;
+
+  CIccXform* bx = CIccXform::Create(pIcc, bTag, /*bInput=*/false, neutralIntentForSig(b2aTag),
+                                    icInterpLinear, /*pPcc=*/NULL, /*bUseSpectralPCS=*/false,
+                                    /*pHintManager=*/NULL, /*bOwnsProfile=*/false);
+  if (!bx) return fail("could not build the PCS->device transform");
+  bx->ShareProfile();
+  if (bx->Begin() != icCmmStatOk) { delete bx; return fail("PCS->device transform Begin failed"); }
+  icStatusCMM st = icCmmStatOk;
+  CIccApplyXform* ba = bx->GetNewApply(st);
+  if (!ba || st != icCmmStatOk || bx->GetNumSrcSamples() != bInCh || bx->GetNumDstSamples() != N) {
+    delete ba; delete bx; return fail("PCS->device transform channel-count mismatch");
+  }
+
+  const std::vector<std::string> hints = inkColorHints(pIcc, N);
+
+  // Four sweeps across the full PCS a*b* range at the one constant L*.
+  struct PathDef { const char* label; double a0, b0, a1, b1; };
+  const PathDef paths[4] = {
+    { "0",   127.0,    0.0, -128.0,    0.0 },   // along a*
+    { "45",  127.0,  127.0, -128.0, -128.0 },
+    { "90",    0.0,  127.0,    0.0, -128.0 },   // along b*
+    { "135",-128.0,  127.0,  127.0, -128.0 },
+  };
+
+  std::vector<icFloatNumber> src(bInCh, 0.0f), dst(N, 0.0f);
+  for (const PathDef& p : paths) {
+    Graph g;
+    g.title = std::string(p.label) + " deg";
+    g.xAxis.label = "# of points"; g.xAxis.minHint = 0.0f; g.xAxis.maxHint = static_cast<float>(S - 1);
+    g.yAxis.label = "% ink";       g.yAxis.minHint = 0.0f; g.yAxis.maxHint = 100.0f;
+
+    std::vector<Series> series(N);
+    for (int c = 0; c < N; ++c) {
+      series[c].id = "ch" + std::to_string(c);
+      series[c].name = channelName(c, /*useInput=*/false, bIn, bOut, bInCh, N);
+      series[c].role = Role::Primary;
+      series[c].shape = Shape::Polyline;
+      series[c].colorHint = hints[c];
+      series[c].verts.reserve(S);
+    }
+
+    for (int i = 0; i < S; ++i) {
+      const double f = static_cast<double>(i) / static_cast<double>(S - 1);
+      const double a = p.a0 + (p.a1 - p.a0) * f;
+      const double b = p.b0 + (p.b1 - p.b0) * f;
+      // Encode (L*,a*,b*) into whatever the tag's PCS wants, reusing the same
+      // Lab→PCS path the neutral sweep uses (neutralSrc handles L only, so do the
+      // full triple here).
+      if (bIn == icSigXYZData) {
+        icFloatNumber lab[3] = { static_cast<icFloatNumber>(lStar),
+                                 static_cast<icFloatNumber>(a), static_cast<icFloatNumber>(b) };
+        icLabtoXYZ(src.data(), lab, nullptr);
+        icXyzToPcs(src.data());
+      } else {
+        src[0] = static_cast<icFloatNumber>(lStar);
+        src[1] = static_cast<icFloatNumber>(a);
+        src[2] = static_cast<icFloatNumber>(b);
+        icLabToPcs(src.data());
+      }
+      bx->Apply(ba, dst.data(), src.data());
+      for (int c = 0; c < N; ++c) {
+        float v = static_cast<float>(dst[c]) * 100.0f;
+        if (!std::isfinite(v)) v = 0.0f;
+        Vertex vert; vert.x = static_cast<float>(i); vert.y = v;
+        series[c].verts.push_back(vert);
+      }
+    }
+    for (auto& s : series) g.series.push_back(std::move(s));
+    r.graphs.push_back(std::move(g));
+  }
+
+  delete ba; delete bx;
+  r.ok = true;
   return r;
 }
 

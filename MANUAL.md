@@ -194,30 +194,71 @@ The summary row at the top tallies each verdict as a coloured pill. **Click a pi
 
 ### 3.4 Analysis
 
-Whole-profile quality analyses derived from the profile's colour transforms — computed by a dedicated WebAssembly module (the iccDEV visualization engine) that's fetched only when you first open this tab, and plotted in the app's own style. Each analysis is a collapsible section; one that doesn't apply to the loaded profile shows a short *not applicable* note instead (for example, a matrix/TRC display profile has no device↔PCS CLUTs to analyse).
+Whole-profile quality analyses derived from the profile's colour transforms — computed by a dedicated WebAssembly module (the iccDEV visualization engine) that's fetched only when you first open this tab, and plotted in the app's own style.
+
+Each analysis is a collapsible section and **all of them start closed**. That's deliberate: every section costs a full transform pass over the profile, so opening one is your explicit choice rather than six analyses firing the moment you switch tabs. Results are cached, so re-opening a section is instant. A section that doesn't apply to the loaded profile shows a short *not applicable* note instead (for example, a matrix/TRC display profile has no device↔PCS CLUTs to analyse).
 
 #### Profile Statistics
 
-Per rendering intent, two whole-profile metrics computed from the device↔PCS lookup tables:
+Whole-profile metrics for **one** selected rendering intent, driven by two listboxes and a checkbox:
 
-- **Gamut volume** — the volume (in ΔE\*ab³) enclosed by the device → PCS (`A2B`) transform, measured by voxelising the gamut boundary and counting the enclosed cells. A robust estimate of how much colour the profile can reproduce.
-- **Round-trip ΔE** — how accurately the `B2A` (PCS → device) table inverts the `A2B`: in-gamut Lab values are pushed Lab → device → Lab and the error is reported as **mean**, **P90**, and **max** ΔE\*ab.
+- **Rendering intent** — Perceptual / Relative Colorimetric / Saturation / Absolute Colorimetric.
+- **Round-trip type** — which accuracy metric to report (see below).
+- **Use MPE (color) tags** — off = the colorimetric lookup tables; on = the multi-processing-element / colour tags. It has no effect on the in-gamut overview, and is disabled there.
 
-One row per intent (Perceptual, Relative Colorimetric, Saturation, Absolute Colorimetric); intents whose tags are absent are omitted.
+The table shows the **gamut volume** (in ΔE\*ab³, enclosed by the device → PCS `A2B` transform, measured by voxelising the boundary and counting enclosed cells) alongside the selected round trip's **min / mean / std dev / P90 / max** ΔE\*ab. Below it sits a ΔE distribution histogram — relative frequency bars with a cumulative-frequency line — plus the worst-error `L, a, b` and, for PRMG, whether the profile implies the Perceptual Reference Medium Gamut.
 
-#### Round-Trip (PRMG)
+The four round-trip types:
 
-The full round-trip report, matching the iccDEV `iccRoundTrip` reference tool exactly. Where the Profile Statistics row above gives a quick single-direction summary, this section runs the reference metric: it seeds from the **device colour cube** and reports **both** round-trip directions plus a Perceptual Reference Medium Gamut (PRMG) interoperability histogram.
+- **In-gamut overview (RT0)** — a device-value grid taken to PCS, back to device, and to PCS again; ΔE\*ab measured between the two PCS passes. A fast in-gamut stability check.
+- **Inversion + gamut (RT1)** — ΔE\*ab between each device colour's PCS and its PCS after one Lab → device → Lab round trip. Reflects inversion accuracy *and* gamut mapping.
+- **Reproducibility (RT2)** — ΔE\*ab between the first and second round trips: how stable a repeated round trip is, independent of the first trip's gamut clipping.
+- **PRMG interoperability** — PCS colours inside the Perceptual Reference Medium Gamut round-tripped once; the ΔE distribution indicates cross-profile interoperability.
 
-- **Round Trip 1** — the device → PCS → device error: ΔE\*ab between each device colour's Lab and its Lab after one round trip. Reported as **min**, **mean**, **max**, plus the worst-case `L, a, b`.
-- **Round Trip 2** — the PCS round-trip stability: ΔE\*ab between the first and second round trip, again with min / mean / max and worst-case `L, a, b`.
-- **PRMG interoperability** — the count and share of samples whose round-trip ΔE falls within **1, 2, 3, 5, and 10**, and whether the profile implies the Perceptual Reference Medium Gamut.
+A profile lacking the device↔PCS transforms a metric needs shows a *not applicable* note; a device space too wide to sample is reported as skipped rather than as an error.
 
-Two controls drive it: a **rendering intent** selector (Perceptual / Relative / Saturation / Absolute) and a **Use MPE (color) tags** checkbox (off = the colorimetric lookup tables; on = the multi-processing-element / color tags). Results are computed on demand when you open the section and cached per intent and MPE setting. A profile that can't be round-tripped — one lacking the device↔PCS transforms this metric needs — shows a *not applicable* note; a device space too wide to sample is reported as skipped rather than as an error.
+#### Extrema Colorimetry
+
+The ends of the profile's reproduction range — the numbers a print operator usually reads first.
+
+- **White point** — the colour of **zero colorant**, i.e. bare substrate.
+- **Black point** — found by pushing PCS black (L\*=0, a\*=b\*=0) through the selected `B2A` table to get the inking the profile *chooses* for black, then reading that inking back through `A2B1`.
+- Both are shown in **relative** and **absolute** colorimetry. Absolute shows the substrate's own colour (a blue-white paper reads as something like L\* 95, b\* −4); relative re-references it to a perfect white. If the two columns are identical, that's normal — the media white simply matches the illuminant. A profile with no media white point tag shows relative only.
+- **Inking at black point** and **TAC** — the per-channel ink at that black, and their sum: total area coverage, the ink-limit figure.
+
+Because each `B2A` table picks its own inking for black, the black point genuinely differs between intents — hence the rendering-intent selector.
+
+Below that, **Full tone vs maximum chroma**: for each ink corner (C, M, Y, R, G, B and K), where it lands in hue / chroma / lightness, and the most chromatic point found on the way there from bare substrate. These rows are measured through `A2B1` and so **do not change with the intent selector**. On a well-behaved profile the two rows match. When maximum chroma arrives *before* full tone the row is flagged: past that point the extra ink is no longer adding chroma, only darkening.
+
+**Output (printer) profiles only** — the analysis assumes zero colorant means bare substrate. The per-hue table additionally needs a **CMYK or CMY** device space: an n-colour (nCLR) profile names its channels in any order, so which channel is "cyan" cannot be known, and the table reports that rather than guessing.
 
 #### Neutral Axis Inking
 
-Sweeps the neutral axis (a\*=b\*=0) from white (L\*=100) down to black (L\*=0) through the profile's `B2A` (PCS → device) table and plots how much of each device colorant the profile lays down along the way — the classic GCR / neutral-build curve. One curve per device channel, colour-coded per colorant. **Output (printer) profiles only**; other profile classes show a note.
+Sweeps the neutral axis (a\*=b\*=0) from white (L\*=100) down to black (L\*=0) through the profile's `B2A` (PCS → device) table and plots how much of each device colorant the profile lays down along the way — the classic GCR / neutral-build curve. One curve per device channel, colour-coded per colorant.
+
+A further curve is drawn over the separation:
+
+- **L\* out (tone)** — the tone response: where the neutral axis actually lands in lightness after a round trip through the profile. Read two things from its shape. Sag below the diagonal means greys render darker than requested. More usefully, the curve **flattens at the darkest lightness the profile can reach** — that plateau *is* the media black point, and it should agree with the Extrema Colorimetry section above.
+
+**Output (printer) profiles only**; other profile classes show a note.
+
+#### Ink Usage in Shadows
+
+Four straight paths across the a\*b\* plane at one constant, deliberately dark lightness — 0°, 45°, 90° and 135° — run through the selected `B2A` table, with the resulting separation plotted for each.
+
+Because every sample on a path shares the same L\*, any abrupt step or reversal in a colorant comes from hue and chroma handling alone. That's the signature of a shadow gamut-mapping artefact, and it's the kind of thing that shows up in print as banding or a sudden colour shift in dark areas. The paths sweep from far outside the gamut, through it, and out the other side, so you also see where the profile starts clamping.
+
+The lightness plane is chosen automatically: halfway between the profile's Blue corner and the darkest of C, M, Y, R and G. For the perceptual and saturation tables the lightness is first stretched from the media black point up to PCS black — those tables expect black there — and the section reports both the compensated plane and the raw one.
+
+**Output (printer) profiles only**, and the same CMYK/CMY restriction as the per-hue table above (the plane is derived from the ink corners).
+
+#### CLUT Image
+
+The colour lookup table of a device↔PCS transform, tiled into an image, with a selector for which rendering-intent table to view (`A2B0`–`A2B3`, `B2A0`–`B2A3`, and the preview tables). Useful for spotting structural damage in a table at a glance. Zoom, pan and reset with the controls on the canvas.
+
+#### Gamut Image
+
+The gamut tag's in/out-of-gamut map: neutral where a PCS colour is reproducible, red where it falls outside the device gamut. Only present when the profile carries a `gamt` tag.
 
 ### 3.5 XML
 

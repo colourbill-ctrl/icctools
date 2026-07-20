@@ -116,6 +116,72 @@ export async function gamutVolume(bytes, tagSig, intent) {
 }
 
 /**
+ * Media white / black point + total area coverage, for the "Extrema Colorimetry"
+ * analysis. `tagSig` is the 4-char B2A tag id ('B2A0'|'B2A1'|'B2A2') — TAG-driven,
+ * not intent-driven, because the black point is whatever inking that particular
+ * table chooses for PCS black, and the three tables genuinely disagree.
+ *
+ * White is the colour of ZERO colorant (bare substrate), so this is meaningful for
+ * subtractive/printing profiles only — the caller gates on profile class.
+ *
+ * → { nColorants, hasAbsolute, whiteLabRel[3], blackLabRel[3],
+ *     whiteLabAbs[3]?, blackLabAbs[3]?, blackInk[], tac }
+ * `tac` is a FRACTION (sum of blackInk); ×100 gives the usual "320%". Absolute is
+ * absent when the profile has no mediaWhitePoint tag; absolute values that equal the
+ * relative ones are normal (IccProfLib only adjusts when media ≠ illuminant).
+ */
+export async function whiteBlackPoints(bytes, tagSig) {
+  const mod = await loadModule()
+  let out
+  try { out = mod.whiteBlackPoints(bytes, tagSig) } catch (e) { throw toError(mod, e) }
+  const r = JSON.parse(out)
+  if (r.error) throw new Error(r.error)
+  return r
+}
+
+/**
+ * Per-hue full-tone vs maximum-chroma colorimetry for C/M/Y/R/G/B (+K). Measured
+ * through A2B1 at relative intent, so it is intent-INDEPENDENT — no tag argument.
+ *
+ * → { nColorants, entries: [{ name, fullToneLab[3], fullToneHCL[3],
+ *       maxChromaLab[3], maxChromaHCL[3], maxChromaInk[], rampFraction }] }
+ * HCL is (hue°, C*, L*). The diagnosis is the gap between the two rows: on a sane
+ * profile max chroma sits at full tone (rampFraction ≈ 1). A rampFraction below 1
+ * means adding more ink past that point stopped adding chroma and only darkened.
+ *
+ * Throws for device spaces whose channel order is not fixed (anything but CMYK/CMY):
+ * "channel 0 is cyan" would be a guess for an nCLR space.
+ */
+export async function hueExtrema(bytes) {
+  const mod = await loadModule()
+  let out
+  try { out = mod.hueExtrema(bytes) } catch (e) { throw toError(mod, e) }
+  const r = JSON.parse(out)
+  if (r.error) throw new Error(r.error)
+  return r
+}
+
+/**
+ * Ink usage in the shadows: four straight sweeps across the a*b* plane at one
+ * constant, deliberately dark L*, pushed through the given B2A tag. Reveals
+ * gamut-mapping artefacts (ink steps/reversals) in the shadow region.
+ *
+ * → { nColorants, lStar, lStarRaw, bpcApplied, graphs: [Graph × 4] }
+ * The graphs are ordinary IccVizGraph objects (0°, 45°, 90°, 135°) ready for
+ * PlotlyGraph. `bpcApplied` is true for B2A0/B2A2, where the L* is first stretched
+ * from the media black point to PCS black as those tables expect; `lStarRaw` is the
+ * plane before that stretch.
+ */
+export async function shadowInkPaths(bytes, tagSig) {
+  const mod = await loadModule()
+  let out
+  try { out = mod.shadowInkPaths(bytes, tagSig) } catch (e) { throw toError(mod, e) }
+  const r = JSON.parse(out)
+  if (r.error) throw new Error(r.error)
+  return r
+}
+
+/**
  * Gamut boundary MESH for the profile's device→PCS transform at a rendering intent —
  * the drawable surface behind the Compare-tab 3-D gamut plot and (via sliceHull, JS
  * side) the 2-D slice. Built from the PROFILE (A2B LUT or matrix/TRC), so it is
