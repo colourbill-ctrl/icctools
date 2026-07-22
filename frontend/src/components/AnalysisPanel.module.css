@@ -38,6 +38,19 @@
   line-height: 1.45;
 }
 
+/* Discoverability hint at the top of a section (e.g. CLUT Image → per-ink separations).
+   Slightly emphasised vs the intro: a left accent rule and a tinted background. */
+.sectionHint {
+  margin: 0 0 14px;
+  padding: 7px 10px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+  background: var(--surface-alt);
+  border-left: 3px solid var(--accent);
+  border-radius: 3px;
+}
+
 .notApplicable {
   padding: 14px 16px;
   border-radius: var(--radius);
@@ -154,6 +167,12 @@
    their own box so the page body never scrolls sideways (project responsive rule). */
 .tableScroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .tableScroll > .table { min-width: 30rem; }
+
+/* Colour chip before a colorant name in the Ink Usage Statistics table header. */
+.inkSwatch {
+  display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.25); vertical-align: middle; margin-right: 3px;
+}
 
 /* Axis sub-header row: lighter than the group label above it, and the numbers
    below are narrow, so trim the horizontal padding to keep the table compact. */

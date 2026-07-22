@@ -260,9 +260,31 @@ The lightness plane is chosen automatically: halfway between the profile's Blue 
 
 **Output (printer) profiles only**, and the same CMYK/CMY restriction as the per-hue table above (the plane is derived from the ink corners).
 
+#### Primary-Inking Paths through Neutral
+
+Three paths — Cyan→Red, Magenta→Green, Yellow→Blue — each routed from one primary corner, **through the neutral axis** at the midpoint lightness of its two endpoints, to the opposite corner, run through the selected `B2A` table and plotted as a separation.
+
+This is the in-gamut counterpart to Ink Usage in Shadows. There, the paths deliberately run outside the gamut to expose gamut-mapping artefacts; here, **every sample is inside the gamut by construction** — both endpoints are the profile's own primaries and the pivot sits on the neutral axis. So a step, kink or reversal in a colorant along one of these paths cannot be blamed on gamut clipping: it is a CLUT-smoothness defect. The neutral pivot is the midpoint of each plot, where you should see a balanced neutral build.
+
+For the perceptual and saturation tables the lightness is black-point compensated for the intent, exactly as in Ink Usage in Shadows.
+
+**Output (printer) profiles only**, with the same CMYK/CMY restriction (the corners come from the same source as the per-hue table).
+
+#### Ink Usage Statistics
+
+How much of each colorant the profile lays down, as a mean coverage and as a **share of the total** — the ink-consumption signature of the separation.
+
+The table sums each colorant across the neutral axis and reports its mean coverage and its percentage of all ink laid down. The share column is the diagnostic: it is the profile's neutral-build fingerprint (a cyan-heavy grey balance reads differently from a black-heavy one), and it is independent of how many samples were taken.
+
+A second table — ink usage across **all on-and-in-gamut colours** — is listed as *pending*: it needs a gamut-boundary construction that is not yet built.
+
+**Output (printer) profiles only.**
+
 #### CLUT Image
 
 The colour lookup table of a device↔PCS transform, tiled into an image, with a selector for which rendering-intent table to view (`A2B0`–`A2B3`, `B2A0`–`B2A3`, and the preview tables). Useful for spotting structural damage in a table at a glance. Zoom, pan and reset with the controls on the canvas.
+
+When you select a **`B2A` (PCS → device) table**, a grayscale **ink-coverage image for each colorant** appears below the lattice — the per-ink separations, darker meaning more of that ink. A hint at the top of the section points you to them, since the section opens on an `A2B` table (whose output is L\*a\*b\*, not inks). For an **n-colour (nCLR) output** — 5-, 6- or 7-colour — where there is no simple colour preview, the main image is **colour-managed through the profile's forward `A2B`** so it still renders in real colour instead of a single-channel grey.
 
 #### Gamut Image
 

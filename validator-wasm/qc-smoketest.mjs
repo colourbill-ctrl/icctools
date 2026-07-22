@@ -114,3 +114,19 @@ if (!nd) {
     }
   }
 }
+
+// ── Q10: primary-inking paths through neutral ────────────────────────────────
+console.log('\n=== primaryInkingPaths (' + tagSig + ') ===');
+const pip = JSON.parse(mod.primaryInkingPaths(bytes, tagSig));
+if (pip.error) {
+  console.log('  error:', pip.error);
+} else {
+  console.log('  colorants:', pip.nColorants, '| bpcApplied:', pip.bpcApplied, '| paths:', pip.graphs.length);
+  for (const g of pip.graphs) {
+    const n = g.series[0].points.length / 2;
+    const mid = Math.floor(n / 2);
+    // Inking at the neutral pivot (midpoint) — should be a balanced neutral build.
+    const midInk = g.series.map((s) => s.name.split('_').pop() + ':' + f(s.points[mid * 2 + 1], 0));
+    console.log(`   ${g.title.padEnd(14)} ${n} pts  neutral pivot inking → ${midInk.join('  ')}`);
+  }
+}

@@ -209,6 +209,24 @@ export async function shadowInkPaths(bytes, tagSig) {
 }
 
 /**
+ * Primary-inking paths through neutral (iccviz::PrimaryInkingPaths, QC "Q10"): three
+ * in-gamut paths — Cyan→Red, Magenta→Green, Yellow→Blue — each pivoting on the neutral
+ * axis at the L* midpoint of its endpoints, run through the chosen B2A `tagSig`. The
+ * in-gamut counterpart to shadowInkPaths: a step or reversal in a colorant here is a
+ * CLUT-smoothness defect, not a gamut-mapping artefact. Returns
+ *   { nColorants, bpcApplied, graphs:[{title,xAxis,yAxis,series[]}] }   // one per pair
+ * `bpcApplied` is true for B2A0/B2A2 (each sample's L* stretched to PCS black).
+ */
+export async function primaryInkingPaths(bytes, tagSig) {
+  const mod = await loadModule()
+  let out
+  try { out = mod.primaryInkingPaths(bytes, tagSig) } catch (e) { throw toError(mod, e) }
+  const r = JSON.parse(out)
+  if (r.error) throw new Error(r.error)
+  return r
+}
+
+/**
  * Gamut boundary MESH for the profile's device→PCS transform at a rendering intent —
  * the drawable surface behind the Compare-tab 3-D gamut plot and (via sliceHull, JS
  * side) the 2-D slice. Built from the PROFILE (A2B LUT or matrix/TRC), so it is
@@ -279,16 +297,28 @@ export async function roundTripStats(bytes, intent, useMpe = false) {
   return r
 }
 
-/** Render one raster by id → {width,height,channels,bitsPerChannel,photometric,samples}. */
+/**
+ * Render one raster by id → {width,height,channels,bitsPerChannel,photometric,samples}.
+ * For an N-ink device output with no cheap RGB/CMYK preview, the engine also attaches a
+ * colour-managed CIELAB preview (`colorSamples` + `colorChannels`/`colorPhotometric`),
+ * mapped through the forward A2B — the caller shows that as the main image while the raw
+ * device `samples` still drive the per-ink separations.
+ */
 export async function renderRaster(bytes, id) {
   const mod = await loadModule()
   const r = mod.renderRaster(bytes, id)
   if (r.error) throw new Error(r.error)
   // Copy samples off the WASM heap so they survive later calls.
-  return {
+  const out = {
     width: r.width, height: r.height, channels: r.channels,
     bitsPerChannel: r.bitsPerChannel, photometric: r.photometric,
     normalizedICC: r.normalizedICC, samples: Uint8Array.from(r.samples),
     warnings: r.warnings ? Array.from(r.warnings) : [],   // non-fatal diagnostics
   }
+  if (r.colorSamples) {
+    out.colorSamples = Uint8Array.from(r.colorSamples)
+    out.colorChannels = r.colorChannels
+    out.colorPhotometric = r.colorPhotometric
+  }
+  return out
 }

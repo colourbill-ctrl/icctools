@@ -203,12 +203,18 @@ tone (as it does in the GRACoL reference output, where the two rows are identica
 *Cost:* small-to-medium. Needs an N-ink → CMYRGB corner mapping (`getNinkCMYRGB`
 equivalent) which is inkset-dependent — trivial for CMYK, a design question for 5/6/7-ink.
 
-### Q4 — Lattice / separation plots · **COVERED** (Tags tab)
+### Q4 — Lattice / separation plots · **COVERED** (Tags tab) + Q4-extra **BUILT** 2026-07-22
 
 The Tags-tab LUT view already renders the lattice/separation plots (user, 2026-07-20).
 Not carried forward as a gap. The one thing the reference script does that the tag view
 does not is the **K-separation-only 3-up across all three intents** — a small,
 optional addition if it is ever wanted, not a missing capability.
+
+**UI placement of Q4-extra (user directive, 2026-07-22):** implement it **inside the
+Analysis-tab "CLUT Image" section**, rendered as an **image underneath the existing
+lattice image**, reusing (a) the **same zoom/resize controls** as the existing lattice
+image and (b) the **same rendering-intent control**. I.e. it is a second raster in the
+CLUT Image section, not a new section.
 
 *Original analysis retained for reference:*
 
@@ -286,7 +292,7 @@ corresponding inkings underneath.
 
 *Us:* nothing.
 
-### Q10 — Primary-inking paths through neutral · **MISSING**
+### Q10 — Primary-inking paths through neutral · **BUILT** 2026-07-22
 
 *Script:* §9. Three paths — Cyan→Red, Magenta→Green, Yellow→Blue — each routed
 **through the neutral axis** at the L\* midpoint of its two endpoints. All points are
@@ -299,7 +305,31 @@ artefact, because every sample is inside the gamut.
 
 *Cost:* small-medium. Same machinery as Q5.
 
-### Q11 — Multi-transform gamut volumes and their divergence · **PARTIAL**
+**UI placement (user directive, 2026-07-22):** when Q10 lands it must appear as a new
+collapsible Analysis section titled **"Primary-Inking Paths through Neutral"**, located
+**immediately under the "Ink Usage in Shadows" (Q5) section** — it is the in-gamut
+counterpart to Q5, so it sits directly below it. Follow the existing Analysis
+collapsible-section pattern (default-collapsed, one WASM pass per section).
+
+### Q11 — Multi-transform gamut volumes and their divergence · **PARTIAL** (engine built + parked 2026-07-20)
+
+> **Parked, not surfaced (user decision, 2026-07-20).** A `GamutVolumeSet` engine +
+> `gamutVolumeSet` WASM export were built and validated against GRACoL2013_CRPC6, then
+> reverted from the source tree (not shipped). Full implementation + findings are in
+> `q11-gamut-volume-parked/` (`q11-engine.patch`, `ANALYSIS.md`, `q11check.mjs`).
+>
+> **What validated:** a GBD slice-integrator (the reference's `gamVolume` method) makes
+> the **forward** rows match — A2B1-abs divergence **10.32%** vs the reference's 10.28%.
+> **What blocks the inverse rows:** (1) forward gamuts sample uniformly in *device*
+> space, B2A gamuts only in *Lab* space, and the GBD's per-hue max-chroma is
+> fidelity-sensitive at the cusps → small divergences come out wrong-signed; (2) no BPC
+> before the perceptual/saturation B2A tables → those under-compress (~⅓ of the
+> reference magnitude). Reaching parity needs a fidelity-matched B2A boundary
+> (union-cloud or a true walked GBD) + BPC — the "largest single engine piece" that also
+> unblocks Q15 and Q13-gamut. Three scoping options (ship-forward / build-full /
+> ship-caveated) are recorded in `ANALYSIS.md`.
+
+
 
 *Script:* §10. Builds **four** gamut classes and reports volumes plus % differences:
 
@@ -382,7 +412,7 @@ differences:
 *Cost:* small for the ΔE-vs-L\* plot (we already compute per-point ΔE, we just discard
 it). Medium for an alternative boundary-eroded seeding mode.
 
-### Q13 — Ink usage statistics · **MISSING**
+### Q13 — Ink usage statistics · **PARTIAL** (Q13-neutral BUILT 2026-07-22; Q13-gamut blocked on B2A engine)
 
 *Script:* §12. Two tables of per-channel ink sums and percentages:
 
@@ -400,6 +430,12 @@ Abs:   3922.9   3755.9   4373.0   1963.4 | Sum: 14015.3
 separation, and the neutral-axis one falls straight out of data Q1 already computes.
 
 *Cost:* small (neutral axis) / medium (on+in-gamut, which needs the gamut boundary set).
+
+**UI placement (user directive, 2026-07-22):** when Q13 lands it must appear as a
+**collapsible section in the Analysis tab titled "Ink Usage Statistics"** containing the
+two tables above (per-channel ink sum + % share over the neutral axis, and over
+on-&-in-gamut points). Follow the existing Analysis collapsible-section pattern
+(default-collapsed, one WASM pass per section).
 
 ### Q14 — Cusp inking round-trip · **MISSING** (depends on Q7 cusp extraction)
 

@@ -231,6 +231,18 @@ std::vector<Descriptor> Enumerate(CIccProfile* pIcc);
 GraphResult  RenderGraph (CIccProfile* pIcc, const std::string& id, Verbosity v = Verbosity::Default);  // graph kinds
 RasterResult RenderRaster(CIccProfile* pIcc, const std::string& id, Verbosity v = Verbosity::Default);  // ClutImage raster
 
+// ColorizeDeviceRaster — colour-manage a DEVICE-output CLUT raster. A B2A table's CLUT
+// image is its device output tiled as pixels; for CMYK/RGB that has a cheap preview,
+// but an N-ink space (5/6/7-colour, …) has none and would otherwise render as a single-
+// channel grayscale. This maps each pixel's device values through the profile's forward
+// A2B (relative colorimetric; any A2B as a fallback) to CIELAB, so the image shows the
+// colours those inkings reproduce. `outLab` becomes a 3-channel 8-bit CIELAB raster
+// (photometric 8) with the SAME width/height as `deviceRaster`, so it aligns pixel-for-
+// pixel with the per-ink separations decoded from the device raster. Returns false
+// (leaving `outLab` untouched) when there is no usable forward A2B or the device channel
+// counts don't match — the caller then keeps the grayscale device raster.
+bool ColorizeDeviceRaster(CIccProfile* pIcc, const Raster& deviceRaster, Raster& outLab);
+
 // ── Gamut volume ─────────────────────────────────────────────────────────────
 // Volume (ΔE*ab³) enclosed by a profile's gamut, measured by boundary
 // voxelisation + flood-fill: sample the device-cube boundary (all facets) through
@@ -508,6 +520,35 @@ struct ShadowInkResult {
 };
 // pathSamples 0 → 256 (the reference script's density); clamped to [16,4096].
 ShadowInkResult ShadowInkPaths(CIccProfile* pIcc, icTagSignature b2aTag, int pathSamples = 0);
+
+// ── Primary-inking paths through neutral ──────────────────────────────────────
+// Three straight-through-neutral paths — Cyan→Red, Magenta→Green, Yellow→Blue —
+// each routed from one primary corner, through the neutral axis at the L* MIDPOINT
+// of its two endpoints, to the opposite corner, pushed through a B2A table so you
+// can watch the separation change along the way.
+//
+// The counterpart to ShadowInkPaths: those paths deliberately run OUT of gamut to
+// expose gamut-mapping artefacts, whereas EVERY sample here is in-gamut by
+// construction (both endpoints are the profile's own primaries and the pivot is on
+// the neutral axis). So a step or reversal in a colorant here cannot be blamed on
+// gamut clipping — it is a CLUT-smoothness defect, the in-gamut smoothness probe the
+// reference report reads visually.
+//
+// Same BPC convention as ShadowInkPaths for B2A0/B2A2 (each sample's L* stretched
+// from the media black point up to PCS black, black point sourced from B2A0), and the
+// same CMYK/CMY device-space restriction (the corners come from HueExtrema). One
+// Graph per pair, x = sample index along the path (the neutral pivot sits at the
+// midpoint), y = colorant %.
+struct PrimaryInkResult {
+  bool        ok = false;
+  std::string error;
+  int         nColorants = 0;
+  bool        bpcApplied = false;
+  std::vector<Graph> graphs;       // one per primary pair: Cyan→Red, Magenta→Green, Yellow→Blue
+};
+// pathSamples 0 → 256 (the reference density); clamped to [16,4096]. Split evenly
+// across the two legs (corner→pivot, pivot→corner).
+PrimaryInkResult PrimaryInkingPaths(CIccProfile* pIcc, icTagSignature b2aTag, int pathSamples = 0);
 
 } // namespace iccviz
 

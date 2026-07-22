@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import {
   enumerateVisualizations, renderGraph, tagEvalInfo, gamutVolume, roundTripStats,
-  whiteBlackPoints, hueExtrema, shadowInkPaths, roundTripByLightness,
+  whiteBlackPoints, hueExtrema, shadowInkPaths, primaryInkingPaths, roundTripByLightness,
 } from '../lib/vizPlot.js'
 import { channelColor } from './viz/colors.js'
 import { labToRgb } from '../lib/rasterDecode.js'
@@ -29,6 +29,10 @@ const LUT_INTENT = {
 // Display order for the intent selector; unknown sigs sort last (stable).
 const LUT_ORDER = ['A2B0', 'A2B1', 'A2B2', 'A2B3', 'B2A0', 'B2A1', 'B2A2', 'B2A3', 'pre0', 'pre1', 'pre2']
 const lutRank = (sig) => { const i = LUT_ORDER.indexOf(sig); return i < 0 ? 99 : i }
+// PCS→device (B2A) and preview tables output a DEVICE space, so their CLUT channels are
+// colorants — the only tables the per-ink separation views apply to (A2B tables output
+// Lab). Used both to gate the separations and to show the discoverability hint.
+const isDeviceSig = (sig) => /^B2A[0-3]$/.test(sig) || /^pre[0-2]$/.test(sig)
 
 // Whole-profile analyses. Each analysis is a receiver for data produced by the
 // iccviz IccVizModel and plotted in the app's own style.
@@ -530,7 +534,7 @@ function defaultTableId(tables) {
   return pref ? pref.id : undefined
 }
 
-function RasterSelect({ bytes, tables, gamut, t }) {
+function RasterSelect({ bytes, tables, gamut, separation = false, t }) {
   // Select by descriptor id (unique) so duplicate sigs, if any, never collide.
   const [selId, setSelId] = useState(() => defaultTableId(tables))
   const table = tables.find((x) => x.id === selId) || tables[0]
@@ -546,8 +550,11 @@ function RasterSelect({ bytes, tables, gamut, t }) {
           </label>
         </div>
       )}
-      {/* key on id so switching tables remounts the raster loader/canvas cleanly. */}
-      <RasterView key={table.id} bytes={bytes} id={table.id} gamut={gamut} />
+      {/* key on id so switching tables remounts the raster loader/canvas cleanly.
+          `separation` adds a per-ink separation image (CLUT section only) — gated to
+          device-output (B2A/preview) tables, since A2B tables output Lab, not inks. */}
+      <RasterView key={table.id} bytes={bytes} id={table.id} sig={table.sig}
+                  gamut={gamut} separation={separation && isDeviceSig(table.sig)} />
     </>
   )
 }
@@ -559,12 +566,23 @@ function ClutImageSection({ bytes, tables, t }) {
         {t('analysis_clut_intro') ||
           'The colour lookup table (CLUT) of a device↔PCS transform, tiled into an image. Pick which rendering-intent table to view.'}
       </p>
+      {/* Discoverability hint (Q4-extra): the per-ink separations only appear for
+          device-output tables, and the section defaults to A2B1 (Lab out), so tell the
+          user where to find them — shown only when the profile actually has a B2A table. */}
+      {tables.some((x) => isDeviceSig(x.sig)) && (
+        <p className={styles.sectionHint}>
+          {t('analysis_clut_sep_hint') ||
+            'Select a B2A (PCS→device) table below to also see a grayscale ink-coverage image for each colorant.'}
+        </p>
+      )}
       {!tables.length ? (
         <div className={styles.notApplicable}>
           {t('analysis_clut_na') || 'This profile has no CLUT-based device↔PCS tables to visualize.'}
         </div>
       ) : (
-        <RasterSelect bytes={bytes} tables={tables} gamut={false} t={t} />
+        // separation → adds the Q4-extra "K separation" image under the lattice, sharing
+        // this section's rendering-intent selector (shown only for CMYK-output tables).
+        <RasterSelect bytes={bytes} tables={tables} gamut={false} separation t={t} />
       )}
     </Collapsible>
   )
@@ -918,6 +936,252 @@ function ShadowBody({ bytes, tables, t }) {
   )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Primary-Inking Paths through Neutral  (QC "Q10")
+//
+// Three in-gamut paths — Cyan→Red, Magenta→Green, Yellow→Blue — each pivoting on the
+// neutral axis at the L* midpoint of its endpoints, run through the selected B2A table.
+// The in-gamut counterpart to Ink Usage in Shadows: because every sample is in-gamut by
+// construction, any step or kink in a colorant is a CLUT-smoothness defect rather than a
+// gamut-mapping artefact. Styled exactly like ShadowBody (shared graph prep + colours).
+// ─────────────────────────────────────────────────────────────────────────────
+function PrimaryBody({ bytes, tables, t }) {
+  const [sel, setSel] = useState(() => (tables.find((x) => x.sig === 'B2A1') || tables[0]).sig)
+  const [state, setState] = useState({ loading: true })
+
+  useEffect(() => {
+    let cancelled = false
+    setState({ loading: true })
+    Promise.all([
+      primaryInkingPaths(bytes, sel),
+      tagEvalInfo(bytes, sel).catch(() => null),   // device space → per-channel colours
+    ]).then(
+      ([r, ti]) => {
+        if (cancelled) return
+        const sig = ti?.dstSpaceSig || ''
+        const graphs = r.graphs.map((g) => {
+          g.series.forEach((s, k) => { s.color = neutralTraceColor(sig, s, k, g.series.length) })
+          g.yAxis = { ...g.yAxis, label: t('analysis_neutral_yaxis') || '% ink' }
+          g.xAxis = { ...g.xAxis, label: t('analysis_primary_xaxis') || 'Position along path (neutral at midpoint)' }
+          return g
+        })
+        setState({ loading: false, data: { ...r, graphs } })
+      },
+      (e) => { if (!cancelled) setState({ loading: false, error: e.message }) },
+    )
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bytes, sel])
+
+  // "Cyan-Red" → localized, em-dashed "Cyan → Red" for the per-graph heading.
+  const pathTitle = (title) => {
+    const [a, b] = title.split('-')
+    const nm = (x) => tOr(t, 'hue_' + (x || '').toLowerCase(), x)
+    return `${nm(a)} → ${nm(b)}`
+  }
+
+  return (
+    <>
+      {tables.length > 1 && (
+        <div className={styles.controls}>
+          <label className={styles.control}>
+            <span>{t('analysis_intent_label') || 'Rendering intent'}</span>
+            <select value={sel} onChange={(e) => setSel(e.target.value)}>
+              {tables.map((x) => (
+                <option key={x.sig} value={x.sig}>{(t('intent_' + x.intent) || x.intent)} ({x.sig})</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+      {state.loading ? (
+        <div className={styles.loading}><span className={styles.spinner} /> {t('analysis_loading') || 'Analysing…'}</div>
+      ) : state.error ? (
+        <div className={styles.notApplicable}>{state.error}</div>
+      ) : (
+        <>
+          {state.data.bpcApplied && (
+            <p className={styles.rtGamut}>
+              <span className={styles.histCount}>
+                ({t('analysis_primary_bpc') || 'Black-point compensated for this intent.'})
+              </span>
+            </p>
+          )}
+          {state.data.graphs.map((g, i) => (
+            <div key={g.title}>
+              <h4 className={styles.heading}>{pathTitle(g.title)}</h4>
+              {/* Legend on the first plot only — all three share the same colorants. */}
+              <PlotlyGraph graph={g} legend={i === 0}
+                           storageKey="profiletool.primaryHeight" defaultH={220} />
+            </div>
+          ))}
+        </>
+      )}
+    </>
+  )
+}
+
+function PrimarySection({ bytes, profileClass, tables, t }) {
+  const isOutput = (profileClass || '').toLowerCase().includes('output')
+  return (
+    <Collapsible title={t('analysis_primary_heading') || 'Primary-Inking Paths through Neutral'}>
+      <p className={styles.sectionIntro}>
+        {t('analysis_primary_intro') ||
+          'Three in-gamut paths — Cyan→Red, Magenta→Green, Yellow→Blue — each routed through the neutral axis at the midpoint lightness of its endpoints, run through the selected B2A table. Every sample is inside the gamut, so unlike the shadow paths any abrupt step or reversal in a colorant is a CLUT-smoothness defect rather than a gamut-mapping artefact.'}
+      </p>
+      {!isOutput ? (
+        <div className={styles.itemError}>
+          {t('analysis_primary_err_output') || 'Primary-inking paths are only available for output (printer) profiles.'}
+        </div>
+      ) : !tables.length ? (
+        <div className={styles.notApplicable}>
+          {t('analysis_neutral_na') || 'This profile has no B2A (PCS→device) table to sample.'}
+        </div>
+      ) : (
+        <PrimaryBody bytes={bytes} tables={tables} t={t} />
+      )}
+    </Collapsible>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ink Usage Statistics  (QC "Q13")
+//
+// Per-channel ink consumption — sum and share — over the neutral axis. Computed
+// JS-side from the same neutral-inking series the Neutral Axis Inking section plots
+// (each series' y is that colorant's % at 101 L* samples), so it needs no extra engine
+// pass beyond the neutral graph. The share column is the diagnostic: it is the profile's
+// ink-balance fingerprint and is invariant to the sample count.
+//
+// The reference report also carries a second table over ALL on-&-in-gamut points; that
+// one needs the B2A-direction gamut boundary set (the parked Q11 engine), so it is shown
+// as pending rather than approximated.
+// ─────────────────────────────────────────────────────────────────────────────
+function InkUsageBody({ bytes, tables, t }) {
+  const [sel, setSel] = useState(() => (tables.find((x) => x.sig === 'B2A1') || tables[0]).sig)
+  const table = tables.find((x) => x.sig === sel) || tables[0]
+  const [state, setState] = useState({ loading: true })
+
+  useEffect(() => {
+    let cancelled = false
+    setState({ loading: true })
+    Promise.all([
+      renderGraph(bytes, table.id),
+      tagEvalInfo(bytes, table.sig).catch(() => null),
+    ]).then(
+      ([graph, info]) => {
+        if (cancelled) return
+        const sig = info?.dstSpaceSig || ''
+        // Ink channels only — drop the tone/neutrality reference curves.
+        const inks = graph.series.filter((s) => s.id !== TONE_SERIES_ID && s.id !== DE_SERIES_ID)
+        const rows = inks.map((s, i) => {
+          const ys = []
+          for (let k = 1; k < s.points.length; k += 2) {
+            const v = s.points[k]
+            if (Number.isFinite(v)) ys.push(v)
+          }
+          const sum = ys.reduce((acc, v) => acc + v, 0)          // Σ colorant % over samples
+          const mean = ys.length ? sum / ys.length : 0           // mean coverage %
+          return { name: s.name, color: neutralTraceColor(sig, s, i, inks.length), sum, mean }
+        })
+        const total = rows.reduce((acc, r) => acc + r.sum, 0)
+        setState({ loading: false, rows, total })
+      },
+      (e) => { if (!cancelled) setState({ loading: false, error: e.message }) },
+    )
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bytes, table.id])
+
+  return (
+    <>
+      {tables.length > 1 && (
+        <div className={styles.controls}>
+          <label className={styles.control}>
+            <span>{t('analysis_intent_label') || 'Rendering intent'}</span>
+            <select value={sel} onChange={(e) => setSel(e.target.value)}>
+              {tables.map((x) => <option key={x.sig} value={x.sig}>{(t('intent_' + x.intent) || x.intent)} ({x.sig})</option>)}
+            </select>
+          </label>
+        </div>
+      )}
+
+      <h4 className={styles.heading}>{t('analysis_inkusage_neutral') || 'Neutral axis'}</h4>
+      {state.loading ? (
+        <div className={styles.loading}><span className={styles.spinner} /> {t('analysis_loading') || 'Analysing…'}</div>
+      ) : state.error ? (
+        <div className={styles.notApplicable}>{state.error}</div>
+      ) : !state.rows.length ? (
+        <div className={styles.notApplicable}>{t('analysis_inkusage_na') || 'No colorant data to summarize.'}</div>
+      ) : (
+        <div className={styles.tableScroll}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th />
+                {state.rows.map((r) => (
+                  <th key={r.name} className={styles.statNum}>
+                    <span className={styles.inkSwatch} style={{ background: r.color }} /> {r.name}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">{t('analysis_inkusage_mean') || 'Mean coverage'}</th>
+                {state.rows.map((r) => (
+                  <td key={r.name} className={styles.statNum}>{r.mean.toFixed(1)}%</td>
+                ))}
+              </tr>
+              <tr>
+                <th scope="row">{t('analysis_inkusage_share') || 'Share of ink'}</th>
+                {state.rows.map((r) => (
+                  <td key={r.name} className={styles.statNum}>
+                    {state.total > 0 ? (100 * r.sum / state.total).toFixed(1) : '—'}%
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className={styles.sectionIntro}>
+        {t('analysis_inkusage_hint') ||
+          'Share of ink is the neutral-build fingerprint — each colorant’s fraction of the total ink laid down, independent of the sample count.'}
+      </p>
+
+      <h4 className={styles.heading}>{t('analysis_inkusage_gamut') || 'On & in-gamut points'}</h4>
+      <div className={styles.notApplicable}>
+        {t('analysis_inkusage_gamut_pending') ||
+          'Ink usage across all in-gamut colours needs the B2A-direction gamut boundary, which is not yet built — pending.'}
+      </div>
+    </>
+  )
+}
+
+function InkUsageSection({ bytes, profileClass, tables, t }) {
+  const isOutput = (profileClass || '').toLowerCase().includes('output')
+  return (
+    <Collapsible title={t('analysis_inkusage_heading') || 'Ink Usage Statistics'}>
+      <p className={styles.sectionIntro}>
+        {t('analysis_inkusage_intro') ||
+          'How much of each colorant the profile lays down, as a sum and as a share of the total — the ink-consumption signature of the separation.'}
+      </p>
+      {!isOutput ? (
+        <div className={styles.itemError}>
+          {t('analysis_inkusage_err_output') || 'Ink usage statistics are only available for output (printer) profiles.'}
+        </div>
+      ) : !tables.length ? (
+        <div className={styles.notApplicable}>
+          {t('analysis_neutral_na') || 'This profile has no B2A (PCS→device) table to sample.'}
+        </div>
+      ) : (
+        <InkUsageBody bytes={bytes} tables={tables} t={t} />
+      )}
+    </Collapsible>
+  )
+}
+
 function ShadowSection({ bytes, profileClass, tables, t }) {
   const isOutput = (profileClass || '').toLowerCase().includes('output')
   return (
@@ -994,6 +1258,9 @@ export default function AnalysisPanel({ bytes, profileClass }) {
       <ExtremaSection bytes={bytes} profileClass={profileClass} tables={neutralTags} t={t} />
       <NeutralSection bytes={bytes} profileClass={profileClass} tables={neutralTags} t={t} />
       <ShadowSection bytes={bytes} profileClass={profileClass} tables={neutralTags} t={t} />
+      {/* Q10 sits directly under Ink Usage in Shadows — its in-gamut counterpart. */}
+      <PrimarySection bytes={bytes} profileClass={profileClass} tables={neutralTags} t={t} />
+      <InkUsageSection bytes={bytes} profileClass={profileClass} tables={neutralTags} t={t} />
       <ClutImageSection bytes={bytes} tables={clutTables} t={t} />
       <GamutImageSection bytes={bytes} tables={gamutTables} t={t} />
     </div>

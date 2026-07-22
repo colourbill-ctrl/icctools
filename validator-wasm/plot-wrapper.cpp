@@ -277,6 +277,19 @@ emscripten::val renderRasterImpl(const std::string& bytes, const std::string& id
   obj.set("photometric", r.photometric);
   obj.set("normalizedICC", r.normalizedICC);
   obj.set("samples", makeUint8Array(r.samples.data(), r.samples.size()));
+  // Colour-managed preview: photometric 0 is the N-ink grayscale fallback (a device
+  // output with no cheap RGB/CMYK preview — 5/6/7-colour, …). Map it through the
+  // forward A2B to CIELAB so the main image shows real colour; the raw device `samples`
+  // above still drive the per-ink separations. Absent for CMYK/RGB (their decode already
+  // renders colour) and whenever no usable A2B exists.
+  if (r.photometric == 0) {
+    iccviz::Raster lab;
+    if (iccviz::ColorizeDeviceRaster(pIcc, r, lab)) {
+      obj.set("colorSamples", makeUint8Array(lab.samples.data(), lab.samples.size()));
+      obj.set("colorChannels", lab.channels);
+      obj.set("colorPhotometric", lab.photometric);
+    }
+  }
   // additive: non-fatal warnings raised during a successful flatten.
   json w = warningsToJson(res.diagnostics);
   if (!w.empty()) {
@@ -540,6 +553,29 @@ std::string shadowInkPathsImpl(const std::string& bytes, const std::string& tagS
               {"bpcApplied", s.bpcApplied}, {"graphs", std::move(graphs)}}.dump();
 }
 
+// ── Primary-inking paths through neutral (iccviz::PrimaryInkingPaths) ─────────
+// Returns three ready-to-plot Graphs (Cyan→Red, Magenta→Green, Yellow→Blue), each an
+// in-gamut path pivoting on the neutral axis, plus whether BPC was applied.
+std::string primaryInkingPathsImpl(const std::string& bytes, const std::string& tagSigStr) {
+  if (bytes.size() > kMaxIccBytes)
+    return json{{"error", "Profile exceeds size limit"}}.dump();
+  CIccProfile* pIcc = parseCached(bytes);
+  if (!pIcc) return json{{"error", "Failed to parse ICC profile"}}.dump();
+  if (tagSigStr.size() != 4) return json{{"error", "Bad tag signature"}}.dump();
+
+  icTagSignature sig = static_cast<icTagSignature>(
+      (icUInt8Number(tagSigStr[0]) << 24) | (icUInt8Number(tagSigStr[1]) << 16) |
+      (icUInt8Number(tagSigStr[2]) << 8)  |  icUInt8Number(tagSigStr[3]));
+
+  iccviz::PrimaryInkResult s = iccviz::PrimaryInkingPaths(pIcc, sig);
+  if (!s.ok) return json{{"error", s.error}}.dump();
+
+  json graphs = json::array();
+  for (const auto& g : s.graphs) graphs.push_back(graphToJson(g));
+  return json{{"nColorants", s.nColorants}, {"bpcApplied", s.bpcApplied},
+              {"graphs", std::move(graphs)}}.dump();
+}
+
 // ── exception-safe boundary wrappers ─────────────────────────────────────────
 // The names embind binds. Every entry point converts an unexpected C++ throw
 // (std::bad_alloc on a crafted huge LUT, an nlohmann type_error, an IccProfLib
@@ -612,6 +648,12 @@ std::string shadowInkPaths(const std::string& bytes, const std::string& tagSigSt
   try { return shadowInkPathsImpl(bytes, tagSigStr); }
   catch (const std::exception& e) { return json{{"error", std::string("shadowInkPaths threw: ") + e.what()}}.dump(); }
   catch (...) { return json{{"error", "shadowInkPaths threw an unknown exception"}}.dump(); }
+}
+
+std::string primaryInkingPaths(const std::string& bytes, const std::string& tagSigStr) {
+  try { return primaryInkingPathsImpl(bytes, tagSigStr); }
+  catch (const std::exception& e) { return json{{"error", std::string("primaryInkingPaths threw: ") + e.what()}}.dump(); }
+  catch (...) { return json{{"error", "primaryInkingPaths threw an unknown exception"}}.dump(); }
 }
 
 // Gamut boundary MESH for the profile's device→PCS transform at a rendering intent —
@@ -863,6 +905,7 @@ EMSCRIPTEN_BINDINGS(iccplot) {
   emscripten::function("whiteBlackPoints", &whiteBlackPoints);
   emscripten::function("hueExtrema", &hueExtrema);
   emscripten::function("shadowInkPaths", &shadowInkPaths);
+  emscripten::function("primaryInkingPaths", &primaryInkingPaths);
   emscripten::function("gamutMesh", &gamutMesh);
   emscripten::function("roundTripDE", &roundTripDE);
   emscripten::function("roundTripStats", &roundTripStats);

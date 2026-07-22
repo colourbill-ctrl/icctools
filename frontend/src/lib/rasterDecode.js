@@ -43,8 +43,10 @@ export function labToRgb(L, a, b) {
 
 /**
  * @param {{width,height,channels,bitsPerChannel,photometric,samples:Uint8Array}} ras
- * @param {{gamut?:boolean}} [opts] — `gamut` colour-codes a 1-channel gamut tag
- *   (0 = in gamut → neutral; >0 = out of gamut → red ramp by magnitude).
+ * @param {{gamut?:boolean, channel?:number}} [opts] — `gamut` colour-codes a 1-channel
+ *   gamut tag (0 = in gamut → neutral; >0 = out of gamut → red ramp by magnitude).
+ *   `channel` renders ONE output channel as an ink-coverage grayscale (0 = no ink →
+ *   white, full ink → black) — the QC "separation" view (e.g. channel 3 = K).
  * @returns {{width:number,height:number,rgba:Uint8ClampedArray,photometric:string}}
  */
 export function decodeRaster(ras, opts = {}) {
@@ -59,6 +61,7 @@ export function decodeRaster(ras, opts = {}) {
     : (p, s) => samples[p * spp + s] / maxVal
 
   if (opts.gamut) return decodeGamut(ras, read)
+  if (Number.isInteger(opts.channel)) return decodeSeparation(ras, read, opts.channel)
 
   const px = width * height
   const rgba = new Uint8ClampedArray(px * 4)
@@ -92,6 +95,39 @@ export function decodeRaster(ras, opts = {}) {
     rgba[o] = r; rgba[o + 1] = g; rgba[o + 2] = b; rgba[o + 3] = 255
   }
   return { width, height, rgba, photometric: PHOTO_NAME[photometric] || `Photometric ${photometric}` }
+}
+
+// Colorant names for the per-ink separation views, keyed on the device space
+// signature (photometric alone can't tell CMY from RGB — both tag as 2). Falls back to
+// numbered "Ink N" when the space is unknown or its channel count doesn't match, so a
+// nCLR / mismatched profile is labelled safely rather than mislabelled.
+const SPACE_INKS = {
+  CMYK: ['Cyan', 'Magenta', 'Yellow', 'Black'],
+  RGB:  ['Red', 'Green', 'Blue'],
+  CMY:  ['Cyan', 'Magenta', 'Yellow'],
+  GRAY: ['Black'],
+}
+export function separationLabels(spaceSig, channels) {
+  const named = SPACE_INKS[(spaceSig || '').trim().toUpperCase()]
+  if (named && named.length === channels) return named
+  return Array.from({ length: channels }, (_, i) => `Ink ${i + 1}`)
+}
+
+// Render ONE output channel of a CLUT raster as an ink-coverage grayscale: no ink
+// (0) → white, full ink (1) → black, so more of the colorant reads as darker — the
+// QC "separation" view (the K separation being channel 3 of a CMYK B2A table). Out-of-
+// range channel indices fall back to channel 0 rather than reading past the sample row.
+function decodeSeparation(ras, read, channel) {
+  const px = ras.width * ras.height
+  const spp = ras.channels
+  const ch = channel >= 0 && channel < spp ? channel : 0
+  const rgba = new Uint8ClampedArray(px * 4)
+  for (let p = 0; p < px; p++) {
+    const v = 255 * (1 - read(p, ch))   // ink coverage → darkness
+    const o = p * 4
+    rgba[o] = v; rgba[o + 1] = v; rgba[o + 2] = v; rgba[o + 3] = 255
+  }
+  return { width: ras.width, height: ras.height, rgba, photometric: 'Separation' }
 }
 
 // Colour-code a gamut tag's single-channel map. 0 means in gamut; any positive

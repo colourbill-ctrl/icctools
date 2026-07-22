@@ -1629,6 +1629,71 @@ RasterResult RenderRaster(CIccProfile* pIcc, const std::string& id, Verbosity v)
   return res;
 }
 
+// ── Colour-managed preview of a device-output CLUT raster (see IccVizModel.hpp) ─
+bool ColorizeDeviceRaster(CIccProfile* pIcc, const Raster& dev, Raster& out) {
+  if (!pIcc) return false;
+  const int N = dev.channels;
+  const int W = dev.width, H = dev.height;
+  if (N < 1 || N > kMaxInkChannels || W <= 0 || H <= 0 || dev.samples.empty()) return false;
+
+  // Forward device→PCS transform: relative colorimetric preferred, then any A2B, so a
+  // device value maps to the colour it reproduces. (Same convention as inkColorHints.)
+  CIccTag* t = pIcc->FindTag(icSigAToB1Tag);
+  if (!t) t = pIcc->FindTag(icSigAToB0Tag);
+  if (!t) t = pIcc->FindTag(icSigAToB2Tag);
+  if (!t) return false;
+  CIccXform* x = CIccXform::Create(pIcc, t, /*bInput=*/true, icRelativeColorimetric,
+                                   icInterpLinear, /*pPcc=*/NULL, /*bUseSpectralPCS=*/false,
+                                   /*pHintManager=*/NULL, /*bOwnsProfile=*/false);
+  if (!x) return false;
+  x->ShareProfile();
+  if (x->Begin() != icCmmStatOk) { delete x; return false; }
+  const icColorSpaceSignature srcSp = x->GetSrcSpace(), dstSp = x->GetDstSpace();
+  const int nSrc = x->GetNumSrcSamples(), nDst = x->GetNumDstSamples();
+  // The forward transform must consume EXACTLY the device raster's channels (so a
+  // crafted A2B declaring a different channel count can't over-read `src`) and emit a PCS.
+  if (isPcsSpace(srcSp) || nSrc != N || nDst < 3 ||
+      (dstSp != icSigLabData && dstSp != icSigXYZData)) { delete x; return false; }
+  icStatusCMM st = icCmmStatOk;
+  CIccApplyXform* ap = x->GetNewApply(st);
+  if (!ap || st != icCmmStatOk) { delete ap; delete x; return false; }
+
+  // Read device samples exactly as decodeRaster does: row-major, channels interleaved,
+  // little-endian for 16-bit, normalised to 0..1.
+  const bool is16 = dev.bitsPerChannel >= 16;
+  const std::size_t need = is16 ? (std::size_t)W * H * N * 2 : (std::size_t)W * H * N;
+  if (dev.samples.size() < need) { delete ap; delete x; return false; }
+  auto readDev = [&](std::size_t p, int c) -> double {
+    if (is16) { const std::size_t o = (p * N + c) * 2;
+                return (dev.samples[o] | (dev.samples[o + 1] << 8)) / 65535.0; }
+    return dev.samples[p * N + c] / 255.0;
+  };
+
+  const std::size_t px = (std::size_t)W * H;
+  out.width = W; out.height = H; out.channels = 3; out.bitsPerChannel = 8;
+  out.photometric = 8;              // CIELAB → decodeRaster renders it in colour
+  out.normalizedICC = true;
+  out.samples.assign(px * 3, 0);
+
+  std::vector<icFloatNumber> src(N, 0.0f), dst(nDst, 0.0f);
+  for (std::size_t p = 0; p < px; ++p) {
+    for (int c = 0; c < N; ++c) src[c] = (icFloatNumber)readDev(p, c);
+    x->Apply(ap, dst.data(), src.data());
+    icFloatNumber v[3] = { dst[0], dst[1], dst[2] };
+    if (dstSp == icSigLabData) { icLabFromPcs(v); }
+    else { icXyzFromPcs(v); icFloatNumber lv[3] = {0,0,0}; icXYZtoLab(lv, v, nullptr); v[0]=lv[0]; v[1]=lv[1]; v[2]=lv[2]; }
+    // Encode for decodeRaster's CIELAB path: byte = L*/100·255, a*+128, b*+128.
+    const double L = std::isfinite(v[0]) ? v[0] : 0.0;
+    const double a = std::isfinite(v[1]) ? v[1] : 0.0;
+    const double b = std::isfinite(v[2]) ? v[2] : 0.0;
+    out.samples[p * 3 + 0] = clipU8((icFloatNumber)(L / 100.0 * 255.0));
+    out.samples[p * 3 + 1] = clipU8((icFloatNumber)(a + 128.0));
+    out.samples[p * 3 + 2] = clipU8((icFloatNumber)(b + 128.0));
+  }
+  delete ap; delete x;
+  return true;
+}
+
 // ── Gamut volume ─────────────────────────────────────────────────────────────
 // GamutVolume — public entry: the ICC-specific half of the gamut-volume metric
 // (contract in IccVizModel.hpp). Builds the device→PCS transform for one AToB tag,
@@ -2560,6 +2625,160 @@ ShadowInkResult ShadowInkPaths(CIccProfile* pIcc, icTagSignature b2aTag, int pat
         icXyzToPcs(src.data());
       } else {
         src[0] = static_cast<icFloatNumber>(lStar);
+        src[1] = static_cast<icFloatNumber>(a);
+        src[2] = static_cast<icFloatNumber>(b);
+        icLabToPcs(src.data());
+      }
+      bx->Apply(ba, dst.data(), src.data());
+      for (int c = 0; c < N; ++c) {
+        float v = static_cast<float>(dst[c]) * 100.0f;
+        if (!std::isfinite(v)) v = 0.0f;
+        Vertex vert; vert.x = static_cast<float>(i); vert.y = v;
+        series[c].verts.push_back(vert);
+      }
+    }
+    for (auto& s : series) g.series.push_back(std::move(s));
+    r.graphs.push_back(std::move(g));
+  }
+
+  delete ba; delete bx;
+  r.ok = true;
+  return r;
+}
+
+// ── Primary-inking paths through neutral (see IccVizModel.hpp) ────────────────
+// Three primary→neutral→primary paths (Cyan→Red, Magenta→Green, Yellow→Blue) run
+// through a B2A table. Structured deliberately like ShadowInkPaths — same corner
+// source (HueExtrema), same BPC convention, same per-channel sampling — differing only
+// in the path geometry (a two-leg path pivoting on the neutral axis rather than a
+// straight const-L* sweep).
+PrimaryInkResult PrimaryInkingPaths(CIccProfile* pIcc, icTagSignature b2aTag, int pathSamples) {
+  PrimaryInkResult r;
+  auto fail = [&](const char* why) -> PrimaryInkResult { r.ok = false; r.error = why; return r; };
+
+  if (!pIcc) return fail("no profile");
+
+  // Corners come from HueExtrema (also fixes the CMYK/CMY restriction). Full-tone Lab
+  // of each primary is the path endpoint.
+  HueExtremaResult hx = HueExtrema(pIcc, 2);   // corners only; no ramp search needed
+  if (!hx.ok) return fail(hx.error.empty() ? "corner colorimetry unavailable" : hx.error.c_str());
+
+  // Pull the six primary corners into a lookup so a missing one fails cleanly rather
+  // than mislabelling a path.
+  const double* lab[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+  auto slot = [](const std::string& n) -> int {
+    if (n == "Cyan") return 0; if (n == "Magenta") return 1; if (n == "Yellow") return 2;
+    if (n == "Red")  return 3; if (n == "Green")   return 4; if (n == "Blue")   return 5;
+    return -1;
+  };
+  for (const auto& e : hx.entries) { int s = slot(e.name); if (s >= 0) lab[s] = e.fullToneLab; }
+  for (int i = 0; i < 6; ++i) if (!lab[i]) return fail("could not locate the CMYRGB corners");
+
+  // ── guard the B2A tag (untrusted geometry) ── (mirrors ShadowInkPaths)
+  CIccTag* bTag = pIcc->FindTag(b2aTag);
+  auto* blut = dynamic_cast<CIccMBB*>(bTag);
+  if (!blut) return fail("requested B2A tag is not a LUT");
+  if (!blut->GetCLUT()) return fail("B2A LUT carries no CLUT lattice");
+  const icColorSpaceSignature bIn = blut->GetCsInput(), bOut = blut->GetCsOutput();
+  if (!isPcsSpace(bIn)) return fail("B2A input is not a PCS");
+  if (isPcsSpace(bOut)) return fail("B2A output is not a device space");
+  const int bInCh = blut->InputChannels();
+  const int N     = blut->OutputChannels();
+  if (bInCh < 3 || N <= 0 || N > kMaxInkChannels) return fail("invalid B2A channel count");
+  r.nColorants = N;
+
+  // ── BPC for the perceptual / saturation tables ──
+  // Each sample's L* is stretched [Lbp,100] → [0,100], the media black point sourced
+  // from B2A0 (script parity). Computed once here; applied per-sample below because,
+  // unlike ShadowInkPaths, every point on these paths has its own L*.
+  double lbp = 0.0; bool doBpc = false;
+  if (b2aTag == icSigBToA0Tag || b2aTag == icSigBToA2Tag) {
+    icTagSignature bpTag = pIcc->FindTag(icSigBToA0Tag) ? icSigBToA0Tag : b2aTag;
+    WhiteBlackResult wb = WhiteBlackPoints(pIcc, bpTag);
+    if (wb.ok) {
+      lbp = wb.blackLabRel[0];
+      if (lbp > 0.0 && lbp < 100.0) { doBpc = true; r.bpcApplied = true; }
+    }
+  }
+  auto bpcL = [&](double L) -> double {
+    if (!doBpc) return L;
+    double s = (L - lbp) * 100.0 / (100.0 - lbp);
+    return s < 0.0 ? 0.0 : s;
+  };
+
+  int S = (pathSamples > 0) ? pathSamples : 256;
+  if (S < 16)   S = 16;
+  if (S > 4096) S = 4096;
+
+  CIccXform* bx = CIccXform::Create(pIcc, bTag, /*bInput=*/false, neutralIntentForSig(b2aTag),
+                                    icInterpLinear, /*pPcc=*/NULL, /*bUseSpectralPCS=*/false,
+                                    /*pHintManager=*/NULL, /*bOwnsProfile=*/false);
+  if (!bx) return fail("could not build the PCS->device transform");
+  bx->ShareProfile();
+  if (bx->Begin() != icCmmStatOk) { delete bx; return fail("PCS->device transform Begin failed"); }
+  icStatusCMM st = icCmmStatOk;
+  CIccApplyXform* ba = bx->GetNewApply(st);
+  if (!ba || st != icCmmStatOk || bx->GetNumSrcSamples() != bInCh || bx->GetNumDstSamples() != N) {
+    delete ba; delete bx; return fail("PCS->device transform channel-count mismatch");
+  }
+
+  const std::vector<std::string> hints = inkColorHints(pIcc, N);
+
+  // The three primary pairs, by corner index (0 Cyan,1 Magenta,2 Yellow,3 Red,4 Green,5 Blue).
+  struct Pair { const char* label; int a, b; };
+  const Pair pairs[3] = {
+    { "Cyan-Red",     0, 3 },
+    { "Magenta-Green",1, 4 },
+    { "Yellow-Blue",  2, 5 },
+  };
+
+  std::vector<icFloatNumber> src(bInCh, 0.0f), dst(N, 0.0f);
+  for (const Pair& p : pairs) {
+    const double* A = lab[p.a];
+    const double* B = lab[p.b];
+    // Neutral pivot at the L* midpoint of the two endpoints, a*=b*=0 — the point that
+    // keeps every sample in-gamut.
+    const double pivot[3] = { (A[0] + B[0]) * 0.5, 0.0, 0.0 };
+
+    Graph g;
+    g.title = p.label;
+    g.xAxis.label = "# of points"; g.xAxis.minHint = 0.0f; g.xAxis.maxHint = static_cast<float>(S - 1);
+    g.yAxis.label = "% ink";       g.yAxis.minHint = 0.0f; g.yAxis.maxHint = 100.0f;
+
+    std::vector<Series> series(N);
+    for (int c = 0; c < N; ++c) {
+      series[c].id = "ch" + std::to_string(c);
+      series[c].name = channelName(c, /*useInput=*/false, bIn, bOut, bInCh, N);
+      series[c].role = Role::Primary;
+      series[c].shape = Shape::Polyline;
+      series[c].colorHint = hints[c];
+      series[c].verts.reserve(S);
+    }
+
+    for (int i = 0; i < S; ++i) {
+      // Two-leg path: first half A→pivot, second half pivot→B. The midpoint sample is
+      // the neutral pivot itself.
+      const double t = static_cast<double>(i) / static_cast<double>(S - 1);
+      double L, a, b;
+      if (t <= 0.5) {
+        const double u = t * 2.0;
+        L = A[0] + (pivot[0] - A[0]) * u;
+        a = A[1] + (pivot[1] - A[1]) * u;
+        b = A[2] + (pivot[2] - A[2]) * u;
+      } else {
+        const double u = (t - 0.5) * 2.0;
+        L = pivot[0] + (B[0] - pivot[0]) * u;
+        a = pivot[1] + (B[1] - pivot[1]) * u;
+        b = pivot[2] + (B[2] - pivot[2]) * u;
+      }
+      L = bpcL(L);
+      if (bIn == icSigXYZData) {
+        icFloatNumber labv[3] = { static_cast<icFloatNumber>(L),
+                                  static_cast<icFloatNumber>(a), static_cast<icFloatNumber>(b) };
+        icLabtoXYZ(src.data(), labv, nullptr);
+        icXyzToPcs(src.data());
+      } else {
+        src[0] = static_cast<icFloatNumber>(L);
         src[1] = static_cast<icFloatNumber>(a);
         src[2] = static_cast<icFloatNumber>(b);
         icLabToPcs(src.data());
